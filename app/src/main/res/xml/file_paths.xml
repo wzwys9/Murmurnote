@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<paths>
+    <!-- LogExporter.exportAndShare 把诊断 zip 写到 cacheDir/log_share/，由这里向 FileProvider 暴露。 -->
+    <cache-path name="log_share" path="log_share/" />
+</paths>

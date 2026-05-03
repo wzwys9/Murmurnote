@@ -1,0 +1,7 @@
+## 复制到 local.properties 后填入真实值
+## Android SDK 路径（Linux/macOS）
+sdk.dir=/home/USER/Android/Sdk
+
+## API Keys（开发期兜底；运行时优先用设置页里的值）
+GLM_API_KEY=YOUR_ZHIPU_BIGMODEL_KEY
+OLLAMA_API_KEY=YOUR_OLLAMA_KEY
