@@ -371,6 +371,55 @@ class OllamaClient @Inject constructor(
         if (res.isEmpty()) error("无可用模型")
     }
 
+    /**
+     * 为本地 ASR 输出的无标点文本添加中文标点。云端 ASR 自带标点，不经过这里。
+     * 轻量调用：prompt 极简，LLM 只需在原文插入标点，不需要理解/总结/提取。
+     */
+    suspend fun addPunctuation(text: String): Result<String> = runCatching {
+        val baseUrl = appPreferences.ollamaBaseUrl.first()
+        val key = appPreferences.ollamaApiKey.first()
+        val model = appPreferences.ollamaModel.first()
+        if (key.isBlank()) error("Ollama API Key 未配置")
+
+        val req = ChatCompletionRequest(
+            model = model,
+            messages = listOf(
+                ChatMessage("system", "你是一个中文标点助手。为输入的中文文本添加正确的标点符号（。，、！？；：），只输出添加标点后的结果，不要任何解释、不要修改原文任何字词。"),
+                ChatMessage("user", text)
+            ),
+            temperature = 0.1,
+            stream = false
+        )
+        val payload = json.encodeToString(ChatCompletionRequest.serializer(), req)
+        val url = baseUrl.trimEnd('/') + "/chat/completions"
+        logger.i("Ollama", "addPunctuation begin chars=${text.length} model=$model")
+
+        val responseBody = withRetry("addPunctuation") {
+            val httpReq = Request.Builder()
+                .url(url)
+                .header("Authorization", "Bearer $key")
+                .post(payload.toRequestBody("application/json".toMediaType()))
+                .build()
+            withContext(Dispatchers.IO) {
+                okHttpClient.newCall(httpReq).execute().use { resp ->
+                    val body = resp.body?.string().orEmpty()
+                    if (!resp.isSuccessful) throw OllamaHttpException(resp.code, body.take(400))
+                    body
+                }
+            }
+        }
+        val parsed = json.decodeFromString(ChatCompletionResponse.serializer(), responseBody)
+        val result = parsed.choices.firstOrNull()?.message?.content
+            ?.let { stripThink(it).trim() }
+            ?.takeIf { it.isNotBlank() }
+            ?: error("标点响应为空")
+
+        logger.i("Ollama", "addPunctuation ok chars=${result.length}")
+        result
+    }.onFailure { e ->
+        logger.e("Ollama", "addPunctuation failed: ${e.message?.take(200)}", e)
+    }
+
     /** 去除 <think>...</think> */
     private fun stripThink(s: String): String {
         return Regex("<think>[\\s\\S]*?</think>", RegexOption.IGNORE_CASE).replace(s, "")
