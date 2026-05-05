@@ -70,17 +70,16 @@ class SherpaBridge private constructor(
         const val SAMPLE_RATE = 16000
         private const val PKG = "com.k2fsa.sherpa.onnx"
 
+        /** 用模型文件大小区分 SingleFile 布局：SenseVoice ~90MB，FireRedASR CTC ~740MB。 */
+        private const val SINGLE_FILE_MODEL_SIZE_THRESHOLD = 200L * 1024 * 1024
+
         /**
-         * 在 IO 线程调；构造 OfflineRecognizer（加载 ONNX 模型）通常 1–3 秒。
+         * 在 IO 线程调；构造 OfflineRecognizer（加载 ONNX 模型）。
          *
-         * sherpa-onnx 1.12.39 实测的真实 API（已直接 grep 验证 OfflineRecognizer.kt）：
-         *   - CTC 版： data class OfflineFireRedAsrCtcModelConfig(var model: String = "")
-         *             OfflineModelConfig 用字段名 fireRedAsrCtc 接收
-         *   - AED 版： data class OfflineFireRedAsrModelConfig(var encoder, var decoder)
-         *             OfflineModelConfig 用字段名 fireRedAsr 接收
-         *   - OfflineRecognizer(assetManager: AssetManager? = null, config: OfflineRecognizerConfig)
-         *     —— 通过 callBy 跳过 assetManager 让它走默认 null（filesDir 路径模式）
-         *   - OfflineRecognizerResult.text 是 val 字段，反射 getter = getText
+         * 支持三种模型布局，按文件存在自动探测：
+         *   - SenseVoice (model.int8.onnx < 200MB)：ITN 开启，自带标点
+         *   - FireRedASR CTC (model.int8.onnx > 200MB)：纯字符，无标点
+         *   - FireRedASR AED (encoder.int8.onnx + decoder.int8.onnx)：encoder+decoder
          */
         fun create(modelDir: File, logger: Logger): SherpaBridge {
             val tokens = File(modelDir, "tokens.txt").absolutePath
@@ -90,8 +89,28 @@ class SherpaBridge private constructor(
             val encoderFile = File(modelDir, "encoder.int8.onnx")
             val decoderFile = File(modelDir, "decoder.int8.onnx")
             val modelConfig: Any = when {
+                modelFile.exists() && modelFile.length() < SINGLE_FILE_MODEL_SIZE_THRESHOLD -> {
+                    logger.i("LocalAsr", "SenseVoice layout (model.int8.onnx ~${modelFile.length() / 1024 / 1024}MB)")
+                    val svPeer = constructByName(
+                        "$PKG.OfflineSenseVoiceModelConfig",
+                        mapOf(
+                            "model" to modelFile.absolutePath,
+                            "language" to "zh",
+                            "useInverseTextNormalization" to true
+                        )
+                    )
+                    constructByName(
+                        "$PKG.OfflineModelConfig",
+                        mapOf(
+                            "senseVoice" to svPeer,
+                            "tokens" to tokens,
+                            "numThreads" to 4,
+                            "provider" to "cpu"
+                        )
+                    )
+                }
                 modelFile.exists() -> {
-                    logger.i("LocalAsr", "FireRedASR layout=CTC (model.int8.onnx)")
+                    logger.i("LocalAsr", "FireRedASR layout=CTC (model.int8.onnx ~${modelFile.length() / 1024 / 1024}MB)")
                     val ctcPeer = constructByName(
                         "$PKG.OfflineFireRedAsrCtcModelConfig",
                         mapOf("model" to modelFile.absolutePath)
@@ -125,7 +144,7 @@ class SherpaBridge private constructor(
                         )
                     )
                 }
-                else -> error("找不到 FireRedASR 模型文件（既无 model.int8.onnx，也无 encoder/decoder.int8.onnx）。modelDir=${modelDir.absolutePath}")
+                else -> error("找不到 ASR 模型文件。modelDir=${modelDir.absolutePath}")
             }
 
             val recognizerConfig = constructByName(

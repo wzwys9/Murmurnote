@@ -10,24 +10,23 @@ package app.murmurnote.android.data.asr
  */
 object AsrModelUrls {
 
-    /** FireRedASR v2 AED int8（encoder+decoder，带标点），约 1.2GB。 */
+    /** SenseVoice int8（自带 ITN 标点），约 230MB。 */
     const val FIRE_RED_ASR_TARBALL =
-        "https://huggingface.co/csukuangfj2/sherpa-onnx-fire-red-asr2-zh_en-int8-2026-02-26"
+        "https://huggingface.co/csukuangfj/sherpa-onnx-sense-voice-zh-en-ja-ko-yue-int8-2025-09-09"
 
     /** 解压后顶层目录名，用于 tar 解包后从临时位置 rename 到 fire_red_asr_v2/ 。 */
-    const val FIRE_RED_ASR_TARBALL_TOP_DIR = "sherpa-onnx-fire-red-asr2-zh_en-int8-2026-02-26"
+    const val FIRE_RED_ASR_TARBALL_TOP_DIR = "sherpa-onnx-sense-voice-zh-en-ja-ko-yue-int8-2025-09-09"
 
-    /** 标称大小（字节），UI 进度条与 ETA 用。encoder ~780MB + decoder ~398MB。 */
-    const val FIRE_RED_ASR_TARBALL_BYTES = 1200L * 1024 * 1024
+    /** 标称大小（字节），UI 进度条与 ETA 用。 */
+    const val FIRE_RED_ASR_TARBALL_BYTES = 230L * 1024 * 1024
 
     /** 期望 SHA256（小写 hex）。空表示跳过校验（仅集成期临时）。 */
     const val FIRE_RED_ASR_TARBALL_SHA256 = ""
 
     /**
-     * 解压后所有 .onnx 文件**总和**的最小字节数，作为"已下载完整模型"的健全性判定。
-     * AED 版 encoder 780MB + decoder 398MB ≈ 1.18GB。设 500MB 阈值。
+     * 解压后所有 .onnx 文件总和的健全性判定阈值。SenseVoice ~230MB，设 50MB。
      */
-    const val MODEL_MIN_TOTAL_BYTES = 500L * 1024 * 1024
+    const val MODEL_MIN_TOTAL_BYTES = 50L * 1024 * 1024
 
     /**
      * 镜像前缀。空字符串代表官方直连。手动切换在设置页生效；自动回落由 AsrModelManager 在
