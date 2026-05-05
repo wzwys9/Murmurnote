@@ -6,9 +6,12 @@ import app.murmurnote.android.audio.AudioFileInspector
 import app.murmurnote.android.audio.AudioSplitter
 import app.murmurnote.android.data.asr.AsrEngine
 import app.murmurnote.android.data.asr.AsrEngineProvider
+import app.murmurnote.android.data.asr.AsrEngineType
+import app.murmurnote.android.data.asr.LocalAsrEngine
 import app.murmurnote.android.data.local.entity.ExtractedItem
 import app.murmurnote.android.data.local.entity.ItemType
 import app.murmurnote.android.data.local.entity.ProcessingStatus
+import app.murmurnote.android.data.preference.AppPreferences
 import app.murmurnote.android.data.local.entity.Recording
 import app.murmurnote.android.data.local.entity.RecordingSource
 import app.murmurnote.android.data.local.entity.TranscriptSegment
@@ -24,6 +27,7 @@ import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.channelFlow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withPermit
@@ -49,6 +53,7 @@ class AudioPipeline @Inject constructor(
     private val llmClient: OllamaClient,
     private val recordingRepository: RecordingRepository,
     private val itemRepository: ItemRepository,
+    private val appPreferences: AppPreferences,
     private val logger: Logger
 ) {
 
@@ -234,7 +239,11 @@ class AudioPipeline @Inject constructor(
     ): List<TranscriptOf> = coroutineScope {
         // 本地引擎单实例 ~200MB 内存，并行解码会 OOM；云端 GLM 仍按原 ASR_CONCURRENCY 跑。
         val concurrency = when (engine.engineType) {
-            app.murmurnote.android.data.asr.AsrEngineType.LOCAL_FIRE_RED_ASR -> 1
+            AsrEngineType.LOCAL_FIRE_RED_ASR -> {
+                val n = appPreferences.asrLocalConcurrency.first().coerceIn(1, 3)
+                (engine as? LocalAsrEngine)?.setConcurrency(n)
+                n
+            }
             else -> ASR_CONCURRENCY
         }
         val sem = Semaphore(concurrency)

@@ -3,6 +3,7 @@ package app.murmurnote.android.data.preference
 import android.content.Context
 import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.edit
+import androidx.datastore.preferences.core.intPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import app.murmurnote.android.BuildConfig
@@ -36,6 +37,7 @@ class AppPreferences @Inject constructor(
         val ASR_DOWNLOAD_MIRROR_INDEX = stringPreferencesKey("asr_download_mirror_index")
         // 标记 assets 中预置模型已成功拷贝到 filesDir，避免每次启动都重新校验+拷
         val ASR_BUNDLED_INSTALLED = booleanPreferencesKey("asr_bundled_installed")
+        val ASR_LOCAL_CONCURRENCY = intPreferencesKey("asr_local_concurrency")
     }
 
     // 关键：用 contains 判断"用户是否显式设置过"，而不是用 isNotBlank。
@@ -104,6 +106,11 @@ class AppPreferences @Inject constructor(
         it[Keys.ASR_BUNDLED_INSTALLED] ?: false
     }
 
+    /** 本地 ASR 并发度（1–3）。每个并发槽位创建一个独立的 OfflineRecognizer，约 200MB/个。 */
+    val asrLocalConcurrency: Flow<Int> = context.dataStore.data.map {
+        it[Keys.ASR_LOCAL_CONCURRENCY] ?: 1
+    }
+
     suspend fun setGlmApiKey(key: String) = context.dataStore.edit { it[Keys.GLM_API_KEY] = key.trim() }
     suspend fun setOllamaApiKey(key: String) = context.dataStore.edit { it[Keys.OLLAMA_API_KEY] = key.trim() }
     suspend fun setOllamaModel(model: String) = context.dataStore.edit { it[Keys.OLLAMA_MODEL] = model }
@@ -125,6 +132,7 @@ class AppPreferences @Inject constructor(
     suspend fun setAsrEngineType(t: String) = context.dataStore.edit { it[Keys.ASR_ENGINE_TYPE] = t }
     suspend fun setAsrDownloadMirrorIndex(i: Int) = context.dataStore.edit { it[Keys.ASR_DOWNLOAD_MIRROR_INDEX] = i.toString() }
     suspend fun setAsrBundledInstalled(v: Boolean) = context.dataStore.edit { it[Keys.ASR_BUNDLED_INSTALLED] = v }
+    suspend fun setAsrLocalConcurrency(v: Int) = context.dataStore.edit { it[Keys.ASR_LOCAL_CONCURRENCY] = v.coerceIn(1, 3) }
 
     suspend fun hasAllApiKeys(): Boolean = glmApiKey.first().isNotBlank() && ollamaApiKey.first().isNotBlank()
 }

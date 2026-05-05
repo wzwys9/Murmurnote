@@ -59,7 +59,8 @@ class SettingsViewModel @Inject constructor(
         val showAsrDownloadConfirm: Boolean = false,
         // sherpa-onnx Kotlin/JNI 类是否能加载（即 app/libs/ 下的 AAR 是否打进了 APK）。
         // 跟模型文件状态正交：模型文件可以在线下，但 AAR 必须编译期就绪。
-        val asrNativeLibReady: Boolean = false
+        val asrNativeLibReady: Boolean = false,
+        val asrLocalConcurrency: Int = 1
     )
 
     private val _uiState = MutableStateFlow(UiState())
@@ -75,6 +76,7 @@ class SettingsViewModel @Inject constructor(
         viewModelScope.launch { appPreferences.asrEngineType.collect { v -> _uiState.update { it.copy(asrEngineType = v) } } }
         viewModelScope.launch { appPreferences.asrDownloadMirrorIndex.collect { v -> _uiState.update { it.copy(asrMirrorIndex = v) } } }
         viewModelScope.launch { asrModelManager.status.collect { v -> _uiState.update { it.copy(asrModelStatus = v) } } }
+        viewModelScope.launch { appPreferences.asrLocalConcurrency.collect { v -> _uiState.update { it.copy(asrLocalConcurrency = v) } } }
         // 进设置页主动算一次"模型在不在"，触发状态广播；同时探测一次原生库是否在 classpath。
         viewModelScope.launch {
             asrModelManager.refreshStatus()
@@ -193,6 +195,10 @@ class SettingsViewModel @Inject constructor(
         _uiState.update { it.copy(showAsrDownloadConfirm = false) }
         logger.i("Settings", "asr download start requested")
         AsrModelDownloadService.start(activityContext)
+    }
+
+    fun setAsrLocalConcurrency(v: Int) = viewModelScope.launch {
+        appPreferences.setAsrLocalConcurrency(v)
     }
 
     fun cancelAsrDownload(activityContext: Context) {

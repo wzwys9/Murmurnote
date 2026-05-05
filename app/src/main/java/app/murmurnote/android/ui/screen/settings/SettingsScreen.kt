@@ -145,8 +145,10 @@ fun SettingsScreen(
                 mirrorIndex = state.asrMirrorIndex,
                 mirrorOptions = state.asrMirrorOptions,
                 nativeLibReady = state.asrNativeLibReady,
+                localConcurrency = state.asrLocalConcurrency,
                 onEngineSelected = viewModel::setAsrEngineType,
                 onMirrorSelected = viewModel::setAsrMirrorIndex,
+                onConcurrencyChanged = viewModel::setAsrLocalConcurrency,
                 onRequestDownload = viewModel::requestAsrDownloadConfirm,
                 onCancelDownload = { viewModel.cancelAsrDownload(it) },
                 onDeleteModel = viewModel::deleteAsrModel
@@ -503,8 +505,10 @@ fun AsrEngineSection(
     mirrorIndex: Int,
     mirrorOptions: List<String>,
     nativeLibReady: Boolean,
+    localConcurrency: Int,
     onEngineSelected: (String) -> Unit,
     onMirrorSelected: (Int) -> Unit,
+    onConcurrencyChanged: (Int) -> Unit,
     onRequestDownload: () -> Unit,
     onCancelDownload: (android.content.Context) -> Unit,
     onDeleteModel: () -> Unit
@@ -536,7 +540,9 @@ fun AsrEngineSection(
                     status = modelStatus,
                     mirrorIndex = mirrorIndex,
                     mirrorOptions = mirrorOptions,
+                    localConcurrency = localConcurrency,
                     onMirrorSelected = onMirrorSelected,
+                    onConcurrencyChanged = onConcurrencyChanged,
                     onRequestDownload = onRequestDownload,
                     onCancelDownload = { onCancelDownload(ctx) },
                     onDeleteModel = onDeleteModel
@@ -589,7 +595,9 @@ private fun LocalModelStatusBlock(
     status: AsrModelManager.ModelStatus,
     mirrorIndex: Int,
     mirrorOptions: List<String>,
+    localConcurrency: Int,
     onMirrorSelected: (Int) -> Unit,
+    onConcurrencyChanged: (Int) -> Unit,
     onRequestDownload: () -> Unit,
     onCancelDownload: () -> Unit,
     onDeleteModel: () -> Unit
@@ -647,6 +655,10 @@ private fun LocalModelStatusBlock(
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
+                    ConcurrencySelector(
+                        current = localConcurrency,
+                        onChanged = onConcurrencyChanged
+                    )
                     OutlinedButton(onClick = onDeleteModel) { Text("删除模型") }
                 }
                 is AsrModelManager.ModelStatus.Corrupted -> {
@@ -698,6 +710,40 @@ private fun MirrorPicker(
             ) {
                 RadioButton(selected = current == i, onClick = { onSelected(i) })
                 Text(label, style = MaterialTheme.typography.bodySmall)
+            }
+        }
+    }
+}
+
+@Composable
+private fun ConcurrencySelector(
+    current: Int,
+    onChanged: (Int) -> Unit
+) {
+    Column {
+        Text(
+            "并发度（约 ${current * 200}MB）",
+            style = MaterialTheme.typography.labelMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            (1..3).forEach { n ->
+                Card(
+                    modifier = Modifier
+                        .weight(1f)
+                        .clickable { onChanged(n) },
+                    colors = androidx.compose.material3.CardDefaults.cardColors(
+                        containerColor = if (current == n) MaterialTheme.colorScheme.primaryContainer
+                        else MaterialTheme.colorScheme.surfaceVariant
+                    )
+                ) {
+                    Column(
+                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
+                        horizontalAlignment = Alignment.CenterHorizontally
+                    ) {
+                        Text("${n}x", style = MaterialTheme.typography.titleMedium)
+                    }
+                }
             }
         }
     }

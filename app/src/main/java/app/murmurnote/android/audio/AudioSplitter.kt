@@ -24,10 +24,9 @@ class AudioSplitter @Inject constructor(
 
     companion object {
         const val MAX_SEGMENT_MS: Long = 25_000L
-        const val MIN_SEGMENT_MS: Long = 18_000L
-        // 找不到首选窗口 [MIN, MAX] 内的静音时，把窗口左侧放宽到 12s 再试一次。
-        // 比直接 hard-cut 在词中间好得多，代价只是这一段更短一点。
-        const val RELAXED_MIN_SEGMENT_MS: Long = 12_000L
+        const val MIN_SEGMENT_MS: Long = 10_000L
+        // 找不到首选窗口 [MIN, MAX] 内的静音时，把窗口左侧放宽到 8s 再试一次。
+        const val RELAXED_MIN_SEGMENT_MS: Long = 8_000L
         // 没找到任何静音可切时硬切的位置：留 200ms 缓冲，规避偶发 ffmpeg/编码 rounding 把段长推到 25s 上沿。
         const val HARD_CUT_GUARD_MS: Long = 200L
         const val SILENCE_NOISE_DB: Int = -30
@@ -154,6 +153,7 @@ class AudioSplitter @Inject constructor(
             return candidates.maxWith(
                 compareBy(
                     { overlapMs(it, lo, hi) },
+                    { it.endMs - it.startMs },  // longer silence = stronger sentence boundary
                     { -kotlin.math.abs(((it.startMs.coerceAtLeast(lo) + it.endMs.coerceAtMost(hi)) / 2) - center) }
                 )
             )
