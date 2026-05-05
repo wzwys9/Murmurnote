@@ -6,6 +6,8 @@ import com.arthenica.ffmpegkit.FFmpegSession
 import com.arthenica.ffmpegkit.FFprobeKit
 import com.arthenica.ffmpegkit.ReturnCode
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import java.io.File
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -19,6 +21,7 @@ import javax.inject.Singleton
  */
 @Singleton
 class AudioSplitter @Inject constructor(
+    private val vadDetector: VadDetector,
     private val logger: Logger
 ) {
 
@@ -29,8 +32,8 @@ class AudioSplitter @Inject constructor(
         const val RELAXED_MIN_SEGMENT_MS: Long = 8_000L
         // 没找到任何静音可切时硬切的位置：留 200ms 缓冲，规避偶发 ffmpeg/编码 rounding 把段长推到 25s 上沿。
         const val HARD_CUT_GUARD_MS: Long = 200L
-        const val SILENCE_NOISE_DB: Int = -30
-        const val SILENCE_DURATION_S: Double = 0.4
+        const val SILENCE_NOISE_DB: Int = -35
+        const val SILENCE_DURATION_S: Double = 0.3
         // 嘈杂环境下 -30dB / 0.4s 可能一段静音都识别不出，整段全部 hard-cut。
         // 长录音首检过稀时用更宽松的阈值再扫一遍。
         const val SILENCE_NOISE_DB_RELAXED: Int = -25
@@ -76,21 +79,53 @@ class AudioSplitter @Inject constructor(
     }
 
     private suspend fun detectSilences(file: File, durationMs: Long): List<SilenceRange> {
-        val primary = runSilenceDetect(file, SILENCE_NOISE_DB, SILENCE_DURATION_S)
-        // 期望切点数（末段除外）。<60s 的录音最多 1 个，差一点也算正常；
-        // 长录音（>60s）首检若稀于期望就放宽阈值再扫一遍，避免整段都被迫硬切。
-        val expectedCuts = ((durationMs - 1) / MAX_SEGMENT_MS).coerceAtLeast(0)
-        if (durationMs > 60_000 && primary.size < expectedCuts) {
-            val relaxed = runSilenceDetect(file, SILENCE_NOISE_DB_RELAXED, SILENCE_DURATION_S_RELAXED)
-            if (relaxed.size > primary.size) {
-                logger.i(
-                    "Split",
-                    "silencedetect relaxed pass picked: primary=${primary.size} relaxed=${relaxed.size}"
-                )
-                return relaxed
+        val ffmpegPrimary = runSilenceDetect(file, SILENCE_NOISE_DB, SILENCE_DURATION_S)
+        // Run VAD in parallel to catch pauses that fixed-dB threshold misses.
+        // coroutineScope ensures both complete before we merge.
+        val vadSilences = withContext(Dispatchers.IO) {
+            runCatching { vadDetector.detect(file) }.getOrElse { e ->
+                logger.w("Split", "VAD failed: ${e.message}"); emptyList()
             }
         }
-        return primary
+
+        // Merge: union of ffmpeg + VAD silences (de-duplicate overlapping ranges)
+        val merged = mergeSilenceLists(ffmpegPrimary, vadSilences)
+
+        val expectedCuts = ((durationMs - 1) / MAX_SEGMENT_MS).coerceAtLeast(0)
+        if (durationMs > 60_000 && merged.size < expectedCuts) {
+            val relaxed = runSilenceDetect(file, SILENCE_NOISE_DB_RELAXED, SILENCE_DURATION_S_RELAXED)
+            val mergedRelaxed = mergeSilenceLists(relaxed, vadSilences)
+            if (mergedRelaxed.size > merged.size) {
+                logger.i(
+                    "Split",
+                    "relaxed pass picked: primary=${merged.size} relaxed=${mergedRelaxed.size} " +
+                        "(ffmpeg=${ffmpegPrimary.size} vad=${vadSilences.size})"
+                )
+                return mergedRelaxed
+            }
+        }
+        logger.i("Split", "detectSilences: ffmpeg=${ffmpegPrimary.size} vad=${vadSilences.size} merged=${merged.size}")
+        return merged
+    }
+
+    /** Union of two silence lists: overlapping ranges are merged, sorted by startMs. */
+    private fun mergeSilenceLists(a: List<SilenceRange>, b: List<SilenceRange>): List<SilenceRange> {
+        if (a.isEmpty()) return b
+        if (b.isEmpty()) return a
+        val all = (a + b).sortedBy { it.startMs }
+        val result = mutableListOf<SilenceRange>()
+        var cur = all[0]
+        for (i in 1 until all.size) {
+            val next = all[i]
+            if (next.startMs <= cur.endMs) {
+                cur = SilenceRange(startMs = cur.startMs, endMs = maxOf(cur.endMs, next.endMs))
+            } else {
+                result.add(cur)
+                cur = next
+            }
+        }
+        result.add(cur)
+        return result
     }
 
     private suspend fun runSilenceDetect(file: File, noiseDb: Int, durationS: Double): List<SilenceRange> {
@@ -146,17 +181,23 @@ class AudioSplitter @Inject constructor(
             val b = minOf(s.endMs, hi)
             return (b - a).coerceAtLeast(0L)
         }
+        fun score(s: SilenceRange, lo: Long, hi: Long): Double {
+            val overlap = overlapMs(s, lo, hi).toDouble()
+            val duration = s.endMs - s.startMs
+            val durationBonus = when {
+                duration < 500 -> 0.5   // intra-sentence breath → penalty
+                duration in 500..1500 -> 1.5  // inter-sentence pause → bonus
+                else -> 1.0  // paragraph gap → neutral
+            }
+            val clampedMid = ((s.startMs.coerceAtLeast(lo) + s.endMs.coerceAtMost(hi)) / 2).toDouble()
+            val center = (lo + hi) / 2.0
+            val centerScore = 1.0 - (kotlin.math.abs(clampedMid - center) / ((hi - lo) / 2.0)).coerceIn(0.0, 1.0)
+            return overlap * durationBonus * (0.5 + 0.5 * centerScore)
+        }
         fun bestIn(lo: Long, hi: Long): SilenceRange? {
-            val center = (lo + hi) / 2
             val candidates = silences.filter { overlapMs(it, lo, hi) > 0 }
             if (candidates.isEmpty()) return null
-            return candidates.maxWith(
-                compareBy(
-                    { overlapMs(it, lo, hi) },
-                    { it.endMs - it.startMs },  // longer silence = stronger sentence boundary
-                    { -kotlin.math.abs(((it.startMs.coerceAtLeast(lo) + it.endMs.coerceAtMost(hi)) / 2) - center) }
-                )
-            )
+            return candidates.maxBy { score(it, lo, hi) }
         }
 
         val (winLo, picked) = bestIn(preferredMin, winMax)?.let { preferredMin to it }
@@ -165,7 +206,6 @@ class AudioSplitter @Inject constructor(
 
         val clampedStart = picked.startMs.coerceAtLeast(winLo)
         val clampedEnd = picked.endMs.coerceAtMost(winMax)
-        // 切在静音被窗口截断后的中点，确保切点真正落在静音区间里。
         return ((clampedStart + clampedEnd) / 2).coerceIn(winLo + 1, winMax)
     }
 
