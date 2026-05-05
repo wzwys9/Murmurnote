@@ -153,23 +153,7 @@ class AudioPipeline @Inject constructor(
                 // 本地引擎释放 OfflineRecognizer 的 200MB+ 内存；云端是 no-op。
                 runCatching { engine.release() }
             }
-            var fullText = transcripts.joinToString("\n") { it.text }
-
-            // 本地 ASR 无标点 → 用 LLM 补标点。云端引擎自带标点，跳过。
-            if (engine.engineType == AsrEngineType.LOCAL_FIRE_RED_ASR && fullText.isNotBlank()) {
-                val punctChars = fullText.count { it in "，。、！？；：,.!?;:" }
-                if (punctChars.toDouble() / fullText.length < 0.02) {
-                    stageName = "punct"
-                    logger.i("Pipe", "punctuation sparse (${"%.1f".format(punctChars * 100.0 / fullText.length)}%), running addPunctuation")
-                    send(PipelineStage.Extracting(0))  // reuse Extracting for progress indication
-                    llmClient.addPunctuation(fullText).onSuccess { punctuated ->
-                        if (punctuated != fullText) {
-                            logger.i("Pipe", "punctuation added: ${fullText.length} → ${punctuated.length} chars")
-                            fullText = punctuated
-                        }
-                    }
-                }
-            }
+            val fullText = transcripts.joinToString("\n") { it.text }
 
             // 入 transcript_segments
             val transcriptEntities = transcripts.mapIndexed { idx, t ->

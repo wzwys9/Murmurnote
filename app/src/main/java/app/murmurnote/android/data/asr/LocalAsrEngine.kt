@@ -11,7 +11,7 @@ import javax.inject.Inject
 import javax.inject.Singleton
 
 /**
- * 本地 ASR 引擎：sherpa-onnx + FireRedASR v2 CTC。
+ * 本地 ASR 引擎：sherpa-onnx + FireRedASR v2 AED。
  *
  * 与 sherpa-onnx 类的耦合走反射，目的是让 sherpa-onnx 的 AAR 不在 app/libs/ 时，整个 app 仍能编译运行；
  * 只有"用户实际选了本地引擎并触发转写"那一刻才会感知到反射失败，由 UI 引导其放置 AAR。
