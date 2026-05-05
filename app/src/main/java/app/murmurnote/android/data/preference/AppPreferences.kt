@@ -31,6 +31,11 @@ class AppPreferences @Inject constructor(
         val USER_PROMPT_OVERRIDE = stringPreferencesKey("user_prompt_override")
         val DEBUG_FORCE_NETWORK_FAIL = booleanPreferencesKey("debug_force_network_fail")
         val DEBUG_SIMULATE_DELAY_MS = stringPreferencesKey("debug_simulate_delay_ms")
+        // ASR 引擎切换 / 镜像选择（本地引擎用）
+        val ASR_ENGINE_TYPE = stringPreferencesKey("asr_engine_type")
+        val ASR_DOWNLOAD_MIRROR_INDEX = stringPreferencesKey("asr_download_mirror_index")
+        // 标记 assets 中预置模型已成功拷贝到 filesDir，避免每次启动都重新校验+拷
+        val ASR_BUNDLED_INSTALLED = booleanPreferencesKey("asr_bundled_installed")
     }
 
     // 关键：用 contains 判断"用户是否显式设置过"，而不是用 isNotBlank。
@@ -81,6 +86,24 @@ class AppPreferences @Inject constructor(
         it[Keys.DEBUG_SIMULATE_DELAY_MS]?.toLongOrNull() ?: 0L
     }
 
+    /**
+     * ASR 引擎类型字符串（取 AsrEngineType.name）。默认 CLOUD_GLM 保持现有行为，
+     * 老用户升级后默认仍走云端。
+     */
+    val asrEngineType: Flow<String> = context.dataStore.data.map {
+        it[Keys.ASR_ENGINE_TYPE] ?: "CLOUD_GLM"
+    }
+
+    /** 模型下载镜像索引（0=GitHub 直连，1+=AsrModelUrls.MIRROR_PREFIXES）。默认 0。 */
+    val asrDownloadMirrorIndex: Flow<Int> = context.dataStore.data.map {
+        it[Keys.ASR_DOWNLOAD_MIRROR_INDEX]?.toIntOrNull() ?: 0
+    }
+
+    /** assets 中的预置模型是否已经拷贝到 filesDir。 */
+    val asrBundledInstalled: Flow<Boolean> = context.dataStore.data.map {
+        it[Keys.ASR_BUNDLED_INSTALLED] ?: false
+    }
+
     suspend fun setGlmApiKey(key: String) = context.dataStore.edit { it[Keys.GLM_API_KEY] = key.trim() }
     suspend fun setOllamaApiKey(key: String) = context.dataStore.edit { it[Keys.OLLAMA_API_KEY] = key.trim() }
     suspend fun setOllamaModel(model: String) = context.dataStore.edit { it[Keys.OLLAMA_MODEL] = model }
@@ -99,6 +122,9 @@ class AppPreferences @Inject constructor(
 
     suspend fun setDebugForceNetworkFail(v: Boolean) = context.dataStore.edit { it[Keys.DEBUG_FORCE_NETWORK_FAIL] = v }
     suspend fun setDebugSimulateDelayMs(ms: Long) = context.dataStore.edit { it[Keys.DEBUG_SIMULATE_DELAY_MS] = ms.toString() }
+    suspend fun setAsrEngineType(t: String) = context.dataStore.edit { it[Keys.ASR_ENGINE_TYPE] = t }
+    suspend fun setAsrDownloadMirrorIndex(i: Int) = context.dataStore.edit { it[Keys.ASR_DOWNLOAD_MIRROR_INDEX] = i.toString() }
+    suspend fun setAsrBundledInstalled(v: Boolean) = context.dataStore.edit { it[Keys.ASR_BUNDLED_INSTALLED] = v }
 
     suspend fun hasAllApiKeys(): Boolean = glmApiKey.first().isNotBlank() && ollamaApiKey.first().isNotBlank()
 }

@@ -6,8 +6,12 @@ import android.app.NotificationManager
 import android.os.Build
 import androidx.hilt.work.HiltWorkerFactory
 import androidx.work.Configuration
+import app.murmurnote.android.data.asr.AsrModelManager
+import app.murmurnote.android.di.ApplicationScope
 import app.murmurnote.android.util.Logger
 import dagger.hilt.android.HiltAndroidApp
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.launch
 import javax.inject.Inject
 
 const val CHANNEL_PROCESSING = "processing"
@@ -17,6 +21,8 @@ class MurmurnoteApplication : Application(), Configuration.Provider {
 
     @Inject lateinit var workerFactory: HiltWorkerFactory
     @Inject lateinit var logger: Logger
+    @Inject lateinit var asrModelManager: AsrModelManager
+    @Inject @ApplicationScope lateinit var appScope: CoroutineScope
 
     override val workManagerConfiguration: Configuration
         get() = Configuration.Builder()
@@ -28,6 +34,13 @@ class MurmurnoteApplication : Application(), Configuration.Provider {
         super.onCreate()
         installCrashHandler()
         createNotificationChannels()
+        // 启动后台一次性把 assets 里预置的 FireRedASR v2 模型物理化到 filesDir。
+        // installBundledModelIfNeeded 内部已经做幂等：filesDir 已就绪就秒返回。
+        // 失败不阻断启动 —— 用户后续在设置页选本地引擎时会再看到状态。
+        appScope.launch {
+            runCatching { asrModelManager.installBundledModelIfNeeded() }
+                .onFailure { logger.e("App", "bundled model install failed: ${it.message}", it) }
+        }
     }
 
     /**

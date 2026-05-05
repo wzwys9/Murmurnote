@@ -23,6 +23,7 @@ import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Visibility
 import androidx.compose.material.icons.filled.VisibilityOff
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CircularProgressIndicator
@@ -31,6 +32,7 @@ import androidx.compose.material3.ExposedDropdownMenuBox
 import androidx.compose.material3.ExposedDropdownMenuDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.ListItem
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.MenuAnchorType
@@ -62,6 +64,8 @@ import androidx.core.net.toUri
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import app.murmurnote.android.BuildConfig
+import app.murmurnote.android.data.asr.AsrEngineType
+import app.murmurnote.android.data.asr.AsrModelManager
 
 @Composable
 fun SettingsScreen(
@@ -130,6 +134,30 @@ fun SettingsScreen(
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                 }
+            }
+        }
+
+        item { SettingSectionHeader("语音识别引擎") }
+        item {
+            AsrEngineSection(
+                engineType = state.asrEngineType,
+                modelStatus = state.asrModelStatus,
+                mirrorIndex = state.asrMirrorIndex,
+                mirrorOptions = state.asrMirrorOptions,
+                nativeLibReady = state.asrNativeLibReady,
+                onEngineSelected = viewModel::setAsrEngineType,
+                onMirrorSelected = viewModel::setAsrMirrorIndex,
+                onRequestDownload = viewModel::requestAsrDownloadConfirm,
+                onCancelDownload = { viewModel.cancelAsrDownload(it) },
+                onDeleteModel = viewModel::deleteAsrModel
+            )
+        }
+        if (state.showAsrDownloadConfirm) {
+            item {
+                AsrDownloadConfirmDialog(
+                    onDismiss = viewModel::dismissAsrDownloadConfirm,
+                    onConfirm = { viewModel.startAsrDownload(it) }
+                )
             }
         }
 
@@ -466,6 +494,257 @@ fun ReasoningEffortSelector(current: String, onSelected: (String) -> Unit) {
             }
         }
     }
+}
+
+@Composable
+fun AsrEngineSection(
+    engineType: String,
+    modelStatus: AsrModelManager.ModelStatus,
+    mirrorIndex: Int,
+    mirrorOptions: List<String>,
+    nativeLibReady: Boolean,
+    onEngineSelected: (String) -> Unit,
+    onMirrorSelected: (Int) -> Unit,
+    onRequestDownload: () -> Unit,
+    onCancelDownload: (android.content.Context) -> Unit,
+    onDeleteModel: () -> Unit
+) {
+    val ctx = LocalContext.current
+    val isLocal = engineType == AsrEngineType.LOCAL_FIRE_RED_ASR.name
+
+    Card(modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp)) {
+        Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Text("识别引擎", style = MaterialTheme.typography.titleMedium)
+
+            EngineRadioRow(
+                title = "云端（智谱 GLM-ASR）",
+                subtitle = "准确率高、依赖网络与 API Key、按量计费",
+                selected = engineType == AsrEngineType.CLOUD_GLM.name,
+                onSelected = { onEngineSelected(AsrEngineType.CLOUD_GLM.name) }
+            )
+            EngineRadioRow(
+                title = "本地（FireRedASR v2）",
+                subtitle = "完全离线、隐私优先、需先下载约 220MB 模型",
+                selected = isLocal,
+                onSelected = { onEngineSelected(AsrEngineType.LOCAL_FIRE_RED_ASR.name) }
+            )
+
+            if (isLocal) {
+                Spacer(Modifier.height(4.dp))
+                NativeLibStatusRow(nativeLibReady)
+                LocalModelStatusBlock(
+                    status = modelStatus,
+                    mirrorIndex = mirrorIndex,
+                    mirrorOptions = mirrorOptions,
+                    onMirrorSelected = onMirrorSelected,
+                    onRequestDownload = onRequestDownload,
+                    onCancelDownload = { onCancelDownload(ctx) },
+                    onDeleteModel = onDeleteModel
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun NativeLibStatusRow(ready: Boolean) {
+    val color = if (ready) Color(0xFF4CAF50) else MaterialTheme.colorScheme.error
+    val text = if (ready) "✓ sherpa-onnx 原生库已集成"
+        else "✗ sherpa-onnx 原生库未集成（开发者需在 app/libs/ 放 AAR 后重新构建；模型文件即使下完也无法运行）"
+    Text(
+        text,
+        style = MaterialTheme.typography.bodySmall,
+        color = color
+    )
+}
+
+@Composable
+private fun EngineRadioRow(
+    title: String,
+    subtitle: String,
+    selected: Boolean,
+    onSelected: () -> Unit
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable { onSelected() }
+            .padding(vertical = 4.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        RadioButton(selected = selected, onClick = onSelected)
+        Column(modifier = Modifier.padding(start = 8.dp)) {
+            Text(title, style = MaterialTheme.typography.bodyLarge)
+            Text(
+                subtitle,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
+    }
+}
+
+@Composable
+private fun LocalModelStatusBlock(
+    status: AsrModelManager.ModelStatus,
+    mirrorIndex: Int,
+    mirrorOptions: List<String>,
+    onMirrorSelected: (Int) -> Unit,
+    onRequestDownload: () -> Unit,
+    onCancelDownload: () -> Unit,
+    onDeleteModel: () -> Unit
+) {
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        colors = androidx.compose.material3.CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.surfaceVariant
+        )
+    ) {
+        Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            when (status) {
+                AsrModelManager.ModelStatus.NotDownloaded -> {
+                    Text("模型未下载", style = MaterialTheme.typography.bodyMedium)
+                    Text(
+                        "首次启用本地引擎前需要下载约 220MB 的 FireRedASR v2。",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    MirrorPicker(mirrorIndex, mirrorOptions, onMirrorSelected)
+                    Button(onClick = onRequestDownload) { Text("下载模型（约 220MB）") }
+                }
+                is AsrModelManager.ModelStatus.Downloading -> {
+                    Text("下载中：${(status.progress * 100).toInt()}%", style = MaterialTheme.typography.bodyMedium)
+                    LinearProgressIndicator(
+                        progress = { status.progress },
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                    Text(
+                        "速度：${formatSpeed(status.bytesPerSec)} · 剩余 ${formatEta(status.etaSec)}",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    if (status.bytesPerSec in 1..(50 * 1024)) {
+                        Text(
+                            "下载速度较慢，可在下方切换镜像源。",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.error
+                        )
+                    }
+                    MirrorPicker(mirrorIndex, mirrorOptions, onMirrorSelected)
+                    OutlinedButton(onClick = onCancelDownload) { Text("取消下载") }
+                }
+                is AsrModelManager.ModelStatus.Extracting -> {
+                    Text("解压中：${(status.progress * 100).toInt()}%", style = MaterialTheme.typography.bodyMedium)
+                    LinearProgressIndicator(
+                        progress = { status.progress },
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                }
+                is AsrModelManager.ModelStatus.Ready -> {
+                    Text("✓ 模型已就绪", style = MaterialTheme.typography.bodyMedium, color = Color(0xFF4CAF50))
+                    Text(
+                        "占用空间：${formatSize(status.sizeBytes)}",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    OutlinedButton(onClick = onDeleteModel) { Text("删除模型") }
+                }
+                is AsrModelManager.ModelStatus.Corrupted -> {
+                    Text("✗ 模型已损坏", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.error)
+                    Text(
+                        status.reason,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Button(onClick = onRequestDownload) { Text("重新下载") }
+                        OutlinedButton(onClick = onDeleteModel) { Text("删除") }
+                    }
+                }
+                is AsrModelManager.ModelStatus.Failed -> {
+                    Text("✗ 下载失败", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.error)
+                    Text(
+                        status.message,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    MirrorPicker(mirrorIndex, mirrorOptions, onMirrorSelected)
+                    Button(onClick = onRequestDownload) { Text("重试") }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun MirrorPicker(
+    current: Int,
+    options: List<String>,
+    onSelected: (Int) -> Unit
+) {
+    Column {
+        Text(
+            "下载源",
+            style = MaterialTheme.typography.labelMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+        options.forEachIndexed { i, label ->
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clickable { onSelected(i) }
+                    .padding(vertical = 2.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                RadioButton(selected = current == i, onClick = { onSelected(i) })
+                Text(label, style = MaterialTheme.typography.bodySmall)
+            }
+        }
+    }
+}
+
+@Composable
+fun AsrDownloadConfirmDialog(
+    onDismiss: () -> Unit,
+    onConfirm: (android.content.Context) -> Unit
+) {
+    val ctx = LocalContext.current
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("下载本地 ASR 模型") },
+        text = {
+            Text(
+                "FireRedASR v2 模型约 220MB。国内网络下载可能需要 10–30 分钟，建议在 WiFi 下进行。\n\n" +
+                    "下载会在通知栏显示进度，可随时取消并继续（断点续传）。"
+            )
+        },
+        confirmButton = {
+            Button(onClick = { onConfirm(ctx) }) { Text("开始下载") }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) { Text("取消") }
+        }
+    )
+}
+
+private fun formatSpeed(bps: Long): String = when {
+    bps <= 0 -> "—"
+    bps >= 1024 * 1024 -> "%.1f MB/s".format(bps / (1024.0 * 1024.0))
+    else -> "${bps / 1024} KB/s"
+}
+
+private fun formatEta(sec: Long): String = when {
+    sec <= 0 -> "—"
+    sec >= 3600 -> "%dh %02dm".format(sec / 3600, (sec % 3600) / 60)
+    sec >= 60 -> "%dm %02ds".format(sec / 60, sec % 60)
+    else -> "${sec}s"
+}
+
+private fun formatSize(bytes: Long): String = when {
+    bytes >= 1024 * 1024 * 1024 -> "%.2f GB".format(bytes / (1024.0 * 1024.0 * 1024.0))
+    bytes >= 1024 * 1024 -> "%.1f MB".format(bytes / (1024.0 * 1024.0))
+    bytes >= 1024 -> "%.1f KB".format(bytes / 1024.0)
+    else -> "$bytes B"
 }
 
 @Composable

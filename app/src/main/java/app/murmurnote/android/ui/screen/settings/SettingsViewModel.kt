@@ -3,9 +3,13 @@ package app.murmurnote.android.ui.screen.settings
 import android.content.Context
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import app.murmurnote.android.data.asr.AsrEngineType
+import app.murmurnote.android.data.asr.AsrModelManager
+import app.murmurnote.android.data.asr.AsrModelUrls
 import app.murmurnote.android.data.preference.AppPreferences
 import app.murmurnote.android.data.remote.glm.GlmAsrClient
 import app.murmurnote.android.data.remote.ollama.OllamaClient
+import app.murmurnote.android.service.AsrModelDownloadService
 import app.murmurnote.android.util.LogExporter
 import app.murmurnote.android.util.Logger
 import dagger.hilt.android.lifecycle.HiltViewModel
@@ -27,6 +31,8 @@ class SettingsViewModel @Inject constructor(
     private val appPreferences: AppPreferences,
     private val ollamaClient: OllamaClient,
     private val glmAsrClient: GlmAsrClient,
+    private val asrModelManager: AsrModelManager,
+    private val localAsrEngine: app.murmurnote.android.data.asr.LocalAsrEngine,
     private val logExporter: LogExporter,
     private val logger: Logger
 ) : ViewModel() {
@@ -44,7 +50,16 @@ class SettingsViewModel @Inject constructor(
         val glmTestStatus: TestStatus = TestStatus.Idle,
         val ollamaTestStatus: TestStatus = TestStatus.Idle,
         val exportLogResult: String? = null,
-        val exportingLog: Boolean = false
+        val exportingLog: Boolean = false,
+        // ASR 引擎切换
+        val asrEngineType: String = AsrEngineType.CLOUD_GLM.name,
+        val asrMirrorIndex: Int = 0,
+        val asrMirrorOptions: List<String> = listOf("GitHub 直连", "ghproxy 镜像", "gh-proxy 镜像"),
+        val asrModelStatus: AsrModelManager.ModelStatus = AsrModelManager.ModelStatus.NotDownloaded,
+        val showAsrDownloadConfirm: Boolean = false,
+        // sherpa-onnx Kotlin/JNI 类是否能加载（即 app/libs/ 下的 AAR 是否打进了 APK）。
+        // 跟模型文件状态正交：模型文件可以在线下，但 AAR 必须编译期就绪。
+        val asrNativeLibReady: Boolean = false
     )
 
     private val _uiState = MutableStateFlow(UiState())
@@ -57,6 +72,14 @@ class SettingsViewModel @Inject constructor(
         viewModelScope.launch { appPreferences.ollamaBaseUrl.collect { v -> _uiState.update { it.copy(ollamaBaseUrl = v) } } }
         viewModelScope.launch { appPreferences.ollamaModel.collect { v -> _uiState.update { it.copy(ollamaModel = v) } } }
         viewModelScope.launch { appPreferences.reasoningEffort.collect { v -> _uiState.update { it.copy(reasoningEffort = v) } } }
+        viewModelScope.launch { appPreferences.asrEngineType.collect { v -> _uiState.update { it.copy(asrEngineType = v) } } }
+        viewModelScope.launch { appPreferences.asrDownloadMirrorIndex.collect { v -> _uiState.update { it.copy(asrMirrorIndex = v) } } }
+        viewModelScope.launch { asrModelManager.status.collect { v -> _uiState.update { it.copy(asrModelStatus = v) } } }
+        // 进设置页主动算一次"模型在不在"，触发状态广播；同时探测一次原生库是否在 classpath。
+        viewModelScope.launch {
+            asrModelManager.refreshStatus()
+            _uiState.update { it.copy(asrNativeLibReady = localAsrEngine.nativeLibReady()) }
+        }
     }
 
     fun updateGlmApiKey(key: String) = viewModelScope.launch {
@@ -145,5 +168,40 @@ class SettingsViewModel @Inject constructor(
 
     fun clearExportResult() {
         _uiState.update { it.copy(exportLogResult = null) }
+    }
+
+    // -------------------- ASR 引擎切换 / 模型管理 --------------------
+
+    fun setAsrEngineType(t: String) = viewModelScope.launch {
+        appPreferences.setAsrEngineType(t)
+        logger.i("Settings", "asr engine switched → $t")
+    }
+
+    fun setAsrMirrorIndex(i: Int) = viewModelScope.launch {
+        appPreferences.setAsrDownloadMirrorIndex(i.coerceIn(0, AsrModelUrls.MIRROR_PREFIXES.lastIndex))
+    }
+
+    fun requestAsrDownloadConfirm() {
+        _uiState.update { it.copy(showAsrDownloadConfirm = true) }
+    }
+
+    fun dismissAsrDownloadConfirm() {
+        _uiState.update { it.copy(showAsrDownloadConfirm = false) }
+    }
+
+    fun startAsrDownload(activityContext: Context) {
+        _uiState.update { it.copy(showAsrDownloadConfirm = false) }
+        logger.i("Settings", "asr download start requested")
+        AsrModelDownloadService.start(activityContext)
+    }
+
+    fun cancelAsrDownload(activityContext: Context) {
+        logger.i("Settings", "asr download cancel requested")
+        AsrModelDownloadService.cancel(activityContext)
+    }
+
+    fun deleteAsrModel() = viewModelScope.launch {
+        logger.i("Settings", "asr model delete requested")
+        asrModelManager.delete()
     }
 }

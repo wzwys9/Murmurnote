@@ -4,13 +4,14 @@ import android.content.Context
 import app.murmurnote.android.audio.AudioConverter
 import app.murmurnote.android.audio.AudioFileInspector
 import app.murmurnote.android.audio.AudioSplitter
+import app.murmurnote.android.data.asr.AsrEngine
+import app.murmurnote.android.data.asr.AsrEngineProvider
 import app.murmurnote.android.data.local.entity.ExtractedItem
 import app.murmurnote.android.data.local.entity.ItemType
 import app.murmurnote.android.data.local.entity.ProcessingStatus
 import app.murmurnote.android.data.local.entity.Recording
 import app.murmurnote.android.data.local.entity.RecordingSource
 import app.murmurnote.android.data.local.entity.TranscriptSegment
-import app.murmurnote.android.data.remote.glm.GlmAsrClient
 import app.murmurnote.android.data.remote.ollama.OllamaClient
 import app.murmurnote.android.data.remote.ollama.dto.ExtractionResult
 import app.murmurnote.android.data.repository.ItemRepository
@@ -44,7 +45,7 @@ class AudioPipeline @Inject constructor(
     private val audioConverter: AudioConverter,
     private val audioSplitter: AudioSplitter,
     private val audioInspector: AudioFileInspector,
-    private val asrClient: GlmAsrClient,
+    private val asrEngineProvider: AsrEngineProvider,
     private val llmClient: OllamaClient,
     private val recordingRepository: RecordingRepository,
     private val itemRepository: ItemRepository,
@@ -132,8 +133,20 @@ class AudioPipeline @Inject constructor(
             // 经由 onProgress 回调跨协程调用 send() 不会再触发 Flow invariant 违例。
             stageName = "transcribe"
             recordingRepository.setStatus(recordingId, ProcessingStatus.TRANSCRIBING)
-            val transcripts = transcribeAll(slices) { idx, total, partial ->
-                send(PipelineStage.Transcribing(idx, total, partial))
+            // 选 ASR 引擎（云端 / 本地）。NotReady 直接抛友好错误，由 catch 走 Failed 分支：
+            // 用户在详情页看到 errorMessage，就知道要回设置页修。
+            val engine: AsrEngine = when (val sel = asrEngineProvider.current()) {
+                is AsrEngineProvider.Selection.Active -> sel.engine
+                is AsrEngineProvider.Selection.NotReady -> error(sel.reason)
+            }
+            logger.i("Pipe", "asr engine = ${engine.engineType}")
+            val transcripts = try {
+                transcribeAll(slices, engine) { idx, total, partial ->
+                    send(PipelineStage.Transcribing(idx, total, partial))
+                }
+            } finally {
+                // 本地引擎释放 OfflineRecognizer 的 200MB+ 内存；云端是 no-op。
+                runCatching { engine.release() }
             }
             val fullText = transcripts.joinToString("\n") { it.text }
 
@@ -216,38 +229,37 @@ class AudioPipeline @Inject constructor(
 
     private suspend fun transcribeAll(
         slices: List<AudioSplitter.Slice>,
+        engine: AsrEngine,
         onProgress: suspend (Int, Int, String) -> Unit
     ): List<TranscriptOf> = coroutineScope {
-        val sem = Semaphore(ASR_CONCURRENCY)
+        // 本地引擎单实例 ~200MB 内存，并行解码会 OOM；云端 GLM 仍按原 ASR_CONCURRENCY 跑。
+        val concurrency = when (engine.engineType) {
+            app.murmurnote.android.data.asr.AsrEngineType.LOCAL_FIRE_RED_ASR -> 1
+            else -> ASR_CONCURRENCY
+        }
+        val sem = Semaphore(concurrency)
         val total = slices.size
         val batchStart = System.currentTimeMillis()
         val deferreds = slices.mapIndexed { index, slice ->
             async(Dispatchers.IO) {
                 sem.withPermit {
                     val segStart = System.currentTimeMillis()
-                    val sb = StringBuilder()
-                    asrClient.transcribeStream(slice.file).collect { ev ->
-                        when (ev) {
-                            is GlmAsrClient.Event.Delta -> {
-                                sb.append(ev.text)
-                                onProgress(index, total, sb.toString())
-                            }
-                            is GlmAsrClient.Event.Done -> {
-                                if (sb.isEmpty()) sb.append(ev.finalText)
-                            }
-                            is GlmAsrClient.Event.Error -> {
-                                error("ASR 段 ${index + 1}/$total 失败：${ev.code} ${ev.message.take(120)}")
-                            }
-                        }
+                    val result = engine.transcribe(slice.file) { _ ->
+                        // 段内细粒度进度只对单段实时 UI 有用，Pipeline 这层按段汇总即可，
+                        // 段中间继续 emit 一次 partial="" 让 PipelineStage.Transcribing 的"已识别 N 段"刷新。
+                        onProgress(index, total, "")
                     }
-                    // 每段完成留一行：用户排查"3 段里只有 2 段有字"时不必逐条 SSE 翻 GlmAsrClient 的 [ASR] 行。
+                    val text = result.getOrElse { e ->
+                        error("ASR 段 ${index + 1}/$total 失败：${e.message?.take(160) ?: e.javaClass.simpleName}")
+                    }.text
+                    onProgress(index, total, text)
                     logger.i(
                         "Pipe",
-                        "seg ${index + 1}/$total transcribed chars=${sb.length} elapsed=${System.currentTimeMillis() - segStart}ms"
+                        "seg ${index + 1}/$total transcribed chars=${text.length} elapsed=${System.currentTimeMillis() - segStart}ms"
                     )
                     TranscriptOf(
                         index = index,
-                        text = sb.toString(),
+                        text = text,
                         startMs = slice.startMs,
                         endMs = slice.endMs
                     )

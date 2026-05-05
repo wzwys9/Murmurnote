@@ -77,8 +77,16 @@ android {
 
     // AGP 8.7.3 自带的 NonNullableMutableLiveDataDetector 跑到 Kotlin 2.0.21 K2 metadata 上会崩,
     // 是 lint 的工具 bug,跟代码无关。release 走 lintVitalAnalyzeRelease 强制跑 lint,只能在这里把这一项关掉。
+    // 同源问题：RememberInCompositionDetector 在 K2 上抛 IncompatibleClassChangeError，错误消息里
+    // 也明确建议 disable，等 AGP/Compose 配上跟 Kotlin 2.0.21 K2 一致的 lint API 再开回来。
     lint {
         disable += "NullSafeMutableLiveData"
+        // RememberInCompositionDetectorKt 整个 helper 文件在 K2 metadata 上抛 IncompatibleClassChangeError，
+        // 任何调到它的 detector 都会 hard-fail —— 已知至少这三个 Compose runtime 检测器都会撞同一处。
+        // AGP/Compose 升到与 Kotlin 2.0.21 K2 一致的 lint API 之前都得绕开。
+        disable += "RememberInComposition"
+        disable += "FrequentlyChangingValue"
+        disable += "AutoboxingStateCreation"
     }
 
     // ffmpeg-kit 的原生 .so 在四个 ABI 上一共占 ~175 MB,通用 APK 把它们全打进去就是 ~180 MB。
@@ -103,6 +111,20 @@ android {
                 "META-INF/{AL2.0,LGPL2.1}"
             )
         }
+        // sherpa-onnx 的几个 .so 自带的 ELF 调试段不去掉，stripDebugSymbols 已经会喊"Unable to strip"
+        // 但仍然会打进包；这里显式声明它们不参与压缩，加快 APK 安装时的 dex 优化路径。
+        jniLibs {
+            useLegacyPackaging = false
+        }
+    }
+
+    // assets 里的模型文件（.onnx ~770MB）不要 zip 压缩 ——
+    // (a) int8 量化二进制几乎压不出来，反而拖慢 APK 安装
+    // (b) sherpa-onnx 启动时要求"文件路径"，AsrModelManager.installBundledModelIfNeeded 会从
+    //     assets 拷到 filesDir；assets 不压缩才能用 mmap 直接拷，速度快几倍
+    // tokens.txt 比较小，顺手不压
+    androidResources {
+        noCompress += listOf("onnx", "txt")
     }
 
     ksp {
@@ -115,6 +137,9 @@ dependencies {
     implementation(libs.androidx.core.ktx)
     implementation(libs.androidx.appcompat)
     implementation(libs.material)
+
+    // 反射调用 sherpa-onnx Kotlin 数据类的命名参数构造（避免硬编码字段顺序，跨小版本更稳）
+    implementation(libs.kotlin.reflect)
 
     // Compose
     val composeBom = platform(libs.androidx.compose.bom)
@@ -170,4 +195,12 @@ dependencies {
 
     // Coil
     implementation(libs.coil.compose)
+
+    // 本地 ASR：tar.bz2 解压（解 sherpa-onnx 模型包）。
+    implementation(libs.commons.compress)
+
+    // 本地 ASR JNI 库：sherpa-onnx Android AAR。官方未发到 Maven Central，开发者把
+    // sherpa-onnx-v1.12.39-android.tar.bz2 解压出来的 .aar 放到 app/libs/ 即可被自动拾取。
+    // 缺失也能正常编译 —— LocalAsrEngine 走反射，运行时检测不到会显式报错让用户去设置页提示。
+    implementation(fileTree(mapOf("dir" to "libs", "include" to listOf("*.aar"))))
 }

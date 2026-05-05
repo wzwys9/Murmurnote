@@ -40,3 +40,13 @@
 # FFmpeg
 -keep class com.arthenica.ffmpegkit.** { *; }
 -keep class com.arthenica.smartexception.** { *; }
+
+# sherpa-onnx：JNI 反射调用入口和数据类，整包保留以防 R8 误删。
+-keep class com.k2fsa.sherpa.onnx.** { *; }
+-keepclassmembers class com.k2fsa.sherpa.onnx.** { *; }
+-dontwarn com.k2fsa.sherpa.onnx.**
+
+# commons-compress：tar/bz2 反射加载的解压器实现类。
+-dontwarn org.apache.commons.compress.**
+-keep class org.apache.commons.compress.compressors.bzip2.** { *; }
+-keep class org.apache.commons.compress.archivers.tar.** { *; }
