@@ -527,8 +527,8 @@ fun AsrEngineSection(
                 onSelected = { onEngineSelected(AsrEngineType.CLOUD_GLM.name) }
             )
             EngineRadioRow(
-                title = "本地（FireRedASR v2）",
-                subtitle = "完全离线、隐私优先、需先下载约 220MB 模型",
+                title = "本地（Qwen3-ASR 0.6B）",
+                subtitle = "完全离线、中文和方言覆盖更强、需约 1GB 存储",
                 selected = isLocal,
                 onSelected = { onEngineSelected(AsrEngineType.LOCAL_FIRE_RED_ASR.name) }
             )
@@ -613,12 +613,12 @@ private fun LocalModelStatusBlock(
                 AsrModelManager.ModelStatus.NotDownloaded -> {
                     Text("模型未下载", style = MaterialTheme.typography.bodyMedium)
                     Text(
-                        "首次启用本地引擎前需要下载约 220MB 的 FireRedASR v2。",
+                        "首次启用本地引擎前需要下载约 838MiB 的 Qwen3-ASR 0.6B 压缩包。",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                     MirrorPicker(mirrorIndex, mirrorOptions, onMirrorSelected)
-                    Button(onClick = onRequestDownload) { Text("下载模型（约 220MB）") }
+                    Button(onClick = onRequestDownload) { Text("下载模型（约 838MiB）") }
                 }
                 is AsrModelManager.ModelStatus.Downloading -> {
                     Text("下载中：${(status.progress * 100).toInt()}%", style = MaterialTheme.typography.bodyMedium)
@@ -655,9 +655,10 @@ private fun LocalModelStatusBlock(
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
-                    ConcurrencySelector(
-                        current = localConcurrency,
-                        onChanged = onConcurrencyChanged
+                    Text(
+                        "Qwen3 模型较大，本地识别固定单路运行。",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                     OutlinedButton(onClick = onDeleteModel) { Text("删除模型") }
                 }
@@ -760,7 +761,7 @@ fun AsrDownloadConfirmDialog(
         title = { Text("下载本地 ASR 模型") },
         text = {
             Text(
-                "FireRedASR v2 模型约 220MB。国内网络下载可能需要 10–30 分钟，建议在 WiFi 下进行。\n\n" +
+                "Qwen3-ASR 0.6B int8 压缩包约 838MiB，解压后接近 1GB。国内网络下载可能需要较长时间，建议在 WiFi 下进行。\n\n" +
                     "下载会在通知栏显示进度，可随时取消并继续（断点续传）。"
             )
         },

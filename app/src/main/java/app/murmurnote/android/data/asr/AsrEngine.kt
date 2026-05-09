@@ -27,7 +27,7 @@ interface AsrEngine {
         onProgress: suspend (Float) -> Unit = {}
     ): Result<AsrResult>
 
-    /** 释放资源。云端实现无成本，本地实现要 release OfflineRecognizer，否则 200MB+ 内存泄漏。 */
+    /** 释放资源。云端实现无成本，本地实现要 release OfflineRecognizer，否则会长期占用模型内存。 */
     fun release()
 }
 

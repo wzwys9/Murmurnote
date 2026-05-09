@@ -31,11 +31,12 @@ import javax.inject.Singleton
  *
  * 仓库布局（context.filesDir）：
  *   asr_models/
- *     fire_red_asr_v2/
- *       encoder.int8.onnx     ← decode 用
- *       decoder.int8.onnx     ← decode 用
- *       tokens.txt
- *     tarball.downloading     ← 临时文件，下载中或被中断
+ *     qwen3_asr_0_6b/
+ *       conv_frontend.onnx
+ *       encoder.int8.onnx
+ *       decoder.int8.onnx
+ *       tokenizer/
+ *     qwen3_asr.downloading   ← 临时文件，下载中或被中断
  *
  * 下载：OkHttp + Range 断点续传。请求 200 直接覆盖；206 追加。下载到 *.downloading，
  * 校验 + 解压完毕才 delete 它，确保不会被半成品当成完整文件。
@@ -66,30 +67,39 @@ class AsrModelManager @Inject constructor(
 
     @Volatile private var cancelRequested = false
 
-    fun modelDir(): File = File(context.filesDir, "asr_models/fire_red_asr_v2").apply { mkdirs() }
+    fun modelDir(): File = File(context.filesDir, "asr_models/qwen3_asr_0_6b").apply { mkdirs() }
     private fun rootDir(): File = File(context.filesDir, "asr_models").apply { mkdirs() }
-    private fun tarballFile(): File = File(rootDir(), "tarball.downloading")
+    private fun legacyModelDir(): File = File(context.filesDir, "asr_models/fire_red_asr_v2")
+    private fun tarballFile(): File = File(rootDir(), "qwen3_asr.downloading")
 
     /**
      * 同步算一次"当前模型在不在"。AsrEngineProvider / LocalAsrEngine 调用，不写状态流。
      *
-     * 兼容两种布局（不去硬编码具体文件名）：
-     *   - CTC 版：model.int8.onnx + tokens.txt
-     *   - AED 版：encoder.int8.onnx + decoder.int8.onnx + tokens.txt
-     * 判据：tokens.txt 存在且非空 + 目录下所有 .onnx 文件大小总和 ≥ MODEL_MIN_TOTAL_BYTES。
+     * 当前只把 Qwen3-ASR 0.6B 布局视为就绪。旧版 SenseVoice / FireRedASR 即使仍在 filesDir，
+     * 也会被视为过期，启动后由 bundled assets 或用户下载替换。
      */
     fun isModelReady(): Boolean {
         val dir = modelDir()
         if (!dir.exists() || !dir.isDirectory) return false
-        val tokens = File(dir, "tokens.txt")
-        if (!tokens.exists() || tokens.length() <= 0L) {
-            logger.d("ModelMgr", "isModelReady=false: tokens.txt 缺失或为空")
+        val required = listOf(
+            "conv_frontend.onnx",
+            "encoder.int8.onnx",
+            "decoder.int8.onnx",
+            "tokenizer/merges.txt",
+            "tokenizer/tokenizer_config.json",
+            "tokenizer/vocab.json"
+        )
+        val missing = required.filter { rel -> File(dir, rel).length() <= 0L }
+        if (missing.isNotEmpty()) {
+            logger.d("ModelMgr", "isModelReady=false: Qwen3-ASR 文件缺失或为空：$missing")
             return false
         }
-        val onnxTotal = dir.listFiles { f -> f.isFile && f.name.endsWith(".onnx") }
-            ?.sumOf { it.length() } ?: 0L
+        val onnxTotal = onnxTotalBytes(dir)
         if (onnxTotal < AsrModelUrls.MODEL_MIN_TOTAL_BYTES) {
-            val files = dir.listFiles()?.joinToString(", ") { "${it.name}=${it.length()}" } ?: "<空目录>"
+            val files = dir.walkTopDown()
+                .filter { it.isFile }
+                .joinToString(", ") { "${it.relativeTo(dir).path}=${it.length()}" }
+                .ifBlank { "<空目录>" }
             logger.d("ModelMgr", "isModelReady=false: onnx 总大小 $onnxTotal < ${AsrModelUrls.MODEL_MIN_TOTAL_BYTES}; 目录内容=$files")
             return false
         }
@@ -104,8 +114,8 @@ class AsrModelManager @Inject constructor(
 
     private fun computeStatus(): ModelStatus {
         if (isModelReady()) {
-            // 模型目录里所有文件总和（含 tokens.txt 和全部 .onnx），UI 显示"占用空间"用
-            val totalBytes = modelDir().listFiles()?.sumOf { it.length() } ?: 0L
+            // 模型目录里所有运行文件总和，UI 显示"占用空间"用
+            val totalBytes = directorySize(modelDir())
             return ModelStatus.Ready(totalBytes)
         }
         // 已部分下载到 tarball 但还没解压成功 → 视为 NotDownloaded（用户继续点下载会断点续）
@@ -139,6 +149,7 @@ class AsrModelManager @Inject constructor(
             // 解压
             extractTarBz2(tarball)
             tarball.delete()
+            deleteLegacyModelIfPresent()
 
             if (!isModelReady()) {
                 val msg = "解压完成后模型文件大小异常"
@@ -181,23 +192,27 @@ class AsrModelManager @Inject constructor(
     suspend fun installBundledModelIfNeeded(): Boolean = withContext(Dispatchers.IO) {
         if (isModelReady()) return@withContext true
         val am = context.assets
-        val assetRoot = "asr_models/fire_red_asr_v2"
-        val assetEntries = runCatching { am.list(assetRoot)?.toList().orEmpty() }
+        val assetRoot = "asr_models/qwen3_asr_0_6b"
+        val assetEntries = runCatching { listAssetFiles(assetRoot) }
             .getOrElse { emptyList() }
         if (assetEntries.isEmpty()) {
             logger.d("ModelMgr", "no bundled model in assets/$assetRoot")
             return@withContext false
         }
         logger.i("ModelMgr", "installing bundled model from assets, ${assetEntries.size} files")
-        val outDir = modelDir().apply { mkdirs() }
+        val outDir = modelDir().apply {
+            deleteRecursively()
+            mkdirs()
+        }
         // 估总大小做进度条；assets 拷不出 totalBytes，逐文件拷 + 用文件序号当 rough 进度。
         var done = 0
         val total = assetEntries.size
-        for (name in assetEntries) {
+        for (relativePath in assetEntries) {
             if (cancelRequested) throw CancellationException("安装已取消")
-            val target = File(outDir, name)
+            val target = File(outDir, relativePath)
+            target.parentFile?.mkdirs()
             if (target.exists()) target.delete()
-            am.open("$assetRoot/$name").use { input ->
+            am.open("$assetRoot/$relativePath").use { input ->
                 FileOutputStream(target).use { out ->
                     val buf = ByteArray(256 * 1024)
                     var written = 0L
@@ -218,14 +233,16 @@ class AsrModelManager @Inject constructor(
             done++
             val rough = done.toFloat() / total
             _status.value = ModelStatus.Extracting(0.85f + rough * 0.15f)
-            logger.i("ModelMgr", "asset → ${target.name} size=${target.length()}")
+            logger.i("ModelMgr", "asset → ${target.relativeTo(outDir).path} size=${target.length()}")
         }
+        deleteNonRuntimeModelFiles(outDir)
         if (!isModelReady()) {
             val msg = "assets 拷贝完成但文件大小异常"
             _status.value = ModelStatus.Corrupted(msg)
             logger.e("ModelMgr", msg, null)
             return@withContext false
         }
+        deleteLegacyModelIfPresent()
         appPreferences.setAsrBundledInstalled(true)
         refreshStatus()
         logger.i("ModelMgr", "bundled model install done")
@@ -234,7 +251,7 @@ class AsrModelManager @Inject constructor(
 
     /** 是否在 assets 里塞了内置模型；UI 用来决定要不要显示"下载模型"按钮。 */
     fun hasBundledAssets(): Boolean = runCatching {
-        context.assets.list("asr_models/fire_red_asr_v2")?.isNotEmpty() == true
+        context.assets.list("asr_models/qwen3_asr_0_6b")?.isNotEmpty() == true
     }.getOrDefault(false)
 
     // -------------------- 下载实现 --------------------
@@ -373,7 +390,7 @@ class AsrModelManager @Inject constructor(
     private suspend fun extractTarBz2(tarball: File) {
         val outRoot = rootDir()
         val expectedTopDir = AsrModelUrls.FIRE_RED_ASR_TARBALL_TOP_DIR
-        // 先解到一个临时位置，避免半成品占据 fire_red_asr_v2/
+        // 先解到一个临时位置，避免半成品占据 qwen3_asr_0_6b/
         val staging = File(outRoot, "_staging").apply {
             deleteRecursively()
             mkdirs()
@@ -381,8 +398,8 @@ class AsrModelManager @Inject constructor(
         val tarSize = tarball.length().coerceAtLeast(1)
         var processed = 0L
 
-        // 解压阶段进度刷新：原先按 entry 边界刷一次，FireRedASR 的 encoder.int8.onnx ~150MB 是单个 entry，
-        // 用户看到的就是"卡在 85%"几分钟。改成每 ~1MB 或 500ms 节流刷一次，UI 持续动起来。
+        // 解压阶段进度刷新：Qwen3 的 decoder/encoder 是大文件，按 entry 刷新会长时间卡在 85%。
+        // 改成每 ~1MB 或 500ms 节流刷一次，UI 持续动起来。
         var lastEmittedAt = 0L
         var lastEmittedBytes = 0L
         FileInputStream(tarball).use { fin ->
@@ -424,7 +441,7 @@ class AsrModelManager @Inject constructor(
             }
         }
 
-        // 把 staging/<expectedTopDir>/* rename 到 fire_red_asr_v2/
+        // 把 staging/<expectedTopDir>/* rename 到 qwen3_asr_0_6b/
         val src = File(staging, expectedTopDir).takeIf { it.exists() }
             ?: staging.listFiles()?.firstOrNull { it.isDirectory }
             ?: error("解压后找不到模型顶层目录")
@@ -436,7 +453,48 @@ class AsrModelManager @Inject constructor(
             src.copyRecursively(dest, overwrite = true)
             src.deleteRecursively()
         }
+        deleteNonRuntimeModelFiles(dest)
         staging.deleteRecursively()
         logger.i("ModelMgr", "extract done → ${dest.absolutePath}")
+    }
+
+    private fun onnxTotalBytes(dir: File): Long =
+        if (!dir.exists()) 0L else dir.walkTopDown()
+            .filter { it.isFile && it.name.endsWith(".onnx") }
+            .sumOf { it.length() }
+
+    private fun directorySize(dir: File): Long =
+        if (!dir.exists()) 0L else dir.walkTopDown()
+            .filter { it.isFile }
+            .sumOf { it.length() }
+
+    private fun deleteLegacyModelIfPresent() {
+        val legacy = legacyModelDir()
+        if (legacy.exists()) {
+            legacy.deleteRecursively()
+            logger.i("ModelMgr", "deleted legacy model dir: ${legacy.absolutePath}")
+        }
+    }
+
+    private fun deleteNonRuntimeModelFiles(dir: File) {
+        File(dir, "test_wavs").deleteRecursively()
+        File(dir, "README.md").delete()
+    }
+
+    private fun listAssetFiles(assetRoot: String): List<String> {
+        fun walk(assetPath: String, relativePath: String): List<String> {
+            val children = context.assets.list(assetPath)?.toList().orEmpty()
+            if (children.isEmpty()) return listOf(relativePath)
+            return children.flatMap { child ->
+                val childAssetPath = "$assetPath/$child"
+                val childRelativePath = if (relativePath.isEmpty()) child else "$relativePath/$child"
+                walk(childAssetPath, childRelativePath)
+            }
+        }
+
+        return context.assets.list(assetRoot)
+            ?.toList()
+            .orEmpty()
+            .flatMap { child -> walk("$assetRoot/$child", child) }
     }
 }

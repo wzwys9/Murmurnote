@@ -15,8 +15,9 @@ import kotlin.reflect.full.primaryConstructor
  * LocalAsrEngine 看到的是干净的 decode(samples) → String。
  *
  * 反射目标 API（sherpa-onnx Android 1.12.x，包名 com.k2fsa.sherpa.onnx）：
+ *   - data class OfflineQwen3AsrModelConfig(convFrontend, encoder, decoder, tokenizer, ...)
  *   - data class OfflineFireRedAsrModelConfig(encoder: String = "", decoder: String = "")
- *   - data class OfflineModelConfig(... fireRedAsr, tokens, numThreads, debug, provider, modelType ...)
+ *   - data class OfflineModelConfig(... qwen3Asr, fireRedAsr, tokens, numThreads, debug, provider, modelType ...)
  *   - data class OfflineRecognizerConfig(... modelConfig, decodingMethod ...)
  *   - class OfflineRecognizer(config)
  *       fun createStream(): OfflineStream
@@ -70,26 +71,53 @@ class SherpaBridge private constructor(
         const val SAMPLE_RATE = 16000
         private const val PKG = "com.k2fsa.sherpa.onnx"
 
-        /** 用模型文件大小区分 SingleFile 布局：SenseVoice ~90MB，FireRedASR CTC ~740MB。 */
-        private const val SINGLE_FILE_MODEL_SIZE_THRESHOLD = 200L * 1024 * 1024
+        /** 用模型文件大小区分 SingleFile 布局：SenseVoice ~226MB，FireRedASR CTC ~740MB。 */
+        private const val SINGLE_FILE_MODEL_SIZE_THRESHOLD = 500L * 1024 * 1024
 
         /**
          * 在 IO 线程调；构造 OfflineRecognizer（加载 ONNX 模型）。
          *
-         * 支持三种模型布局，按文件存在自动探测：
-         *   - SenseVoice (model.int8.onnx < 200MB)：ITN 开启，自带标点
-         *   - FireRedASR CTC (model.int8.onnx > 200MB)：纯字符，无标点
+         * 支持四种模型布局，按文件存在自动探测：
+         *   - Qwen3-ASR 0.6B (conv_frontend + encoder + decoder + tokenizer)
+         *   - SenseVoice (model.int8.onnx < 500MB)：ITN 开启
+         *   - FireRedASR CTC (model.int8.onnx > 500MB)：纯字符，无标点
          *   - FireRedASR AED (encoder.int8.onnx + decoder.int8.onnx)：encoder+decoder
          */
         fun create(modelDir: File, logger: Logger): SherpaBridge {
             val tokens = File(modelDir, "tokens.txt").absolutePath
-            require(File(tokens).exists()) { "tokens.txt 不存在：$tokens" }
-
+            val convFrontendFile = File(modelDir, "conv_frontend.onnx")
             val modelFile = File(modelDir, "model.int8.onnx")
             val encoderFile = File(modelDir, "encoder.int8.onnx")
             val decoderFile = File(modelDir, "decoder.int8.onnx")
+            val tokenizerDir = File(modelDir, "tokenizer")
             val modelConfig: Any = when {
+                convFrontendFile.exists() && encoderFile.exists() && decoderFile.exists() && tokenizerDir.isDirectory -> {
+                    logger.i(
+                        "LocalAsr",
+                        "Qwen3-ASR layout (onnx ~${listOf(convFrontendFile, encoderFile, decoderFile).sumOf { it.length() } / 1024 / 1024}MB)"
+                    )
+                    val qwen3Peer = constructByName(
+                        "$PKG.OfflineQwen3AsrModelConfig",
+                        mapOf(
+                            "convFrontend" to convFrontendFile.absolutePath,
+                            "encoder" to encoderFile.absolutePath,
+                            "decoder" to decoderFile.absolutePath,
+                            "tokenizer" to tokenizerDir.absolutePath,
+                            "maxTotalLen" to 512,
+                            "maxNewTokens" to 512
+                        )
+                    )
+                    constructByName(
+                        "$PKG.OfflineModelConfig",
+                        mapOf(
+                            "qwen3Asr" to qwen3Peer,
+                            "numThreads" to 4,
+                            "provider" to "cpu"
+                        )
+                    )
+                }
                 modelFile.exists() && modelFile.length() < SINGLE_FILE_MODEL_SIZE_THRESHOLD -> {
+                    require(File(tokens).exists()) { "tokens.txt 不存在：$tokens" }
                     logger.i("LocalAsr", "SenseVoice layout (model.int8.onnx ~${modelFile.length() / 1024 / 1024}MB)")
                     val svPeer = constructByName(
                         "$PKG.OfflineSenseVoiceModelConfig",
@@ -110,6 +138,7 @@ class SherpaBridge private constructor(
                     )
                 }
                 modelFile.exists() -> {
+                    require(File(tokens).exists()) { "tokens.txt 不存在：$tokens" }
                     logger.i("LocalAsr", "FireRedASR layout=CTC (model.int8.onnx ~${modelFile.length() / 1024 / 1024}MB)")
                     val ctcPeer = constructByName(
                         "$PKG.OfflineFireRedAsrCtcModelConfig",
@@ -126,6 +155,7 @@ class SherpaBridge private constructor(
                     )
                 }
                 encoderFile.exists() && decoderFile.exists() -> {
+                    require(File(tokens).exists()) { "tokens.txt 不存在：$tokens" }
                     logger.i("LocalAsr", "FireRedASR layout=AED (encoder+decoder)")
                     val aedPeer = constructByName(
                         "$PKG.OfflineFireRedAsrModelConfig",
@@ -144,7 +174,7 @@ class SherpaBridge private constructor(
                         )
                     )
                 }
-                else -> error("找不到 ASR 模型文件。modelDir=${modelDir.absolutePath}")
+                else -> error("找不到支持的 ASR 模型文件。modelDir=${modelDir.absolutePath}")
             }
 
             val recognizerConfig = constructByName(

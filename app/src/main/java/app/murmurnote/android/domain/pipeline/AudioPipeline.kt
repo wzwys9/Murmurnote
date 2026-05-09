@@ -150,7 +150,7 @@ class AudioPipeline @Inject constructor(
                     send(PipelineStage.Transcribing(idx, total, partial))
                 }
             } finally {
-                // 本地引擎释放 OfflineRecognizer 的 200MB+ 内存；云端是 no-op。
+                // 本地引擎释放 OfflineRecognizer 的模型内存；云端是 no-op。
                 runCatching { engine.release() }
             }
             val fullText = transcripts.joinToString("\n") { it.text }
@@ -237,12 +237,11 @@ class AudioPipeline @Inject constructor(
         engine: AsrEngine,
         onProgress: suspend (Int, Int, String) -> Unit
     ): List<TranscriptOf> = coroutineScope {
-        // 本地引擎单实例 ~200MB 内存，并行解码会 OOM；云端 GLM 仍按原 ASR_CONCURRENCY 跑。
+        // Qwen3 本地模型接近 1GB，固定单实例串行解码；云端 GLM 仍按原 ASR_CONCURRENCY 跑。
         val concurrency = when (engine.engineType) {
             AsrEngineType.LOCAL_FIRE_RED_ASR -> {
-                val n = appPreferences.asrLocalConcurrency.first().coerceIn(1, 3)
-                (engine as? LocalAsrEngine)?.setConcurrency(n)
-                n
+                (engine as? LocalAsrEngine)?.setConcurrency(1)
+                1
             }
             else -> ASR_CONCURRENCY
         }

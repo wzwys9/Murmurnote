@@ -10,7 +10,7 @@ import javax.inject.Singleton
  * 按用户偏好返回当前要用的 AsrEngine。每次 transcribe 前调一次 current()，
  * 不缓存切换状态 —— 让用户在设置里改完引擎类型立刻生效。
  *
- * Local 引擎用 javax.inject.Provider 延迟注入，避免应用启动就构造 ONNX runtime（200MB+ 内存）。
+ * Local 引擎用 javax.inject.Provider 延迟注入，避免应用启动就构造 ONNX runtime。
  */
 @Singleton
 class AsrEngineProvider @Inject constructor(
