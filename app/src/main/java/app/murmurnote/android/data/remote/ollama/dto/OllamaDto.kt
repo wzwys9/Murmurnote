@@ -9,16 +9,10 @@ data class ChatMessage(
 )
 
 @Serializable
-data class ThinkingConfig(
-    val type: String = "enabled",            // "enabled" or "disabled"
-    val reasoning_effort: String? = null      // "high" or "max", only meaningful when type="enabled"
-)
-
-@Serializable
 data class ChatCompletionRequest(
     val model: String,
     val messages: List<ChatMessage>,
-    val thinking: ThinkingConfig? = null,
+    val reasoning_effort: String? = null,
     val temperature: Double = 0.3,
     val stream: Boolean = false
 )

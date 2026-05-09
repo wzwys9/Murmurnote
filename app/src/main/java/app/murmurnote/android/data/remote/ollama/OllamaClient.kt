@@ -6,7 +6,6 @@ import app.murmurnote.android.data.preference.AppPreferences
 import app.murmurnote.android.data.remote.ollama.dto.ChatCompletionRequest
 import app.murmurnote.android.data.remote.ollama.dto.ChatCompletionResponse
 import app.murmurnote.android.data.remote.ollama.dto.ChatMessage
-import app.murmurnote.android.data.remote.ollama.dto.ThinkingConfig
 import app.murmurnote.android.data.remote.ollama.dto.ExtractedItemDto
 import app.murmurnote.android.data.remote.ollama.dto.ExtractionResult
 import app.murmurnote.android.data.remote.ollama.dto.ModelsResponse
@@ -95,17 +94,14 @@ class OllamaClient @Inject constructor(
             ?: context.getString(R.string.prompt_extract_user_template)
         val userPrompt = userPromptTemplate.format(transcript)
 
-        val thinking = when {
-            effort == "none" -> ThinkingConfig(type = "disabled")
-            else -> ThinkingConfig(type = "enabled", reasoning_effort = effort)
-        }
+        val reasoningEffort = effort.takeIf { it != "none" }
         val req = ChatCompletionRequest(
             model = model,
             messages = listOf(
                 ChatMessage("system", systemPrompt),
                 ChatMessage("user", userPrompt)
             ),
-            thinking = thinking,
+            reasoning_effort = reasoningEffort,
             temperature = 0.3,
             stream = false
         )
@@ -322,17 +318,14 @@ class OllamaClient @Inject constructor(
             append("直接输出合并后的 bullet 列表，不要任何前后文。")
         }
 
-        val thinking = when {
-            effort == "none" -> ThinkingConfig(type = "disabled")
-            else -> ThinkingConfig(type = "enabled", reasoning_effort = effort)
-        }
+        val reasoningEffort = effort.takeIf { it != "none" }
         val req = ChatCompletionRequest(
             model = model,
             messages = listOf(
                 ChatMessage("system", mergerSystem),
                 ChatMessage("user", mergerUser)
             ),
-            thinking = thinking,
+            reasoning_effort = reasoningEffort,
             temperature = 0.3,
             stream = false
         )
