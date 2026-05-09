@@ -6,6 +6,7 @@ import app.murmurnote.android.data.preference.AppPreferences
 import app.murmurnote.android.data.remote.ollama.dto.ChatCompletionRequest
 import app.murmurnote.android.data.remote.ollama.dto.ChatCompletionResponse
 import app.murmurnote.android.data.remote.ollama.dto.ChatMessage
+import app.murmurnote.android.data.remote.ollama.dto.ThinkingConfig
 import app.murmurnote.android.data.remote.ollama.dto.ExtractedItemDto
 import app.murmurnote.android.data.remote.ollama.dto.ExtractionResult
 import app.murmurnote.android.data.remote.ollama.dto.ModelsResponse
@@ -47,18 +48,37 @@ class OllamaClient @Inject constructor(
         // 长转写 map-reduce:超过这个字数就分块抽取再合并,避免单次 LLM 在中间段丢细节或截断。
         const val LONG_TRANSCRIPT_THRESHOLD = 3_000
         // 每个分块的目标字数(贪心按句号拼,不会精确到字符,允许 +/- 几百字)。
-        const val CHUNK_TARGET_CHARS = 1_500
+        const val CHUNK_TARGET_CHARS = 1_400
         // 上限保护:无论多长都不超过这个块数,超出部分合并到最后一块。
         const val MAX_CHUNKS = 6
         // 同时跑的分块抽取数:OkHttp dispatcher 默认每 host 5 并发,3 留余地给同时跑的 ASR。
         const val CHUNK_CONCURRENCY = 3
+
+        /** 分块专用的系统提示——告知模型它看到的只是长录音的一个片段。 */
+        val CHUNK_SYSTEM_PROMPT = """
+你正在处理一段较长录音的其中一个片段（非完整录音）。
+
+从当前片段提取：
+1. 本段要点（bullet 列表，以 "• " 开头，\n 换行）
+2. 结构化条目（todo/idea/note/decision）
+
+注意：
+- 这是片段，不要写 "• 主题：" 行（整体主题由后续合并步骤确定）
+- 聚焦当前片段的关键事实、决策、待办、想法
+- 条目类型：todo（待办）/ idea（想法）/ note（备忘）/ decision（决策）
+- 没有可提取事项时 items 返回 []
+- summary 至少要有 1 条 bullet，绝不可为空
+
+输出严格 JSON，无 markdown 围栏：
+{"summary":"• 事实：...\n• 待办：...","items":[{"type":"todo","content":"...","deadline":null,"sourceTimestampMs":null}]}
+""".trimIndent()
     }
 
     /**
      * 调用 chat completions 让 DeepSeek 提取结构化信息。
      * 对可重试错误（5xx / 429 / 网络异常）做指数退避；4xx（鉴权 / 请求格式）即时失败不重试，省得浪费配额。
      */
-    suspend fun extractItems(transcript: String): Result<ExtractionResult> = runCatching {
+    suspend fun extractItems(transcript: String, isChunk: Boolean = false): Result<ExtractionResult> = runCatching {
         val baseUrl = appPreferences.ollamaBaseUrl.first()
         val key = appPreferences.ollamaApiKey.first()
         val model = appPreferences.ollamaModel.first()
@@ -67,19 +87,25 @@ class OllamaClient @Inject constructor(
 
         val systemPromptOverride = appPreferences.systemPromptOverride.first()
         val userPromptOverride = appPreferences.userPromptOverride.first()
+        // 用户自定义 prompt 优先；否则分块和完整转录用不同提示
         val systemPrompt = systemPromptOverride?.takeIf { it.isNotBlank() }
-            ?: context.getString(R.string.prompt_extract_system)
+            ?: if (isChunk) CHUNK_SYSTEM_PROMPT
+            else context.getString(R.string.prompt_extract_system)
         val userPromptTemplate = userPromptOverride?.takeIf { it.isNotBlank() }
             ?: context.getString(R.string.prompt_extract_user_template)
         val userPrompt = userPromptTemplate.format(transcript)
 
+        val thinking = when {
+            effort == "none" -> ThinkingConfig(type = "disabled")
+            else -> ThinkingConfig(type = "enabled", reasoning_effort = effort)
+        }
         val req = ChatCompletionRequest(
             model = model,
             messages = listOf(
                 ChatMessage("system", systemPrompt),
                 ChatMessage("user", userPrompt)
             ),
-            reasoning_effort = effort.takeIf { it != "none" },
+            thinking = thinking,
             temperature = 0.3,
             stream = false
         )
@@ -165,7 +191,7 @@ class OllamaClient @Inject constructor(
                 chunks.mapIndexed { idx, chunk ->
                     async(Dispatchers.IO) {
                         sem.withPermit {
-                            val r = extractItems(chunk).getOrThrow()
+                            val r = extractItems(chunk, isChunk = true).getOrThrow()
                             logger.d(
                                 "Ollama",
                                 "chunk ${idx + 1}/${chunks.size} chars=${chunk.length} items=${r.items.size} summaryChars=${r.summary.length}"
@@ -186,7 +212,7 @@ class OllamaClient @Inject constructor(
         }
     }
 
-    /** 按句末标点切句,贪心拼成 ~CHUNK_TARGET_CHARS 字的块。最多 MAX_CHUNKS 块,超出部分合并到末块。 */
+    /** 按句末标点切句,贪心拼成 ~CHUNK_TARGET_CHARS 字的块,相邻块之间重叠 1–2 句以保持上下文连续。最多 MAX_CHUNKS 块,超出部分合并到末块。 */
     internal fun chunkTranscript(text: String): List<String> {
         val sentenceEnd = setOf('。', '！', '？', '.', '!', '?', '\n')
         val sentences = mutableListOf<String>()
@@ -200,22 +226,38 @@ class OllamaClient @Inject constructor(
         }
         if (sb.isNotEmpty()) sentences += sb.toString()
 
-        val chunks = mutableListOf<String>()
-        val cur = StringBuilder()
+        // 先把句子按 CHUNK_TARGET_CHARS 贪心分组（句子级，不重叠）
+        val groups = mutableListOf<MutableList<String>>()
+        var curLen = 0
         for (s in sentences) {
-            if (cur.isNotEmpty() && cur.length + s.length > CHUNK_TARGET_CHARS) {
-                chunks += cur.toString()
-                cur.clear()
+            if (groups.isEmpty() || (curLen > 0 && curLen + s.length > CHUNK_TARGET_CHARS)) {
+                groups += mutableListOf<String>()
+                curLen = 0
             }
-            cur.append(s)
+            groups.last() += s
+            curLen += s.length
         }
-        if (cur.isNotEmpty()) chunks += cur.toString()
 
-        if (chunks.size <= MAX_CHUNKS) return chunks
-        // 超出 MAX_CHUNKS:把溢出的尾部全部并到最后一块,避免无界并发。
-        val head = chunks.take(MAX_CHUNKS - 1)
-        val tail = chunks.drop(MAX_CHUNKS - 1).joinToString("")
-        return head + tail
+        // 上限保护：超出 MAX_CHUNKS 的尾部全并到最后一组
+        if (groups.size > MAX_CHUNKS) {
+            val head = groups.take(MAX_CHUNKS - 1)
+            val tail = groups.drop(MAX_CHUNKS - 1).flatten()
+            groups.clear()
+            groups.addAll(head)
+            groups += tail.toMutableList()
+        }
+
+        // 相邻块之间重叠最后 2 句，让 LLM 看到跨边界的上下文
+        val chunks = groups.mapIndexed { i, group ->
+            if (i == 0) {
+                group.joinToString("")
+            } else {
+                val prev = groups[i - 1]
+                val overlap = prev.takeLast(2).joinToString("")
+                overlap + group.joinToString("")
+            }
+        }
+        return chunks
     }
 
     /** 合并多份分块抽取结果:items 去重拼接,summary 通过 merger LLM 整合。 */
@@ -251,33 +293,46 @@ class OllamaClient @Inject constructor(
         if (key.isBlank()) error("Ollama API Key 未配置")
 
         val mergerSystem = """
-            你是一名编辑,负责把同一段录音被拆开后产出的多份子摘要,合并成一份统一的最终摘要。
-            每份子摘要都按 "• 主题：...\n• 背景：...\n• 事实：..." 的 bullet 格式给出。
-            合并要求:
-            1. 输出仍然是 bullet 列表,每条以 "• " 开头,行间用 \n 换行,不要 markdown 围栏。
-            2. 第一条必须是 "• 主题：xxx",一句话概括整段录音的总主题(综合所有子摘要里的"主题"行)。不要保留多个"主题"行。
-            3. 之后按 背景 → 事实 → 计划 → 决定 → 待办 的顺序分组,组内合并去重(意思相同的合并,关键事实不丢)。
-            4. 6-15 条为宜,长录音可适当更多,但不要灌水。
-            5. 不输出任何解释、思考过程、前后缀,只输出最终的 bullet 列表本身。
-        """.trimIndent()
+你是一名编辑，负责把一段长录音的各分段摘要合并成统一的最终摘要。
+
+各分段摘要是从录音的不同时间片段独立抽取的 bullet 列表，按时序排列。注意：分段摘要没有 "主题" 行——你需要根据所有分段的内容，自己提炼出整段录音的总主题。
+
+## 合并流程
+1. 通读所有分段摘要，理解整段录音讲了什么，识别主要话题和话题切换点
+2. 按话题归类（不是机械地按分段归类）：同一话题的内容合并到一起，跨分段的相关 bullet 合并去重
+3. 确定整体叙事结构：如果是单一话题，按「背景 → 事实 → 计划 → 决定 → 待办」组织；如果跨越多个不相关的话题，按话题分块，每个话题内部再用上述结构
+4. 构思 "主题" 行：一句话（8–40 字）概括整段录音的核心内容
+
+## 输出要求
+- bullet 列表，每条 "• " 开头，\n 换行，无 markdown 围栏
+- 第一条固定 "• 主题：xxx"（8–40 字，你根据所有分段自己提炼）
+- 之后按逻辑顺序展开：单一话题按「背景 → 事实 → 计划 → 决定 → 待办」；多话题按时序或重要性排列，每个话题内保持结构
+- 意思相同或高度相似的 bullet 合并为一条，关键事实（人名、时间、数字）不丢
+- 6–15 条为宜，内容丰富的录音可更多，但避免灌水和重复
+- 直接输出 bullet 列表，不要任何解释、思考过程、前后缀
+""".trimIndent()
 
         val mergerUser = buildString {
-            append("以下是同一段录音被分块抽取后得到的多份子摘要,请合并成统一的最终摘要:\n\n")
+            append("以下是同一段录音按时序分段抽取的子摘要，请合并成统一的最终摘要：\n\n")
             summaries.forEachIndexed { i, s ->
-                append("[子摘要 ${i + 1}]\n")
+                append("=== 第 ${i + 1} 段 ===\n")
                 append(s)
                 append("\n\n")
             }
-            append("直接输出合并后的 bullet 列表,不要任何前后文。")
+            append("直接输出合并后的 bullet 列表，不要任何前后文。")
         }
 
+        val thinking = when {
+            effort == "none" -> ThinkingConfig(type = "disabled")
+            else -> ThinkingConfig(type = "enabled", reasoning_effort = effort)
+        }
         val req = ChatCompletionRequest(
             model = model,
             messages = listOf(
                 ChatMessage("system", mergerSystem),
                 ChatMessage("user", mergerUser)
             ),
-            reasoning_effort = effort.takeIf { it != "none" },
+            thinking = thinking,
             temperature = 0.3,
             stream = false
         )

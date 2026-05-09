@@ -259,7 +259,7 @@ private data class StageDescription(
 
 private fun describe(s: PipelineStage): StageDescription = when (s) {
     is PipelineStage.Idle -> StageDescription("空闲", "", null, false, false)
-    is PipelineStage.Recording -> StageDescription("录音中", "${s.durationMs / 1000} 秒", null, false, false)
+    is PipelineStage.Recording -> StageDescription("录音中", formatElapsed(s.durationMs), null, false, false)
     is PipelineStage.Converting -> StageDescription(
         "1/4 转码音频",
         "正在把录音转成 mono WAV（GLM-ASR 要求）",
@@ -297,7 +297,8 @@ private fun describe(s: PipelineStage): StageDescription = when (s) {
 
 private fun formatElapsed(ms: Long): String {
     val s = ms / 1000
-    val mm = (s / 60).toString().padStart(2, '0')
+    val h = s / 3600
+    val mm = ((s % 3600) / 60).toString().padStart(2, '0')
     val ss = (s % 60).toString().padStart(2, '0')
-    return "$mm:$ss"
+    return if (h > 0) "$h:$mm:$ss" else "$mm:$ss"
 }

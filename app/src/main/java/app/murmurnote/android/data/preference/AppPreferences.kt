@@ -53,11 +53,11 @@ class AppPreferences @Inject constructor(
     }
 
     val ollamaModel: Flow<String> = context.dataStore.data.map {
-        it[Keys.OLLAMA_MODEL] ?: "deepseek-v4-flash"
+        it[Keys.OLLAMA_MODEL] ?: "deepseek-v4-pro"
     }
 
     val reasoningEffort: Flow<String> = context.dataStore.data.map {
-        it[Keys.REASONING_EFFORT] ?: "low"
+        it[Keys.REASONING_EFFORT] ?: "high"
     }
 
     val glmBaseUrl: Flow<String> = context.dataStore.data.map {
@@ -65,7 +65,7 @@ class AppPreferences @Inject constructor(
     }
 
     val ollamaBaseUrl: Flow<String> = context.dataStore.data.map {
-        it[Keys.OLLAMA_BASE_URL]?.takeIf { it.isNotBlank() } ?: "https://ollama.com/v1/"
+        it[Keys.OLLAMA_BASE_URL]?.takeIf { it.isNotBlank() } ?: "https://api.deepseek.com"
     }
 
     val onboardingCompleted: Flow<Boolean> = context.dataStore.data.map {

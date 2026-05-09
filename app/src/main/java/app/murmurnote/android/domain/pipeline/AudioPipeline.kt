@@ -58,7 +58,7 @@ class AudioPipeline @Inject constructor(
 ) {
 
     companion object {
-        const val MAX_DURATION_MS = 30L * 60 * 1000   // 单录音上限 30 分钟
+        const val MAX_DURATION_MS = 5L * 60 * 60 * 1000   // 单录音上限 5 小时
         const val ASR_CONCURRENCY = 3
     }
 
@@ -123,7 +123,7 @@ class AudioPipeline @Inject constructor(
             logger.i("Pipe", "converted → ${monoWav.name} size=${monoWav.length()}")
 
             val durationMs = audioInspector.durationMs(monoWav)
-            if (durationMs > MAX_DURATION_MS) error("录音超过 30 分钟限制")
+            if (durationMs > MAX_DURATION_MS) error("录音超过 5 小时限制")
             recording = recording.copy(durationMs = durationMs)
             recordingRepository.update(recording)
 

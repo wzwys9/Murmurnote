@@ -381,8 +381,8 @@ fun OllamaModelSelector(
     var expanded by remember { mutableStateOf(false) }
     val recommended = remember {
         listOf(
-            "deepseek-v4-flash" to "推荐：快速响应（默认）",
-            "deepseek-v4-pro" to "最强推理（慢）",
+            "deepseek-v4-pro" to "DeepSeek V4 Pro（默认，支持思考）",
+            "deepseek-v4-flash" to "DeepSeek V4 Flash（快速响应）",
             "glm-4.7" to "智谱 GLM-4.7",
             "kimi-k2.6" to "Moonshot Kimi",
             "qwen3-coder:480b" to "代码场景"
@@ -461,16 +461,15 @@ fun OllamaModelSelector(
 @Composable
 fun ReasoningEffortSelector(current: String, onSelected: (String) -> Unit) {
     val options = listOf(
-        Triple("none", "关闭", "最快，无思考"),
-        Triple("low", "低（推荐）", "平衡速度与质量"),
-        Triple("medium", "中", "更深入分析"),
-        Triple("high", "高", "最慢，最深入")
+        Triple("none", "关闭", "不思考，最快响应"),
+        Triple("high", "高（推荐）", "DeepSeek 默认思考强度"),
+        Triple("max", "最大", "最深度思考，复杂任务更准")
     )
     Card(modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp)) {
         Column(modifier = Modifier.padding(16.dp)) {
-            Text("思考强度", style = MaterialTheme.typography.titleMedium)
+            Text("思考模式 (DeepSeek Thinking)", style = MaterialTheme.typography.titleMedium)
             Text(
-                "AI在提取前的思考深度",
+                "开启后模型会先思考再回答，质量更高但耗时更长",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )

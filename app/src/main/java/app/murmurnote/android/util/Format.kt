@@ -7,9 +7,14 @@ import java.util.Locale
 
 fun formatDurationMs(ms: Long): String {
     val s = ms / 1000
-    val mm = s / 60
+    val hh = s / 3600
+    val mm = (s % 3600) / 60
     val ss = s % 60
-    return if (mm > 0) String.format(Locale.US, "%d:%02d", mm, ss) else "${ss}秒"
+    return when {
+        hh > 0 -> String.format(Locale.US, "%d:%02d:%02d", hh, mm, ss)
+        mm > 0 -> String.format(Locale.US, "%d:%02d", mm, ss)
+        else -> "${ss}秒"
+    }
 }
 
 fun formatRelativeTime(timestampMs: Long, now: Long = System.currentTimeMillis()): String {
