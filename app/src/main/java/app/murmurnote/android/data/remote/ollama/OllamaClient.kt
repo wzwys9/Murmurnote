@@ -142,10 +142,11 @@ class OllamaClient @Inject constructor(
                 logger.e("Ollama", "extractItems: no JSON object in response: ${cleaned.take(400)}")
                 error("无法从响应抽取 JSON: ${cleaned.take(400)}")
             }
+        val fixedJson = fixLenientJson(jsonStr)
         val parsedResult = runCatching {
-            json.decodeFromString(ExtractionResult.serializer(), jsonStr)
+            json.decodeFromString(ExtractionResult.serializer(), fixedJson)
         }.getOrElse { e ->
-            logger.e("Ollama", "extractItems: failed to parse ExtractionResult, json=${jsonStr.take(500)}", e)
+            logger.e("Ollama", "extractItems: failed to parse ExtractionResult, raw=${jsonStr.take(300)} fixed=${fixedJson.take(300)}", e)
             // 降级：summary 用全文摘要，items 为空，让用户至少能看到转写内容
             ExtractionResult(summary = "", items = emptyList())
         }
@@ -421,6 +422,44 @@ class OllamaClient @Inject constructor(
     suspend fun testConnection(): Result<Unit> = runCatching {
         val res = fetchAvailableModels().getOrThrow()
         if (res.isEmpty()) error("无可用模型")
+    }
+
+    /** 修复模型输出中缺失引号的 JSON：给未加引号的 key 和 string value 补上双引号，转为标准 JSON。 */
+    private fun fixLenientJson(raw: String): String {
+        val sb = StringBuilder()
+        var i = 0
+        while (i < raw.length) {
+            val c = raw[i]
+            when {
+                // 冒号后可能是 value，检查是否需要补引号
+                c == ':' -> {
+                    sb.append(c)
+                    i++
+                    while (i < raw.length && raw[i].isWhitespace()) { sb.append(raw[i]); i++ }
+                    if (i >= raw.length) break
+                    val n = raw[i]
+                    when {
+                        n == '"' || n == '{' || n == '[' -> { /* already structured */ }
+                        raw.startsWith("null", i) || raw.startsWith("true", i) || raw.startsWith("false", i) -> {}
+                        n == '-' || n.isDigit() -> {}
+                        else -> {
+                            sb.append('"')
+                            while (i < raw.length) {
+                                when (raw[i]) {
+                                    ',', '}', ']' -> break
+                                    else -> sb.append(raw[i++])
+                                }
+                            }
+                            sb.append('"')
+                            continue
+                        }
+                    }
+                }
+            }
+            sb.append(raw[i])
+            i++
+        }
+        return sb.toString()
     }
 
     /** 去除 <think>...</think> */
