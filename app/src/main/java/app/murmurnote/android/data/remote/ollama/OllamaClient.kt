@@ -107,8 +107,6 @@ class OllamaClient @Inject constructor(
         )
         val payload = json.encodeToString(ChatCompletionRequest.serializer(), req)
         val url = baseUrl.trimEnd('/') + "/chat/completions"
-        // 这一行让"提取阶段为什么这么慢"或"用了哪个 model + reasoning"在导出日志后一眼可见，
-        // 不用再去翻 api_logs.txt 里的 JSON body。
         logger.i(
             "Ollama",
             "extractItems begin model=$model effort=${effort.takeIf { it != "none" } ?: "-"} promptOverride=${systemPromptOverride != null || userPromptOverride != null} chars=${transcript.length}"
@@ -144,7 +142,13 @@ class OllamaClient @Inject constructor(
                 logger.e("Ollama", "extractItems: no JSON object in response: ${cleaned.take(400)}")
                 error("无法从响应抽取 JSON: ${cleaned.take(400)}")
             }
-        val parsedResult = json.decodeFromString(ExtractionResult.serializer(), jsonStr)
+        val parsedResult = runCatching {
+            json.decodeFromString(ExtractionResult.serializer(), jsonStr)
+        }.getOrElse { e ->
+            logger.e("Ollama", "extractItems: failed to parse ExtractionResult, json=${jsonStr.take(500)}", e)
+            // 降级：summary 用全文摘要，items 为空，让用户至少能看到转写内容
+            ExtractionResult(summary = "", items = emptyList())
+        }
         // 兜底:即便 prompt 已经强调"summary 不可为空", LLM 偶尔仍会顽固返回 "":这里用转写原文合成
         // 一条 bullet,保证详情页永远有总结可看。一句话型短录音用全文,长录音截 80 字。
         val finalResult = if (parsedResult.summary.isBlank()) {
