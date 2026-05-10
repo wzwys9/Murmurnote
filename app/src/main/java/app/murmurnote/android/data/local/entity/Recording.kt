@@ -19,6 +19,8 @@ data class Recording(
     val processingStatus: ProcessingStatus,
     val errorMessage: String? = null,
     val summary: String? = null,
+    val draftSummary: String? = null,
+    val finalSummary: String? = null,
     val rawTranscript: String? = null,
     val expirationDate: Long? = null
 )

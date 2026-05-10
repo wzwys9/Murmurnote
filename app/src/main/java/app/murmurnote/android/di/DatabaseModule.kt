@@ -26,7 +26,10 @@ object DatabaseModule {
             MurmurnoteDatabase.DB_NAME
         )
             .fallbackToDestructiveMigration(false)
-            .addMigrations(MurmurnoteDatabase.MIGRATION_1_2)
+            .addMigrations(
+                MurmurnoteDatabase.MIGRATION_1_2,
+                MurmurnoteDatabase.MIGRATION_2_3
+            )
             .build()
     }
 

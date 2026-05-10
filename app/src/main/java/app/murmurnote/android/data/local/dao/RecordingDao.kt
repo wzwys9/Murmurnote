@@ -80,6 +80,8 @@ interface RecordingDao {
         SELECT * FROM recordings
         WHERE title LIKE '%' || :query || '%'
            OR summary LIKE '%' || :query || '%'
+           OR draftSummary LIKE '%' || :query || '%'
+           OR finalSummary LIKE '%' || :query || '%'
            OR rawTranscript LIKE '%' || :query || '%'
         ORDER BY createdAt DESC
     """)

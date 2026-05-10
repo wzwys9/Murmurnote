@@ -131,7 +131,8 @@ fun DetailScreen(
                 if (showSummaryCard) {
                     item {
                         SummaryCard(
-                            summary = rec.summary,
+                            summary = rec.finalSummary ?: rec.summary,
+                            draftSummary = rec.draftSummary,
                             createdAt = rec.createdAt,
                             regenerating = state.regeneratingSummary,
                             regenerateError = state.regenerateError,
@@ -434,6 +435,7 @@ private fun ReprocessCard(
 @Composable
 private fun SummaryCard(
     summary: String?,
+    draftSummary: String?,
     createdAt: Long,
     regenerating: Boolean,
     regenerateError: String?,
@@ -452,6 +454,20 @@ private fun SummaryCard(
                 modifier = Modifier.align(Alignment.TopEnd)
             )
             Column(modifier = Modifier.fillMaxWidth().padding(top = 18.dp)) {
+                draftSummary?.takeIf { it.isNotBlank() && it != summary }?.let {
+                    Text(
+                        "录音中临时总结",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Spacer(Modifier.height(4.dp))
+                    Text(
+                        it,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Spacer(Modifier.height(12.dp))
+                }
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Text(
                         "📝 AI 总结",

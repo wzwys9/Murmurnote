@@ -95,7 +95,9 @@ class AudioPipeline @Inject constructor(
             recording = existing.copy(
                 processingStatus = ProcessingStatus.PENDING,
                 errorMessage = null,
-                summary = null
+                summary = null,
+                draftSummary = null,
+                finalSummary = null
             )
             recordingRepository.update(recording)
             logger.i(
@@ -255,6 +257,7 @@ class AudioPipeline @Inject constructor(
             recording = recording.copy(
                 title = finalTitle,
                 summary = extraction.summary,
+                finalSummary = extraction.summary,
                 rawTranscript = fullText,
                 processingStatus = ProcessingStatus.COMPLETED
             )

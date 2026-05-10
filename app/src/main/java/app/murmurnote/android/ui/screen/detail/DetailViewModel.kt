@@ -233,7 +233,13 @@ class DetailViewModel @Inject constructor(
                     } else {
                         "录音 $createdAtPretty"
                     }
-                    recordingRepo.update(rec.copy(title = finalTitle, summary = ext.summary))
+                    recordingRepo.update(
+                        rec.copy(
+                            title = finalTitle,
+                            summary = ext.summary,
+                            finalSummary = ext.summary
+                        )
+                    )
                     _state.update { it.copy(regeneratingSummary = false) }
                     logger.i(
                         "Detail",

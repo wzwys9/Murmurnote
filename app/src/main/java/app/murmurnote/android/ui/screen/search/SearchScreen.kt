@@ -71,7 +71,7 @@ fun SearchScreen(
                         Card(modifier = Modifier.fillMaxWidth().clickable { onOpenDetail(rec.id) }) {
                             Column(modifier = Modifier.padding(12.dp)) {
                                 Text(rec.title, style = MaterialTheme.typography.titleSmall)
-                                rec.summary?.takeIf { it.isNotBlank() }?.let {
+                                (rec.finalSummary ?: rec.summary)?.takeIf { it.isNotBlank() }?.let {
                                     Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                                 }
                             }

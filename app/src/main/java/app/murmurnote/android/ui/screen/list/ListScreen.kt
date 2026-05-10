@@ -90,7 +90,7 @@ private fun RecordingRow(rec: Recording, onClick: () -> Unit) {
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
-                rec.summary?.takeIf { it.isNotBlank() }?.let {
+                (rec.finalSummary ?: rec.summary)?.takeIf { it.isNotBlank() }?.let {
                     Spacer(Modifier.height(6.dp))
                     Text(it, style = MaterialTheme.typography.bodyMedium, maxLines = 2)
                 }
