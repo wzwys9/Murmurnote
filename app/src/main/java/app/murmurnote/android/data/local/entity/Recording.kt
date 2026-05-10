@@ -24,5 +24,7 @@ data class Recording(
     val transcriptDirty: Boolean = false,
     val transcriptEditedAt: Long? = null,
     val rawTranscript: String? = null,
+    val tags: String = "",
+    val archived: Boolean = false,
     val expirationDate: Long? = null
 )

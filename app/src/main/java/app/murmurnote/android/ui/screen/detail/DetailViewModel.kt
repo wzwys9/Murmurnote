@@ -63,7 +63,9 @@ class DetailViewModel @Inject constructor(
         val editingSegmentId: Long? = null,
         val segmentDraft: String = "",
         val savingSegment: Boolean = false,
-        val segmentEditError: String? = null
+        val segmentEditError: String? = null,
+        val tagDraft: String = "",
+        val tagError: String? = null
     ) {
         /**
          * 是否需要给用户显示「重试」按钮：
@@ -159,6 +161,38 @@ class DetailViewModel @Inject constructor(
     fun delete() {
         viewModelScope.launch {
             _state.value.recording?.id?.let { recordingRepo.delete(it) }
+        }
+    }
+
+    fun updateTagDraft(text: String) {
+        _state.update { it.copy(tagDraft = text.take(24), tagError = null) }
+    }
+
+    fun addTag() {
+        val rec = _state.value.recording ?: return
+        val tag = normalizeTag(_state.value.tagDraft)
+        if (tag == null) {
+            _state.update { it.copy(tagError = "请输入标签名称") }
+            return
+        }
+        val tags = (rec.tagList() + tag).distinct()
+        viewModelScope.launch {
+            recordingRepo.updateTags(rec.id, tags)
+            _state.update { it.copy(tagDraft = "", tagError = null) }
+        }
+    }
+
+    fun removeTag(tag: String) {
+        val rec = _state.value.recording ?: return
+        viewModelScope.launch {
+            recordingRepo.updateTags(rec.id, rec.tagList().filterNot { it == tag })
+        }
+    }
+
+    fun toggleArchived() {
+        val rec = _state.value.recording ?: return
+        viewModelScope.launch {
+            recordingRepo.updateArchived(rec.id, !rec.archived)
         }
     }
 
@@ -404,6 +438,12 @@ class DetailViewModel @Inject constructor(
         "decision" -> ItemType.DECISION
         else -> ItemType.NOTE
     }
+
+    private fun Recording.tagList(): List<String> =
+        tags.split(",").map { it.trim() }.filter { it.isNotBlank() }.distinct()
+
+    private fun normalizeTag(input: String): String? =
+        input.trim().replace(",", " ").take(24).takeIf { it.isNotBlank() }
 
     private fun buildMarkdownExport(
         rec: Recording,

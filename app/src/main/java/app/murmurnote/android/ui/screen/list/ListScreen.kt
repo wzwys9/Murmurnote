@@ -4,6 +4,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -12,8 +13,10 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material3.Card
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
@@ -33,29 +36,73 @@ fun ListScreen(
     viewModel: ListViewModel = hiltViewModel()
 ) {
     val list by viewModel.recordings.collectAsStateWithLifecycle()
-    if (list.isEmpty()) {
-        Column(
-            modifier = modifier.fillMaxSize().padding(32.dp),
-            verticalArrangement = Arrangement.Center,
-            horizontalAlignment = androidx.compose.ui.Alignment.CenterHorizontally
-        ) {
-            Text("还没有录音", style = MaterialTheme.typography.titleMedium)
-            Spacer(Modifier.height(8.dp))
-            Text(
-                "回到首页按下大圆按钮，开始你的第一段语音备忘",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
+    val allTags by viewModel.allTags.collectAsStateWithLifecycle()
+    val selectedTag by viewModel.selectedTag.collectAsStateWithLifecycle()
+    val showArchived by viewModel.showArchived.collectAsStateWithLifecycle()
+
+    Column(modifier = modifier.fillMaxSize()) {
+        if (allTags.isNotEmpty() || showArchived || selectedTag != null) {
+            RecordingFilterBar(
+                allTags = allTags,
+                selectedTag = selectedTag,
+                showArchived = showArchived,
+                onSelectTag = viewModel::selectTag,
+                onToggleArchived = viewModel::toggleShowArchived
             )
         }
-        return
+        if (list.isEmpty()) {
+            Column(
+                modifier = Modifier.fillMaxSize().padding(32.dp),
+                verticalArrangement = Arrangement.Center,
+                horizontalAlignment = androidx.compose.ui.Alignment.CenterHorizontally
+            ) {
+                Text(if (selectedTag == null) "还没有录音" else "没有匹配标签的录音", style = MaterialTheme.typography.titleMedium)
+                Spacer(Modifier.height(8.dp))
+                Text(
+                    if (selectedTag == null) "回到首页按下大圆按钮，开始你的第一段语音备忘" else "换一个标签或显示归档后再试",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+        } else {
+            LazyColumn(
+                modifier = Modifier.fillMaxSize(),
+                contentPadding = androidx.compose.foundation.layout.PaddingValues(12.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                items(list, key = { it.id }) { rec ->
+                    RecordingRow(rec, onClick = { onOpenDetail(rec.id) })
+                }
+            }
+        }
     }
-    LazyColumn(
-        modifier = modifier.fillMaxSize(),
-        contentPadding = androidx.compose.foundation.layout.PaddingValues(12.dp),
-        verticalArrangement = Arrangement.spacedBy(8.dp)
-    ) {
-        items(list, key = { it.id }) { rec ->
-            RecordingRow(rec, onClick = { onOpenDetail(rec.id) })
+}
+
+@Composable
+private fun RecordingFilterBar(
+    allTags: List<String>,
+    selectedTag: String?,
+    showArchived: Boolean,
+    onSelectTag: (String?) -> Unit,
+    onToggleArchived: () -> Unit
+) {
+    Column(modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp)) {
+        FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            FilterChip(
+                selected = selectedTag == null,
+                onClick = { onSelectTag(null) },
+                label = { Text("全部标签") }
+            )
+            allTags.forEach { tag ->
+                FilterChip(
+                    selected = selectedTag == tag,
+                    onClick = { onSelectTag(tag) },
+                    label = { Text(tag) }
+                )
+            }
+        }
+        TextButton(onClick = onToggleArchived) {
+            Text(if (showArchived) "隐藏归档" else "显示归档")
         }
     }
 }
@@ -90,6 +137,17 @@ private fun RecordingRow(rec: Recording, onClick: () -> Unit) {
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
+                val tags = rec.tags.toTagList()
+                if (tags.isNotEmpty() || rec.archived) {
+                    Spacer(Modifier.height(6.dp))
+                    Text(
+                        (tags.map { "#$it" } + if (rec.archived) listOf("已归档") else emptyList()).joinToString("  "),
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.primary,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                }
                 (rec.finalSummary ?: rec.summary)?.takeIf { it.isNotBlank() }?.let {
                     Spacer(Modifier.height(6.dp))
                     Text(it, style = MaterialTheme.typography.bodyMedium, maxLines = 2)
@@ -113,3 +171,6 @@ private fun statusLabel(s: ProcessingStatus): String = when (s) {
 private fun String.stripTrailingTimestamp(): String =
     replace(Regex("\\s*·\\s*\\d{4}年\\d{2}月\\d{2}日\\s+\\d{2}时\\d{2}分\\d{2}秒\\s*$"), "")
         .ifBlank { this }
+
+private fun String.toTagList(): List<String> =
+    split(",").map { it.trim() }.filter { it.isNotBlank() }.distinct()

@@ -5,6 +5,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -102,6 +103,21 @@ fun DetailScreen(
                     onSeek = { viewModel.seekTo(it) },
                     onSpeed = { viewModel.setSpeed(it) }
                 )
+            }
+
+            state.recording?.let { rec ->
+                item {
+                    TagsArchiveCard(
+                        tags = rec.tags.toTagList(),
+                        archived = rec.archived,
+                        draft = state.tagDraft,
+                        error = state.tagError,
+                        onDraftChange = viewModel::updateTagDraft,
+                        onAdd = viewModel::addTag,
+                        onRemove = viewModel::removeTag,
+                        onToggleArchived = viewModel::toggleArchived
+                    )
+                }
             }
 
             // 重试卡片：转写失败 / 提取失败 / completed 但无内容（典型：Ollama 503 被吞）
@@ -272,6 +288,71 @@ fun DetailScreen(
                         }
                     }
                 }
+            }
+        }
+    }
+}
+
+@Composable
+private fun TagsArchiveCard(
+    tags: List<String>,
+    archived: Boolean,
+    draft: String,
+    error: String?,
+    onDraftChange: (String) -> Unit,
+    onAdd: () -> Unit,
+    onRemove: (String) -> Unit,
+    onToggleArchived: () -> Unit
+) {
+    Card(modifier = Modifier.fillMaxWidth()) {
+        Column(modifier = Modifier.padding(16.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(
+                    "标签和归档",
+                    style = MaterialTheme.typography.titleSmall,
+                    modifier = Modifier.weight(1f)
+                )
+                TextButton(onClick = onToggleArchived) {
+                    Text(if (archived) "取消归档" else "归档")
+                }
+            }
+            if (tags.isNotEmpty()) {
+                Spacer(Modifier.height(6.dp))
+                FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    tags.forEach { tag ->
+                        FilterChip(
+                            selected = true,
+                            onClick = { onRemove(tag) },
+                            label = { Text("$tag ×") }
+                        )
+                    }
+                }
+            }
+            Spacer(Modifier.height(8.dp))
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                OutlinedTextField(
+                    value = draft,
+                    onValueChange = onDraftChange,
+                    modifier = Modifier.weight(1f),
+                    singleLine = true,
+                    placeholder = { Text("添加自定义标签") }
+                )
+                Spacer(Modifier.size(8.dp))
+                Button(onClick = onAdd) {
+                    Text("添加")
+                }
+            }
+            error?.let {
+                Spacer(Modifier.height(4.dp))
+                Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
+            }
+            if (archived) {
+                Spacer(Modifier.height(6.dp))
+                Text(
+                    "已归档的录音默认从列表隐藏，可在列表页切换显示。",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
             }
         }
     }
@@ -678,3 +759,6 @@ private fun labelOf(s: ProcessingStatus): String = when (s) {
     ProcessingStatus.COMPLETED -> "已完成"
     ProcessingStatus.FAILED -> "失败"
 }
+
+private fun String.toTagList(): List<String> =
+    split(",").map { it.trim() }.filter { it.isNotBlank() }.distinct()

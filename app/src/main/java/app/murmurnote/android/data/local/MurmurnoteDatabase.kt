@@ -27,7 +27,7 @@ import app.murmurnote.android.data.local.entity.TranscriptSegment
         RecordingFts::class,
         ItemFts::class
     ],
-    version = 4,
+    version = 5,
     exportSchema = true
 )
 @TypeConverters(Converters::class)
@@ -85,6 +85,13 @@ abstract class MurmurnoteDatabase : RoomDatabase() {
                 db.execSQL("ALTER TABLE `recordings` ADD COLUMN `transcriptEditedAt` INTEGER")
                 db.execSQL("ALTER TABLE `transcript_segments` ADD COLUMN `isEdited` INTEGER NOT NULL DEFAULT 0")
                 db.execSQL("ALTER TABLE `transcript_segments` ADD COLUMN `editedAt` INTEGER")
+            }
+        }
+
+        val MIGRATION_4_5 = object : Migration(4, 5) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE `recordings` ADD COLUMN `tags` TEXT NOT NULL DEFAULT ''")
+                db.execSQL("ALTER TABLE `recordings` ADD COLUMN `archived` INTEGER NOT NULL DEFAULT 0")
             }
         }
     }

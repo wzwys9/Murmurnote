@@ -20,6 +20,10 @@ class RecordingRepository @Inject constructor(
     suspend fun insert(recording: Recording) = recordingDao.insert(recording)
     suspend fun update(recording: Recording) = recordingDao.update(recording)
     suspend fun delete(id: String) = recordingDao.deleteById(id)
+    suspend fun updateTags(id: String, tags: List<String>) =
+        recordingDao.updateTags(id, tags.toTagString())
+    suspend fun updateArchived(id: String, archived: Boolean) =
+        recordingDao.updateArchived(id, archived)
     suspend fun setStatus(id: String, status: ProcessingStatus, error: String? = null) =
         recordingDao.updateStatus(id, status, error)
 
@@ -66,4 +70,10 @@ class RecordingRepository @Inject constructor(
     fun observeCountSince(since: Long): Flow<Int> = recordingDao.countSince(since)
 
     suspend fun deleteExpired(): Int = recordingDao.deleteExpired(System.currentTimeMillis())
+
+    private fun List<String>.toTagString(): String =
+        map { it.trim().replace(",", " ").take(24) }
+            .filter { it.isNotBlank() }
+            .distinct()
+            .joinToString(",")
 }

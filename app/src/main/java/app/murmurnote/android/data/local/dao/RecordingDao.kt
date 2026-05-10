@@ -23,6 +23,12 @@ interface RecordingDao {
     @Query("UPDATE recordings SET processingStatus = :status, errorMessage = :error WHERE id = :id")
     suspend fun updateStatus(id: String, status: ProcessingStatus, error: String? = null)
 
+    @Query("UPDATE recordings SET tags = :tags WHERE id = :id")
+    suspend fun updateTags(id: String, tags: String)
+
+    @Query("UPDATE recordings SET archived = :archived WHERE id = :id")
+    suspend fun updateArchived(id: String, archived: Boolean)
+
     @Query("DELETE FROM recordings WHERE id = :id")
     suspend fun deleteById(id: String)
 
@@ -97,6 +103,7 @@ interface RecordingDao {
     @Query("""
         SELECT * FROM recordings
         WHERE title LIKE '%' || :query || '%'
+           OR tags LIKE '%' || :query || '%'
            OR summary LIKE '%' || :query || '%'
            OR draftSummary LIKE '%' || :query || '%'
            OR finalSummary LIKE '%' || :query || '%'
@@ -112,6 +119,7 @@ interface RecordingDao {
           AND (
               (:searchSummary = 1 AND (
                   title LIKE '%' || :query || '%'
+                  OR tags LIKE '%' || :query || '%'
                   OR summary LIKE '%' || :query || '%'
                   OR draftSummary LIKE '%' || :query || '%'
                   OR finalSummary LIKE '%' || :query || '%'
