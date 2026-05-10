@@ -96,7 +96,6 @@ class AudioPipeline @Inject constructor(
                 processingStatus = ProcessingStatus.PENDING,
                 errorMessage = null,
                 summary = null,
-                draftSummary = null,
                 finalSummary = null
             )
             recordingRepository.update(recording)
