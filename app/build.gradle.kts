@@ -118,12 +118,13 @@ android {
         }
     }
 
-    // assets 里的模型文件（Qwen3-ASR 三个 .onnx 合计接近 1GB）不要 zip 压缩 ——
+    // assets 里的模型文件不要 zip 压缩 ——
     // (a) int8 量化二进制几乎压不出来，反而拖慢 APK 安装
     // (b) sherpa-onnx 启动时要求"文件路径"，AsrModelManager.installBundledModelIfNeeded 会从
     //     assets 拷到 filesDir；assets 不压缩才能用 mmap 直接拷，速度快几倍
     // tokenizer 文本文件比较小，顺手不压，安装时拷到 filesDir 也更直接
     androidResources {
+        ignoreAssetsPatterns += "qwen3_asr_0_6b"
         noCompress += listOf("onnx", "txt", "json")
     }
 
