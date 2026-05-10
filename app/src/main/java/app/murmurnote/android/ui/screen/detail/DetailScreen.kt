@@ -21,6 +21,7 @@ import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Edit
+import androidx.compose.material.icons.filled.FileDownload
 import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Refresh
@@ -166,6 +167,20 @@ fun DetailScreen(
                 }
             }
 
+            state.recording?.let { rec ->
+                if (rec.processingStatus == ProcessingStatus.COMPLETED ||
+                    rec.processingStatus == ProcessingStatus.FAILED
+                ) {
+                    item {
+                        ExportCard(
+                            exportError = state.exportError,
+                            onExport = { format -> viewModel.exportResult(context, format) },
+                            onDismissError = viewModel::clearExportError
+                        )
+                    }
+                }
+            }
+
             // 4 类提取
             val sections = listOf(
                 ItemType.TODO to "✅ 待办",
@@ -286,6 +301,47 @@ fun DetailScreen(
                                 }
                             }
                         }
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun ExportCard(
+    exportError: String?,
+    onExport: (String) -> Unit,
+    onDismissError: () -> Unit
+) {
+    Card(modifier = Modifier.fillMaxWidth()) {
+        Column(modifier = Modifier.padding(16.dp)) {
+            Text(
+                "导出",
+                style = MaterialTheme.typography.titleSmall,
+                color = MaterialTheme.colorScheme.primary
+            )
+            Spacer(Modifier.height(8.dp))
+            FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                listOf("md" to "Markdown", "txt" to "TXT", "json" to "JSON").forEach { (format, label) ->
+                    Button(onClick = { onExport(format) }) {
+                        Icon(Icons.Filled.FileDownload, contentDescription = null, modifier = Modifier.size(18.dp))
+                        Spacer(Modifier.size(6.dp))
+                        Text(label)
+                    }
+                }
+            }
+            exportError?.let { error ->
+                Spacer(Modifier.height(8.dp))
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        error,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.error,
+                        modifier = Modifier.weight(1f)
+                    )
+                    IconButton(onClick = onDismissError) {
+                        Icon(Icons.Filled.Close, contentDescription = "忽略")
                     }
                 }
             }

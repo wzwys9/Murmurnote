@@ -454,6 +454,8 @@ class DetailViewModel @Inject constructor(
         appendLine()
         appendLine("- 时间：${formatPretty(rec.createdAt)}")
         appendLine("- 时长：${rec.durationMs} ms")
+        appendLine("- 标签：${rec.tagList().takeIf { it.isNotEmpty() }?.joinToString(", ") ?: "无"}")
+        appendLine("- 归档：${if (rec.archived) "是" else "否"}")
         appendLine()
         appendLine("## AI 总结")
         appendLine()
@@ -470,9 +472,15 @@ class DetailViewModel @Inject constructor(
         }
         appendLine()
         appendLine("## 完整转写")
-        segments.sortedBy { it.sequence }.forEach {
+        val sortedSegments = segments.sortedBy { it.sequence }
+        if (sortedSegments.isNotEmpty()) {
+            sortedSegments.forEach {
+                appendLine()
+                appendLine("[${formatDurationForExport(it.startMs)}-${formatDurationForExport(it.endMs)}] ${it.text}")
+            }
+        } else {
             appendLine()
-            appendLine("[${it.startMs}ms-${it.endMs}ms] ${it.text}")
+            appendLine(rec.rawTranscript ?: "（无）")
         }
     }
 
@@ -483,6 +491,8 @@ class DetailViewModel @Inject constructor(
     ): String = buildString {
         appendLine(rec.title)
         appendLine(formatPretty(rec.createdAt))
+        appendLine("标签：${rec.tagList().takeIf { it.isNotEmpty() }?.joinToString(", ") ?: "无"}")
+        appendLine("归档：${if (rec.archived) "是" else "否"}")
         appendLine()
         appendLine("AI 总结")
         appendLine(rec.finalSummary ?: rec.summary ?: "（无）")
@@ -491,7 +501,14 @@ class DetailViewModel @Inject constructor(
         items.forEach { appendLine("[${it.type.name.lowercase()}] ${it.content}") }
         appendLine()
         appendLine("完整转写")
-        segments.sortedBy { it.sequence }.forEach { appendLine("${it.text}") }
+        val sortedSegments = segments.sortedBy { it.sequence }
+        if (sortedSegments.isNotEmpty()) {
+            sortedSegments.forEach {
+                appendLine("[${formatDurationForExport(it.startMs)}-${formatDurationForExport(it.endMs)}] ${it.text}")
+            }
+        } else {
+            appendLine(rec.rawTranscript ?: "（无）")
+        }
     }
 
     private fun buildJsonExport(
@@ -508,6 +525,8 @@ class DetailViewModel @Inject constructor(
             .put("summary", rec.finalSummary ?: rec.summary)
             .put("draftSummary", rec.draftSummary)
             .put("rawTranscript", rec.rawTranscript)
+            .put("tags", JSONArray().also { array -> rec.tagList().forEach { array.put(it) } })
+            .put("archived", rec.archived)
         root.put("items", JSONArray().also { array ->
             items.forEach {
                 array.put(
@@ -532,6 +551,18 @@ class DetailViewModel @Inject constructor(
             }
         })
         return root.toString(2)
+    }
+
+    private fun formatDurationForExport(ms: Long): String {
+        val totalSeconds = ms / 1000
+        val hours = totalSeconds / 3600
+        val minutes = (totalSeconds % 3600) / 60
+        val seconds = totalSeconds % 60
+        return if (hours > 0) {
+            "%d:%02d:%02d".format(Locale.US, hours, minutes, seconds)
+        } else {
+            "%02d:%02d".format(Locale.US, minutes, seconds)
+        }
     }
 
     private fun startTicker() {
