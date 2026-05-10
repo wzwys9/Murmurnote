@@ -37,11 +37,12 @@ fun ListScreen(
 ) {
     val list by viewModel.recordings.collectAsStateWithLifecycle()
     val allTags by viewModel.allTags.collectAsStateWithLifecycle()
+    val hasArchived by viewModel.hasArchived.collectAsStateWithLifecycle()
     val selectedTag by viewModel.selectedTag.collectAsStateWithLifecycle()
     val showArchived by viewModel.showArchived.collectAsStateWithLifecycle()
 
     Column(modifier = modifier.fillMaxSize()) {
-        if (allTags.isNotEmpty() || showArchived || selectedTag != null) {
+        if (allTags.isNotEmpty() || hasArchived || showArchived || selectedTag != null) {
             RecordingFilterBar(
                 allTags = allTags,
                 selectedTag = selectedTag,
@@ -56,10 +57,20 @@ fun ListScreen(
                 verticalArrangement = Arrangement.Center,
                 horizontalAlignment = androidx.compose.ui.Alignment.CenterHorizontally
             ) {
-                Text(if (selectedTag == null) "还没有录音" else "没有匹配标签的录音", style = MaterialTheme.typography.titleMedium)
+                val emptyTitle = when {
+                    selectedTag != null -> "没有匹配标签的录音"
+                    hasArchived && !showArchived -> "录音都已归档"
+                    else -> "还没有录音"
+                }
+                val emptyBody = when {
+                    selectedTag != null -> "换一个标签或显示归档后再试"
+                    hasArchived && !showArchived -> "点上方显示归档即可查看"
+                    else -> "回到首页按下大圆按钮，开始你的第一段语音备忘"
+                }
+                Text(emptyTitle, style = MaterialTheme.typography.titleMedium)
                 Spacer(Modifier.height(8.dp))
                 Text(
-                    if (selectedTag == null) "回到首页按下大圆按钮，开始你的第一段语音备忘" else "换一个标签或显示归档后再试",
+                    emptyBody,
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )

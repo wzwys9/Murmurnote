@@ -33,6 +33,10 @@ class ListViewModel @Inject constructor(
         }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
+    val hasArchived: StateFlow<Boolean> = allRecordings
+        .map { recordings -> recordings.any { it.archived } }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), false)
+
     val recordings: StateFlow<List<Recording>> = combine(
         allRecordings,
         _selectedTag,
