@@ -2,6 +2,7 @@ package app.murmurnote.android.ui.screen.idea
 
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
@@ -64,30 +65,31 @@ fun IdeaScreen(
 @Composable
 private fun IdeaRow(item: ExtractedItem, onClick: () -> Unit) {
     Card(modifier = Modifier.fillMaxWidth().clickable { onClick() }) {
-        Row(
-            modifier = Modifier.padding(12.dp),
-            verticalAlignment = Alignment.Top
-        ) {
-            Text(
-                "💡",
-                style = MaterialTheme.typography.titleMedium
-            )
-            Spacer(Modifier.width(8.dp))
-            Column(Modifier.weight(1f)) {
-                Text(
-                    item.content,
-                    style = MaterialTheme.typography.bodyLarge,
-                    overflow = TextOverflow.Ellipsis,
-                    maxLines = 4
-                )
-            }
-            // 录音时间点小字置右上,与列表 / 待办 / 详情页保持一致格式。
+        Box(modifier = Modifier.fillMaxWidth().padding(12.dp)) {
             Text(
                 formatTimestampFull(item.createdAt),
                 style = MaterialTheme.typography.labelSmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.padding(start = 8.dp)
+                modifier = Modifier.align(Alignment.TopEnd)
             )
+            Row(
+                modifier = Modifier.fillMaxWidth().padding(top = 18.dp),
+                verticalAlignment = Alignment.Top
+            ) {
+                Text(
+                    "💡",
+                    style = MaterialTheme.typography.titleMedium
+                )
+                Spacer(Modifier.width(8.dp))
+                Column(Modifier.weight(1f)) {
+                    Text(
+                        item.content,
+                        style = MaterialTheme.typography.bodyLarge,
+                        overflow = TextOverflow.Ellipsis,
+                        maxLines = 4
+                    )
+                }
+            }
         }
     }
 }

@@ -3,6 +3,7 @@ package app.murmurnote.android.ui.screen.detail
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
@@ -153,27 +154,31 @@ fun DetailScreen(
                                 )
                                 Spacer(Modifier.height(8.dp))
                                 items.forEach { it2 ->
-                                    // 内容左侧（占满剩余宽度），录音时间点小字右上角对齐。
-                                    Row(verticalAlignment = Alignment.Top, modifier = Modifier.padding(vertical = 2.dp).fillMaxWidth()) {
-                                        if (type == ItemType.TODO) {
-                                            Checkbox(
-                                                checked = it2.isCompleted,
-                                                onCheckedChange = { v -> viewModel.toggleCompleted(it2.id, v) }
-                                            )
-                                        } else {
-                                            Text("• ", style = MaterialTheme.typography.bodyLarge)
-                                        }
-                                        Text(
-                                            it2.content,
-                                            style = MaterialTheme.typography.bodyMedium,
-                                            modifier = Modifier.weight(1f)
-                                        )
+                                    Box(modifier = Modifier.padding(vertical = 2.dp).fillMaxWidth()) {
                                         Text(
                                             formatTimestampFull(it2.createdAt),
                                             style = MaterialTheme.typography.labelSmall,
                                             color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                            modifier = Modifier.padding(start = 8.dp)
+                                            modifier = Modifier.align(Alignment.TopEnd)
                                         )
+                                        Row(
+                                            verticalAlignment = Alignment.Top,
+                                            modifier = Modifier.fillMaxWidth().padding(top = 18.dp)
+                                        ) {
+                                            if (type == ItemType.TODO) {
+                                                Checkbox(
+                                                    checked = it2.isCompleted,
+                                                    onCheckedChange = { v -> viewModel.toggleCompleted(it2.id, v) }
+                                                )
+                                            } else {
+                                                Text("• ", style = MaterialTheme.typography.bodyLarge)
+                                            }
+                                            Text(
+                                                it2.content,
+                                                style = MaterialTheme.typography.bodyMedium,
+                                                modifier = Modifier.weight(1f)
+                                            )
+                                        }
                                     }
                                 }
                             }

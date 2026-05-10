@@ -2,9 +2,9 @@ package app.murmurnote.android.ui.screen.search
 
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
-import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -85,25 +85,24 @@ fun SearchScreen(
                     }
                     items(result.items, key = { "item-" + it.id }) { item ->
                         Card(modifier = Modifier.fillMaxWidth().clickable { onOpenDetail(item.recordingId) }) {
-                            Column(modifier = Modifier.padding(12.dp)) {
-                                Row(verticalAlignment = Alignment.Top) {
+                            Box(modifier = Modifier.fillMaxWidth().padding(12.dp)) {
+                                Text(
+                                    formatTimestampFull(item.createdAt),
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    modifier = Modifier.align(Alignment.TopEnd)
+                                )
+                                Column(modifier = Modifier.fillMaxWidth().padding(top = 18.dp)) {
                                     Text(
                                         item.content,
-                                        style = MaterialTheme.typography.bodyMedium,
-                                        modifier = Modifier.weight(1f)
+                                        style = MaterialTheme.typography.bodyMedium
                                     )
                                     Text(
-                                        formatTimestampFull(item.createdAt),
+                                        item.type.name.lowercase(),
                                         style = MaterialTheme.typography.labelSmall,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                        modifier = Modifier.padding(start = 8.dp)
+                                        color = MaterialTheme.colorScheme.primary
                                     )
                                 }
-                                Text(
-                                    item.type.name.lowercase(),
-                                    style = MaterialTheme.typography.labelSmall,
-                                    color = MaterialTheme.colorScheme.primary
-                                )
                             }
                         }
                     }

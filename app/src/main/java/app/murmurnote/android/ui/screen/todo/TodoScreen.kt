@@ -2,6 +2,7 @@ package app.murmurnote.android.ui.screen.todo
 
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
@@ -65,34 +66,34 @@ fun TodoScreen(
 @Composable
 private fun TodoRow(item: ExtractedItem, onToggle: (Boolean) -> Unit, onClick: () -> Unit) {
     Card(modifier = Modifier.fillMaxWidth().clickable { onClick() }) {
-        Row(
-            modifier = Modifier.padding(12.dp),
-            verticalAlignment = Alignment.Top
-        ) {
-            Checkbox(checked = item.isCompleted, onCheckedChange = onToggle)
-            Spacer(Modifier.width(8.dp))
-            Column(Modifier.fillMaxWidth().weight(1f)) {
-                Text(
-                    item.content,
-                    style = MaterialTheme.typography.bodyLarge,
-                    textDecoration = if (item.isCompleted) TextDecoration.LineThrough else TextDecoration.None
-                )
-                item.deadline?.let {
-                    Text(
-                        "截止 ${java.text.SimpleDateFormat("M月d日").format(java.util.Date(it))}",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                }
-            }
-            // 录音时间点小字置右上：与内容同一行起始，右侧自然贴边。
+        Box(modifier = Modifier.fillMaxWidth().padding(12.dp)) {
             Text(
                 formatTimestampFull(item.createdAt),
                 style = MaterialTheme.typography.labelSmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.padding(start = 8.dp)
+                modifier = Modifier.align(Alignment.TopEnd)
             )
+            Row(
+                modifier = Modifier.fillMaxWidth().padding(top = 18.dp),
+                verticalAlignment = Alignment.Top
+            ) {
+                Checkbox(checked = item.isCompleted, onCheckedChange = onToggle)
+                Spacer(Modifier.width(8.dp))
+                Column(Modifier.fillMaxWidth().weight(1f)) {
+                    Text(
+                        item.content,
+                        style = MaterialTheme.typography.bodyLarge,
+                        textDecoration = if (item.isCompleted) TextDecoration.LineThrough else TextDecoration.None
+                    )
+                    item.deadline?.let {
+                        Text(
+                            "截止 ${java.text.SimpleDateFormat("M月d日").format(java.util.Date(it))}",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
+            }
         }
     }
 }
-
