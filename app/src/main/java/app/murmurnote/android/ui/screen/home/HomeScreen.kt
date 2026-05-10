@@ -6,6 +6,8 @@ import android.os.Build
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -14,6 +16,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -287,6 +290,10 @@ private fun RealtimeTranscriptCard(
     onRetryFailedSegment: (Int) -> Unit
 ) {
     if (message == null && segments.isEmpty()) return
+    val transcriptScrollState = rememberScrollState()
+    LaunchedEffect(segments.size, segments.lastOrNull()?.text, segments.lastOrNull()?.status) {
+        transcriptScrollState.animateScrollTo(transcriptScrollState.maxValue)
+    }
     Card(
         modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp),
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
@@ -315,44 +322,49 @@ private fun RealtimeTranscriptCard(
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
             }
-            segments.takeLast(3).forEach { segment ->
-                Spacer(Modifier.height(8.dp))
-                Text(
-                    liveSegmentLabel(segment),
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-                when (segment.status) {
-                    HomeViewModel.LiveTranscriptStatus.TRANSCRIBING -> {
-                        Spacer(Modifier.height(4.dp))
-                        LinearProgressIndicator(
-                            progress = { segment.progress ?: 0f },
-                            modifier = Modifier.fillMaxWidth(),
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                    }
-                    HomeViewModel.LiveTranscriptStatus.TRANSCRIBED -> {
-                        Text(
-                            segment.text.ifBlank { "（识别为空）" },
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            maxLines = 3,
-                            overflow = TextOverflow.Ellipsis
-                        )
-                    }
-                    HomeViewModel.LiveTranscriptStatus.FAILED -> {
-                        Text(
-                            segment.errorMessage ?: "转写失败",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.error,
-                            maxLines = 2,
-                            overflow = TextOverflow.Ellipsis
-                        )
-                        TextButton(onClick = { onRetryFailedSegment(segment.sequence) }) {
-                            Text("重试此段")
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .heightIn(max = 220.dp)
+                    .verticalScroll(transcriptScrollState)
+            ) {
+                segments.forEach { segment ->
+                    Spacer(Modifier.height(8.dp))
+                    Text(
+                        liveSegmentLabel(segment),
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    when (segment.status) {
+                        HomeViewModel.LiveTranscriptStatus.TRANSCRIBING -> {
+                            Spacer(Modifier.height(4.dp))
+                            LinearProgressIndicator(
+                                progress = { segment.progress ?: 0f },
+                                modifier = Modifier.fillMaxWidth(),
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
                         }
+                        HomeViewModel.LiveTranscriptStatus.TRANSCRIBED -> {
+                            Text(
+                                segment.text.ifBlank { "（识别为空）" },
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                        HomeViewModel.LiveTranscriptStatus.FAILED -> {
+                            Text(
+                                segment.errorMessage ?: "转写失败",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.error,
+                                maxLines = 2,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                            TextButton(onClick = { onRetryFailedSegment(segment.sequence) }) {
+                                Text("重试此段")
+                            }
+                        }
+                        HomeViewModel.LiveTranscriptStatus.WAITING -> Unit
                     }
-                    HomeViewModel.LiveTranscriptStatus.WAITING -> Unit
                 }
             }
         }

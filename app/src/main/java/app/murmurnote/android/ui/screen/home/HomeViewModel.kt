@@ -188,7 +188,7 @@ class HomeViewModel @Inject constructor(
                             errorMessage = null,
                             elapsedMs = 0,
                             liveTranscriptionActive = false,
-                            liveTranscriptionMessage = "等待第一个稳定片段…",
+                            liveTranscriptionMessage = "等待说话后的停顿…",
                             liveTranscriptSegments = emptyList()
                         )
                     }
@@ -341,7 +341,7 @@ class HomeViewModel @Inject constructor(
             _uiState.update {
                 it.copy(
                     liveTranscriptionActive = true,
-                    liveTranscriptionMessage = "等待第一个稳定片段…"
+                    liveTranscriptionMessage = "等待说话后的停顿…"
                 )
             }
             while (isActive && recordingController.isRecording) {

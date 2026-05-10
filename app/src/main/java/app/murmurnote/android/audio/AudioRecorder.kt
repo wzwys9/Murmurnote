@@ -19,6 +19,10 @@ class AudioRecorder @Inject constructor(
     companion object {
         const val SAMPLE_RATE_HZ = 16_000
         const val ROLLING_SEGMENT_MS = 60_000L
+        private const val LIVE_PAUSE_SEGMENT_MS = 1_000L
+        private const val MIN_LIVE_SEGMENT_MS = 1_500L
+        private const val MIN_LIVE_SPEECH_MS = 400L
+        private const val SPEECH_RMS_DBFS_THRESHOLD = -48.0
         private const val CHANNEL_COUNT = 1
         private const val BITS_PER_SAMPLE = 16
         private const val BYTES_PER_SAMPLE = BITS_PER_SAMPLE / 8
@@ -26,6 +30,9 @@ class AudioRecorder @Inject constructor(
         private const val WAV_HEADER_BYTES = 44
         private const val MAX_UINT32 = 0xffff_ffffL
         private val SEGMENT_PCM_BYTES = msToPcmBytes(ROLLING_SEGMENT_MS)
+        private val PAUSE_PCM_BYTES = msToPcmBytes(LIVE_PAUSE_SEGMENT_MS)
+        private val MIN_SEGMENT_PCM_BYTES = msToPcmBytes(MIN_LIVE_SEGMENT_MS)
+        private val MIN_SPEECH_PCM_BYTES = msToPcmBytes(MIN_LIVE_SPEECH_MS)
 
         private fun msToPcmBytes(ms: Long): Long =
             ((ms * BYTE_RATE) / 1000L).coerceAtLeast(0L)
@@ -51,6 +58,8 @@ class AudioRecorder @Inject constructor(
     private val segments = mutableListOf<RecordedSegment>()
     private var currentSegmentSequence: Int = 0
     private var currentSegmentStartPcmBytes: Long = 0L
+    private var currentSegmentSpeechPcmBytes: Long = 0L
+    private var currentSegmentTrailingSilencePcmBytes: Long = 0L
     private var totalPcmBytes: Long = 0L
     @Volatile private var lastAmplitude: Int = 0
 
@@ -120,7 +129,10 @@ class AudioRecorder @Inject constructor(
             { recordLoop(record, bufferSize) },
             "MurmurnoteAudioRecorder"
         ).also { it.start() }
-        logger.i("Rec", "start wav → ${target.absolutePath}; rolling=${ROLLING_SEGMENT_MS}ms")
+        logger.i(
+            "Rec",
+            "start wav → ${target.absolutePath}; rolling=${ROLLING_SEGMENT_MS}ms pauseCut=${LIVE_PAUSE_SEGMENT_MS}ms"
+        )
         return target
     }
 
@@ -129,7 +141,7 @@ class AudioRecorder @Inject constructor(
         isPaused = true
         pauseStartMs = SystemClock.elapsedRealtime()
         synchronized(lock) {
-            if (finishSegmentLocked()) {
+            if (finishSegmentLocked(discardIfNoSpeech = false)) {
                 currentSegmentSequence += 1
             }
             currentSegmentStartPcmBytes = totalPcmBytes
@@ -155,7 +167,7 @@ class AudioRecorder @Inject constructor(
         runCatching { audioRecord?.release() }
 
         val result = synchronized(lock) {
-            finishSegmentLocked()
+            finishSegmentLocked(discardIfNoSpeech = false)
             finalWriter?.close()
             writeSegmentManifestLocked()
             val segmentCount = segments.size
@@ -210,8 +222,15 @@ class AudioRecorder @Inject constructor(
                         finalWriter?.write(buffer, evenRead)
                         segmentWriter?.write(buffer, evenRead)
                         totalPcmBytes += evenRead
-                        if (totalPcmBytes - currentSegmentStartPcmBytes >= SEGMENT_PCM_BYTES) {
-                            if (finishSegmentLocked()) {
+                        updateSegmentSpeechStateLocked(buffer, evenRead)
+                        val segmentBytes = totalPcmBytes - currentSegmentStartPcmBytes
+                        val reachedMaxSegment = segmentBytes >= SEGMENT_PCM_BYTES
+                        val reachedNaturalPause =
+                            currentSegmentSpeechPcmBytes >= MIN_SPEECH_PCM_BYTES &&
+                                segmentBytes >= MIN_SEGMENT_PCM_BYTES &&
+                                currentSegmentTrailingSilencePcmBytes >= PAUSE_PCM_BYTES
+                        if (reachedMaxSegment || reachedNaturalPause) {
+                            if (finishSegmentLocked(discardIfNoSpeech = true)) {
                                 currentSegmentSequence += 1
                             }
                             currentSegmentStartPcmBytes = totalPcmBytes
@@ -230,14 +249,18 @@ class AudioRecorder @Inject constructor(
         val file = File(dir, "segment_${currentSegmentSequence.toString().padStart(4, '0')}.wav")
         if (file.exists()) file.delete()
         segmentWriter = WavWriter(file).also { it.open() }
+        currentSegmentSpeechPcmBytes = 0L
+        currentSegmentTrailingSilencePcmBytes = 0L
     }
 
-    private fun finishSegmentLocked(): Boolean {
+    private fun finishSegmentLocked(discardIfNoSpeech: Boolean): Boolean {
         val writer = segmentWriter ?: return false
         segmentWriter = null
         writer.close()
-        if (writer.dataBytes <= 0L) {
+        if (writer.dataBytes <= 0L || (discardIfNoSpeech && currentSegmentSpeechPcmBytes <= 0L)) {
             writer.file.delete()
+            currentSegmentSpeechPcmBytes = 0L
+            currentSegmentTrailingSilencePcmBytes = 0L
             return false
         }
         segments += RecordedSegment(
@@ -283,6 +306,8 @@ class AudioRecorder @Inject constructor(
         totalPcmBytes = 0L
         currentSegmentSequence = 0
         currentSegmentStartPcmBytes = 0L
+        currentSegmentSpeechPcmBytes = 0L
+        currentSegmentTrailingSilencePcmBytes = 0L
         lastAmplitude = 0
     }
 
@@ -307,6 +332,32 @@ class AudioRecorder @Inject constructor(
             i += 2
         }
         lastAmplitude = if (peak <= 0) 0 else (20 * log10(peak.toDouble())).toInt().coerceIn(0, 100)
+    }
+
+    private fun updateSegmentSpeechStateLocked(buffer: ByteArray, read: Int) {
+        if (isSpeechFrame(buffer, read)) {
+            currentSegmentSpeechPcmBytes += read
+            currentSegmentTrailingSilencePcmBytes = 0L
+        } else if (currentSegmentSpeechPcmBytes > 0L) {
+            currentSegmentTrailingSilencePcmBytes += read
+        }
+    }
+
+    private fun isSpeechFrame(buffer: ByteArray, read: Int): Boolean {
+        var sumSq = 0.0
+        var samples = 0
+        var i = 0
+        while (i + 1 < read) {
+            val sample = ((buffer[i + 1].toInt() shl 8) or (buffer[i].toInt() and 0xff)).toShort().toDouble()
+            sumSq += sample * sample
+            samples += 1
+            i += 2
+        }
+        if (samples == 0) return false
+        val rms = kotlin.math.sqrt(sumSq / samples)
+        if (rms <= 0.0) return false
+        val dbfs = 20.0 * log10(rms / Short.MAX_VALUE.toDouble())
+        return dbfs >= SPEECH_RMS_DBFS_THRESHOLD
     }
 
     private fun pcmBytesToMs(bytes: Long): Long = (bytes * 1000L) / BYTE_RATE
