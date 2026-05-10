@@ -117,6 +117,17 @@ class AudioPipeline @Inject constructor(
             recordingRepository.insert(recording)
         }
         persistRollingRecordingSegments(recordingId, audioFile)
+        val completeRollingTranscripts = completeRollingTranscriptCache(
+            recordingRepository.getRecordingSegments(recordingId)
+        )
+        if (completeCachedTranscripts == null && completeRollingTranscripts != null) {
+            recordingRepository.deleteSegments(recordingId)
+            recordingRepository.insertSegments(completeRollingTranscripts.map { it.toEntity(recordingId) })
+            val rollingDurationMs = completeRollingTranscripts.maxOfOrNull { it.endMs } ?: recording.durationMs
+            recording = recording.copy(durationMs = maxOf(recording.durationMs, rollingDurationMs))
+            recordingRepository.update(recording)
+            logger.i("Pipe", "reuse complete rolling transcript segments=${completeRollingTranscripts.size}")
+        }
         // 标题与每个待办都要带"录音时间点"，重跑沿用原 createdAt，新录音用 now。
         val createdAtPretty = formatPretty(recording.createdAt)
 
@@ -125,7 +136,7 @@ class AudioPipeline @Inject constructor(
         var stageName = "init"
         try {
             logger.i("Pipe", "start id=$recordingId src=${audioFile.absolutePath} size=${audioFile.length()}")
-            val transcripts = completeCachedTranscripts ?: run {
+            val transcripts = completeCachedTranscripts ?: completeRollingTranscripts ?: run {
                 stageName = "convert"
                 send(PipelineStage.Converting(0f))
                 recordingRepository.setStatus(recordingId, ProcessingStatus.CONVERTING)
@@ -182,6 +193,9 @@ class AudioPipeline @Inject constructor(
             if (completeCachedTranscripts != null) {
                 stageName = "reuse_transcript"
                 logger.i("Pipe", "reuse cached transcript segments=${transcripts.size}")
+            } else if (completeRollingTranscripts != null) {
+                stageName = "reuse_rolling_transcript"
+                logger.i("Pipe", "reuse rolling transcript segments=${transcripts.size}")
             }
             val fullText = transcripts.joinToString("\n") { it.text }
 
@@ -432,6 +446,28 @@ class AudioPipeline @Inject constructor(
         val expected = segments.indices.toList()
         if (sequences != expected) return null
         return segments.map { it.toTranscriptOf() }
+    }
+
+    private fun completeRollingTranscriptCache(
+        segments: List<RecordingSegment>
+    ): List<TranscriptOf>? {
+        if (segments.isEmpty()) return null
+        val normalized = segments
+            .groupBy { it.sequence }
+            .map { (_, duplicates) -> duplicates.maxBy { it.id } }
+            .sortedBy { it.sequence }
+        val sequences = normalized.map { it.sequence }
+        val expected = normalized.indices.toList()
+        if (sequences != expected) return null
+        if (normalized.any { it.status != RecordingSegmentStatus.TRANSCRIBED }) return null
+        return normalized.map { segment ->
+            TranscriptOf(
+                index = segment.sequence,
+                text = segment.transcriptText.orEmpty(),
+                startMs = segment.startMs,
+                endMs = segment.endMs
+            )
+        }
     }
 
     private fun TranscriptSegment.toTranscriptOf(): TranscriptOf =

@@ -8,6 +8,7 @@ import app.murmurnote.android.data.local.entity.ExtractedItem
 import app.murmurnote.android.data.local.entity.ItemType
 import app.murmurnote.android.data.local.entity.ProcessingStatus
 import app.murmurnote.android.data.local.entity.Recording
+import app.murmurnote.android.data.local.entity.RecordingSegment
 import app.murmurnote.android.data.local.entity.TranscriptSegment
 import app.murmurnote.android.data.remote.llm.LlmClient
 import app.murmurnote.android.data.repository.ItemRepository
@@ -39,6 +40,7 @@ class DetailViewModel @Inject constructor(
     data class UiState(
         val recording: Recording? = null,
         val segments: List<TranscriptSegment> = emptyList(),
+        val recordingSegments: List<RecordingSegment> = emptyList(),
         val items: List<ExtractedItem> = emptyList(),
         val isPlaying: Boolean = false,
         val durationMs: Int = 0,
@@ -101,6 +103,11 @@ class DetailViewModel @Inject constructor(
         viewModelScope.launch {
             recordingRepo.observeSegments(id).collect { segs ->
                 _state.update { it.copy(segments = segs) }
+            }
+        }
+        viewModelScope.launch {
+            recordingRepo.observeRecordingSegments(id).collect { segs ->
+                _state.update { it.copy(recordingSegments = segs) }
             }
         }
         viewModelScope.launch {

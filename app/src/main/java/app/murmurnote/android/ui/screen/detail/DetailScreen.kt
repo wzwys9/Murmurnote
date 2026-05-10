@@ -46,6 +46,8 @@ import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import app.murmurnote.android.data.local.entity.ItemType
 import app.murmurnote.android.data.local.entity.ProcessingStatus
+import app.murmurnote.android.data.local.entity.RecordingSegment
+import app.murmurnote.android.data.local.entity.RecordingSegmentStatus
 import app.murmurnote.android.util.formatDurationMs
 import app.murmurnote.android.util.formatTimestampFull
 
@@ -112,6 +114,12 @@ fun DetailScreen(
                         onRetry = { viewModel.reprocess(context) },
                         onDismissError = viewModel::clearReprocessError
                     )
+                }
+            }
+
+            if (state.recordingSegments.isNotEmpty()) {
+                item {
+                    RecordingSegmentsCard(segments = state.recordingSegments)
                 }
             }
 
@@ -217,6 +225,54 @@ fun DetailScreen(
                             }
                         }
                     }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun RecordingSegmentsCard(segments: List<RecordingSegment>) {
+    val done = segments.count { it.status == RecordingSegmentStatus.TRANSCRIBED }
+    val failed = segments.count { it.status == RecordingSegmentStatus.FAILED }
+    Card(modifier = Modifier.fillMaxWidth()) {
+        Column(modifier = Modifier.padding(16.dp)) {
+            Text(
+                "录音片段 $done/${segments.size}",
+                style = MaterialTheme.typography.titleSmall,
+                color = MaterialTheme.colorScheme.primary
+            )
+            Spacer(Modifier.height(4.dp))
+            Text(
+                if (failed > 0) "$failed 段失败，最终处理会补跑缺失转写。"
+                else "用于录音中实时转写和最终处理复用。",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            Spacer(Modifier.height(8.dp))
+            segments.forEach { segment ->
+                Row(
+                    modifier = Modifier.fillMaxWidth().padding(vertical = 3.dp),
+                    verticalAlignment = Alignment.Top
+                ) {
+                    Text(
+                        "${segment.sequence + 1}. ${formatDurationMs(segment.startMs)}-${formatDurationMs(segment.endMs)}",
+                        style = MaterialTheme.typography.bodySmall,
+                        modifier = Modifier.weight(1f)
+                    )
+                    Text(
+                        recordingSegmentStatusLabel(segment.status),
+                        style = MaterialTheme.typography.labelSmall,
+                        color = recordingSegmentStatusColor(segment.status)
+                    )
+                }
+                segment.errorMessage?.takeIf { it.isNotBlank() }?.let {
+                    Text(
+                        it,
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.error,
+                        modifier = Modifier.padding(bottom = 4.dp)
+                    )
                 }
             }
         }
@@ -469,6 +525,21 @@ private fun SummaryCard(
             }
         }
     }
+}
+
+@Composable
+private fun recordingSegmentStatusColor(status: RecordingSegmentStatus): Color = when (status) {
+    RecordingSegmentStatus.READY -> MaterialTheme.colorScheme.onSurfaceVariant
+    RecordingSegmentStatus.TRANSCRIBING -> MaterialTheme.colorScheme.primary
+    RecordingSegmentStatus.TRANSCRIBED -> Color(0xFF2E7D32)
+    RecordingSegmentStatus.FAILED -> MaterialTheme.colorScheme.error
+}
+
+private fun recordingSegmentStatusLabel(status: RecordingSegmentStatus): String = when (status) {
+    RecordingSegmentStatus.READY -> "等待"
+    RecordingSegmentStatus.TRANSCRIBING -> "转写中"
+    RecordingSegmentStatus.TRANSCRIBED -> "已完成"
+    RecordingSegmentStatus.FAILED -> "失败"
 }
 
 private fun labelOf(s: ProcessingStatus): String = when (s) {
