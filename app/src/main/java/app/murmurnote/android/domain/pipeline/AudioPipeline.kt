@@ -35,6 +35,7 @@ import java.io.File
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
+import java.util.Properties
 import java.util.UUID
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -64,8 +65,8 @@ class AudioPipeline @Inject constructor(
 
     /**
      * 端到端处理。
-     * @param existingRecordingId 非 null 时表示"重跑"已有 Recording：复用同一行，清空旧的
-     *                            transcript_segments / extracted_items / summary，避免新增重复行。
+     * @param existingRecordingId 非 null 时表示"重跑"已有 Recording：复用同一行；如已有转写缓存，
+     *                            只重跑 AI 提取，避免重复转码/切片/ASR。
      */
     fun process(
         audioFile: File,
@@ -80,21 +81,25 @@ class AudioPipeline @Inject constructor(
         val workDir = File(context.getExternalFilesDir(null), "pipeline/$recordingId").apply { mkdirs() }
 
         var recording: Recording
+        var cachedSegments: List<TranscriptSegment> = emptyList()
+        var completeCachedTranscripts: List<TranscriptOf>? = null
         if (existingRecordingId != null) {
-            // 复用现有行：把旧的 transcript / items 清掉，重置状态与摘要，避免脏数据残留。
-            // 通过 RecordingRepository 暴露的方法操作，DAO 这层不直接触达。
             val existing = recordingRepository.get(existingRecordingId)
                 ?: error("待重跑的 Recording 不存在：$existingRecordingId")
-            recordingRepository.deleteSegments(existingRecordingId)
+            cachedSegments = normalizeSegments(recordingRepository.getSegments(existingRecordingId))
+            completeCachedTranscripts = completeTranscriptCache(existing.rawTranscript, cachedSegments)
             itemRepository.deleteForRecording(existingRecordingId)
             recording = existing.copy(
                 processingStatus = ProcessingStatus.PENDING,
                 errorMessage = null,
-                summary = null,
-                rawTranscript = null
+                summary = null
             )
             recordingRepository.update(recording)
-            logger.i("Pipe", "reprocess id=$existingRecordingId — cleared old segments/items")
+            logger.i(
+                "Pipe",
+                "reprocess id=$existingRecordingId cachedSegments=${cachedSegments.size} " +
+                    "completeCache=${completeCachedTranscripts != null}; cleared extracted items only"
+            )
         } else {
             recording = Recording(
                 id = recordingId,
@@ -116,60 +121,75 @@ class AudioPipeline @Inject constructor(
         var stageName = "init"
         try {
             logger.i("Pipe", "start id=$recordingId src=${audioFile.absolutePath} size=${audioFile.length()}")
-            stageName = "convert"
-            send(PipelineStage.Converting(0f))
-            recordingRepository.setStatus(recordingId, ProcessingStatus.CONVERTING)
-            val monoWav = audioConverter.convertToMonoWav(audioFile, workDir)
-            logger.i("Pipe", "converted → ${monoWav.name} size=${monoWav.length()}")
+            val transcripts = completeCachedTranscripts ?: run {
+                stageName = "convert"
+                send(PipelineStage.Converting(0f))
+                recordingRepository.setStatus(recordingId, ProcessingStatus.CONVERTING)
+                val monoWav = convertOrReuseMonoWav(audioFile, workDir)
+                logger.i("Pipe", "converted → ${monoWav.name} size=${monoWav.length()}")
 
-            val durationMs = audioInspector.durationMs(monoWav)
-            if (durationMs > MAX_DURATION_MS) error("录音超过 5 小时限制")
-            recording = recording.copy(durationMs = durationMs)
-            recordingRepository.update(recording)
+                val durationMs = audioInspector.durationMs(monoWav)
+                if (durationMs > MAX_DURATION_MS) error("录音超过 5 小时限制")
+                recording = recording.copy(durationMs = durationMs)
+                recordingRepository.update(recording)
 
-            stageName = "split"
-            send(PipelineStage.Splitting(0))
-            recordingRepository.setStatus(recordingId, ProcessingStatus.SPLITTING)
-            val slices = audioSplitter.split(monoWav, File(workDir, "segments"))
-            logger.i("Pipe", "split → ${slices.size} segments, durationMs=$durationMs")
-            send(PipelineStage.Splitting(slices.size))
+                stageName = "split"
+                send(PipelineStage.Splitting(0))
+                recordingRepository.setStatus(recordingId, ProcessingStatus.SPLITTING)
+                val slices = audioSplitter.split(monoWav, File(workDir, "segments"))
+                logger.i("Pipe", "split → ${slices.size} segments, durationMs=$durationMs")
+                send(PipelineStage.Splitting(slices.size))
 
-            // channelFlow 的 send() 是线程安全的，所以 transcribeAll 内部 async 子协程
-            // 经由 onProgress 回调跨协程调用 send() 不会再触发 Flow invariant 违例。
-            stageName = "transcribe"
-            recordingRepository.setStatus(recordingId, ProcessingStatus.TRANSCRIBING)
-            // 选 ASR 引擎（云端 / 本地）。NotReady 直接抛友好错误，由 catch 走 Failed 分支：
-            // 用户在详情页看到 errorMessage，就知道要回设置页修。
-            val engine: AsrEngine = when (val sel = asrEngineProvider.current()) {
-                is AsrEngineProvider.Selection.Active -> sel.engine
-                is AsrEngineProvider.Selection.NotReady -> error(sel.reason)
-            }
-            logger.i("Pipe", "asr engine = ${engine.engineType}")
-            val transcripts = try {
-                transcribeAll(slices, engine) { idx, total, partial ->
-                    send(PipelineStage.Transcribing(idx, total, partial))
+                val cachedBySequence = cachedSegments
+                    .filter { it.sequence in slices.indices }
+                    .associateBy { it.sequence }
+                    .mapValues { (_, seg) -> seg.toTranscriptOf() }
+                val missingCount = slices.indices.count { cachedBySequence[it] == null }
+                if (cachedBySequence.isNotEmpty()) {
+                    logger.i(
+                        "Pipe",
+                        "segment cache matched=${cachedBySequence.size}/${slices.size}, missing=$missingCount"
+                    )
                 }
-            } finally {
-                // 本地引擎释放 OfflineRecognizer 的模型内存；云端是 no-op。
-                runCatching { engine.release() }
+                if (missingCount == 0 && slices.isNotEmpty()) {
+                    cachedBySequence.values.sortedBy { it.index }
+                } else {
+                    // channelFlow 的 send() 是线程安全的，所以 transcribeAll 内部 async 子协程
+                    // 经由 onProgress 回调跨协程调用 send() 不会再触发 Flow invariant 违例。
+                    stageName = "transcribe"
+                    recordingRepository.setStatus(recordingId, ProcessingStatus.TRANSCRIBING)
+                    // 选 ASR 引擎（云端 / 本地）。NotReady 直接抛友好错误，由 catch 走 Failed 分支：
+                    // 用户在详情页看到 errorMessage，就知道要回设置页修。
+                    val engine: AsrEngine = when (val sel = asrEngineProvider.current()) {
+                        is AsrEngineProvider.Selection.Active -> sel.engine
+                        is AsrEngineProvider.Selection.NotReady -> error(sel.reason)
+                    }
+                    logger.i("Pipe", "asr engine = ${engine.engineType}, missingSegments=$missingCount")
+                    try {
+                        transcribeAll(recordingId, slices, cachedBySequence, engine) { idx, total, partial ->
+                            send(PipelineStage.Transcribing(idx, total, partial))
+                        }
+                    } finally {
+                        // 本地引擎释放 OfflineRecognizer 的模型内存；云端是 no-op。
+                        runCatching { engine.release() }
+                    }
+                }
+            }.sortedBy { it.index }
+            if (completeCachedTranscripts != null) {
+                stageName = "reuse_transcript"
+                logger.i("Pipe", "reuse cached transcript segments=${transcripts.size}")
             }
             val fullText = transcripts.joinToString("\n") { it.text }
 
-            // 入 transcript_segments
-            val transcriptEntities = transcripts.mapIndexed { idx, t ->
-                TranscriptSegment(
-                    recordingId = recordingId,
-                    text = t.text,
-                    startMs = t.startMs,
-                    endMs = t.endMs,
-                    sequence = idx
-                )
-            }
-            recordingRepository.insertSegments(transcriptEntities)
-
             stageName = "extract"
             send(PipelineStage.Extracting(fullText.length))
-            recordingRepository.setStatus(recordingId, ProcessingStatus.EXTRACTING)
+            // 先保存 rawTranscript。这样 ASR 已完成但 AI 提取失败时，下次重跑可以直接复用完整转写。
+            recording = recording.copy(
+                rawTranscript = fullText,
+                processingStatus = ProcessingStatus.EXTRACTING,
+                errorMessage = null
+            )
+            recordingRepository.update(recording)
             val extraction: ExtractionResult = if (fullText.isBlank()) {
                 ExtractionResult("（识别为空）", emptyList())
             } else {
@@ -233,7 +253,9 @@ class AudioPipeline @Inject constructor(
     }.flowOn(Dispatchers.IO)
 
     private suspend fun transcribeAll(
+        recordingId: String,
         slices: List<AudioSplitter.Slice>,
+        cachedBySequence: Map<Int, TranscriptOf>,
         engine: AsrEngine,
         onProgress: suspend (Int, Int, String) -> Unit
     ): List<TranscriptOf> = coroutineScope {
@@ -250,7 +272,9 @@ class AudioPipeline @Inject constructor(
         val sem = Semaphore(concurrency)
         val total = slices.size
         val batchStart = System.currentTimeMillis()
-        val deferreds = slices.mapIndexed { index, slice ->
+        val cachedResults = cachedBySequence.values.toList()
+        val deferreds = slices.mapIndexedNotNull { index, slice ->
+            if (cachedBySequence[index] != null) return@mapIndexedNotNull null
             async(Dispatchers.IO) {
                 sem.withPermit {
                     val segStart = System.currentTimeMillis()
@@ -262,27 +286,116 @@ class AudioPipeline @Inject constructor(
                     val text = result.getOrElse { e ->
                         error("ASR 段 ${index + 1}/$total 失败：${e.message?.take(160) ?: e.javaClass.simpleName}")
                     }.text
-                    onProgress(index, total, text)
-                    logger.i(
-                        "Pipe",
-                        "seg ${index + 1}/$total transcribed chars=${text.length} elapsed=${System.currentTimeMillis() - segStart}ms"
-                    )
-                    TranscriptOf(
+                    val transcript = TranscriptOf(
                         index = index,
                         text = text,
                         startMs = slice.startMs,
                         endMs = slice.endMs
                     )
+                    recordingRepository.insertSegment(transcript.toEntity(recordingId))
+                    onProgress(index, total, text)
+                    logger.i(
+                        "Pipe",
+                        "seg ${index + 1}/$total transcribed chars=${text.length} " +
+                            "persisted elapsed=${System.currentTimeMillis() - segStart}ms"
+                    )
+                    transcript
                 }
             }
         }
-        val results = deferreds.awaitAll().sortedBy { it.index }
+        val results = (cachedResults + deferreds.awaitAll()).sortedBy { it.index }
         logger.i(
             "Pipe",
-            "transcribe done total=$total chars=${results.sumOf { it.text.length }} elapsed=${System.currentTimeMillis() - batchStart}ms"
+            "transcribe done total=$total cached=${cachedResults.size} " +
+                "new=${results.size - cachedResults.size} chars=${results.sumOf { it.text.length }} " +
+                "elapsed=${System.currentTimeMillis() - batchStart}ms"
         )
         results
     }
+
+    private suspend fun convertOrReuseMonoWav(audioFile: File, workDir: File): File {
+        val metaFile = File(workDir, "mono16k.properties")
+        val expectedFingerprint = audioFile.sourceFingerprint()
+        val cached = readMonoCache(metaFile)
+        val cachedOutput = cached?.getProperty("outputName")?.let { File(workDir, it) }
+        if (
+            cachedOutput != null &&
+            cachedOutput.exists() &&
+            cachedOutput.length() > 0 &&
+            cached?.getProperty("sourcePath") == expectedFingerprint.sourcePath &&
+            cached.getProperty("sourceLength") == expectedFingerprint.sourceLength &&
+            cached.getProperty("sourceLastModified") == expectedFingerprint.sourceLastModified
+        ) {
+            logger.i("Pipe", "reuse mono wav cache ${cachedOutput.name} size=${cachedOutput.length()}")
+            return cachedOutput
+        }
+
+        val monoWav = audioConverter.convertToMonoWav(audioFile, workDir)
+        writeMonoCache(metaFile, monoWav, expectedFingerprint)
+        return monoWav
+    }
+
+    private fun readMonoCache(metaFile: File): Properties? =
+        runCatching {
+            if (!metaFile.exists()) return null
+            Properties().apply {
+                metaFile.inputStream().use { load(it) }
+            }
+        }.getOrNull()
+
+    private fun writeMonoCache(metaFile: File, monoWav: File, fingerprint: SourceFingerprint) {
+        runCatching {
+            Properties().apply {
+                setProperty("sourcePath", fingerprint.sourcePath)
+                setProperty("sourceLength", fingerprint.sourceLength)
+                setProperty("sourceLastModified", fingerprint.sourceLastModified)
+                setProperty("outputName", monoWav.name)
+            }.store(metaFile.outputStream(), "Murmurnote mono wav cache")
+        }.onFailure { e ->
+            logger.w("Pipe", "failed to write mono cache metadata: ${e.message}")
+        }
+    }
+
+    private fun File.sourceFingerprint(): SourceFingerprint =
+        SourceFingerprint(
+            sourcePath = absolutePath,
+            sourceLength = length().toString(),
+            sourceLastModified = lastModified().toString()
+        )
+
+    private fun normalizeSegments(segments: List<TranscriptSegment>): List<TranscriptSegment> =
+        segments
+            .groupBy { it.sequence }
+            .map { (_, duplicates) -> duplicates.maxBy { it.id } }
+            .sortedBy { it.sequence }
+
+    private fun completeTranscriptCache(
+        rawTranscript: String?,
+        segments: List<TranscriptSegment>
+    ): List<TranscriptOf>? {
+        if (rawTranscript == null || segments.isEmpty()) return null
+        val sequences = segments.map { it.sequence }
+        val expected = segments.indices.toList()
+        if (sequences != expected) return null
+        return segments.map { it.toTranscriptOf() }
+    }
+
+    private fun TranscriptSegment.toTranscriptOf(): TranscriptOf =
+        TranscriptOf(
+            index = sequence,
+            text = text,
+            startMs = startMs,
+            endMs = endMs
+        )
+
+    private fun TranscriptOf.toEntity(recordingId: String): TranscriptSegment =
+        TranscriptSegment(
+            recordingId = recordingId,
+            text = text,
+            startMs = startMs,
+            endMs = endMs,
+            sequence = index
+        )
 
     private fun parseDeadline(s: String): Long? = try {
         SimpleDateFormat("yyyy-MM-dd", Locale.US).parse(s)?.time
@@ -306,5 +419,11 @@ class AudioPipeline @Inject constructor(
         val text: String,
         val startMs: Long,
         val endMs: Long
+    )
+
+    private data class SourceFingerprint(
+        val sourcePath: String,
+        val sourceLength: String,
+        val sourceLastModified: String
     )
 }

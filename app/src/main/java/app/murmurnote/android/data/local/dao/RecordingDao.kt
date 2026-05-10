@@ -50,6 +50,9 @@ interface RecordingDao {
     @Query("SELECT * FROM transcript_segments WHERE recordingId = :recordingId ORDER BY sequence ASC")
     fun observeSegments(recordingId: String): Flow<List<TranscriptSegment>>
 
+    @Query("SELECT * FROM transcript_segments WHERE recordingId = :recordingId ORDER BY sequence ASC")
+    suspend fun getSegments(recordingId: String): List<TranscriptSegment>
+
     @Query("DELETE FROM transcript_segments WHERE recordingId = :recordingId")
     suspend fun deleteSegmentsForRecording(recordingId: String)
 

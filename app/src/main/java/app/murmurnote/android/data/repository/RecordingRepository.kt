@@ -23,7 +23,9 @@ class RecordingRepository @Inject constructor(
         recordingDao.updateStatus(id, status, error)
 
     suspend fun insertSegments(segments: List<TranscriptSegment>) = recordingDao.insertSegments(segments)
+    suspend fun insertSegment(segment: TranscriptSegment) = recordingDao.insertSegment(segment)
     suspend fun deleteSegments(recordingId: String) = recordingDao.deleteSegmentsForRecording(recordingId)
+    suspend fun getSegments(recordingId: String): List<TranscriptSegment> = recordingDao.getSegments(recordingId)
     fun observeSegments(recordingId: String): Flow<List<TranscriptSegment>> = recordingDao.observeSegments(recordingId)
 
     fun search(query: String): Flow<List<Recording>> = recordingDao.searchRecordings(query)
