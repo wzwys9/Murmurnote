@@ -72,7 +72,7 @@ private fun RecordingRow(rec: Recording, onClick: () -> Unit) {
             )
             Column(modifier = Modifier.fillMaxWidth().padding(top = 18.dp)) {
                 Text(
-                    rec.title,
+                    rec.title.stripTrailingTimestamp(),
                     style = MaterialTheme.typography.titleMedium,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
@@ -109,3 +109,7 @@ private fun statusLabel(s: ProcessingStatus): String = when (s) {
     ProcessingStatus.COMPLETED -> "完成"
     ProcessingStatus.FAILED -> "失败"
 }
+
+private fun String.stripTrailingTimestamp(): String =
+    replace(Regex("\\s*·\\s*\\d{4}年\\d{2}月\\d{2}日\\s+\\d{2}时\\d{2}分\\d{2}秒\\s*$"), "")
+        .ifBlank { this }

@@ -75,7 +75,7 @@ private fun TodoRow(item: ExtractedItem, onToggle: (Boolean) -> Unit, onClick: (
             )
             Row(
                 modifier = Modifier.fillMaxWidth().padding(top = 18.dp),
-                verticalAlignment = Alignment.Top
+                verticalAlignment = Alignment.CenterVertically
             ) {
                 Checkbox(checked = item.isCompleted, onCheckedChange = onToggle)
                 Spacer(Modifier.width(8.dp))

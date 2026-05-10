@@ -124,6 +124,7 @@ fun DetailScreen(
                     item {
                         SummaryCard(
                             summary = rec.summary,
+                            createdAt = rec.createdAt,
                             regenerating = state.regeneratingSummary,
                             regenerateError = state.regenerateError,
                             canRegenerate = !rec.rawTranscript.isNullOrBlank(),
@@ -191,18 +192,28 @@ fun DetailScreen(
             if (state.segments.isNotEmpty()) {
                 item {
                     Card(modifier = Modifier.fillMaxWidth()) {
-                        Column(modifier = Modifier.padding(16.dp)) {
-                            Text("完整转写", style = MaterialTheme.typography.titleSmall)
-                            Spacer(Modifier.height(8.dp))
-                            state.segments.forEach { seg ->
+                        Box(modifier = Modifier.fillMaxWidth().padding(16.dp)) {
+                            state.recording?.let { rec ->
                                 Text(
-                                    text = seg.text,
-                                    style = MaterialTheme.typography.bodyMedium,
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .clickable { viewModel.seekTo(seg.startMs) }
-                                        .padding(vertical = 4.dp)
+                                    formatTimestampFull(rec.createdAt),
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    modifier = Modifier.align(Alignment.TopEnd)
                                 )
+                            }
+                            Column(modifier = Modifier.fillMaxWidth().padding(top = 18.dp)) {
+                                Text("完整转写", style = MaterialTheme.typography.titleSmall)
+                                Spacer(Modifier.height(8.dp))
+                                state.segments.forEach { seg ->
+                                    Text(
+                                        text = seg.text,
+                                        style = MaterialTheme.typography.bodyMedium,
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .clickable { viewModel.seekTo(seg.startMs) }
+                                            .padding(vertical = 4.dp)
+                                    )
+                                }
                             }
                         }
                     }
@@ -367,6 +378,7 @@ private fun ReprocessCard(
 @Composable
 private fun SummaryCard(
     summary: String?,
+    createdAt: Long,
     regenerating: Boolean,
     regenerateError: String?,
     canRegenerate: Boolean,
@@ -376,74 +388,82 @@ private fun SummaryCard(
     val isEmptyOrFallback = summary.isNullOrBlank() || summary.contains("提取失败")
 
     Card(modifier = Modifier.fillMaxWidth()) {
-        Column(modifier = Modifier.padding(16.dp)) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Text(
-                    "📝 AI 总结",
-                    style = MaterialTheme.typography.titleSmall,
-                    color = MaterialTheme.colorScheme.primary,
-                    modifier = Modifier.weight(1f)
-                )
-                IconButton(
-                    onClick = onRegenerate,
-                    enabled = canRegenerate && !regenerating
-                ) {
-                    if (regenerating) {
-                        CircularProgressIndicator(modifier = Modifier.size(18.dp), strokeWidth = 2.dp)
-                    } else {
-                        Icon(
-                            Icons.Filled.Refresh,
-                            contentDescription = "重新生成总结",
-                            modifier = Modifier.size(20.dp)
-                        )
-                    }
-                }
-            }
-            Spacer(Modifier.height(4.dp))
-            if (isEmptyOrFallback) {
-                Text(
-                    summary?.takeIf { it.isNotBlank() } ?: "AI 没能从这段录音提取到要点。",
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-                Spacer(Modifier.height(8.dp))
-                Button(
-                    onClick = onRegenerate,
-                    enabled = canRegenerate && !regenerating
-                ) {
-                    if (regenerating) {
-                        CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp)
-                        Spacer(Modifier.size(8.dp))
-                        Text("生成中…")
-                    } else {
-                        Icon(Icons.Filled.Refresh, contentDescription = null, modifier = Modifier.size(18.dp))
-                        Spacer(Modifier.size(6.dp))
-                        Text("重新生成总结")
-                    }
-                }
-                if (!canRegenerate) {
-                    Spacer(Modifier.height(4.dp))
-                    Text(
-                        "尚无转写文本，先完成 ASR 转写。",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.error
-                    )
-                }
-            } else {
-                Text(summary!!, style = MaterialTheme.typography.bodyLarge)
-            }
-
-            regenerateError?.let { err ->
-                Spacer(Modifier.height(8.dp))
+        Box(modifier = Modifier.fillMaxWidth().padding(16.dp)) {
+            Text(
+                formatTimestampFull(createdAt),
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.align(Alignment.TopEnd)
+            )
+            Column(modifier = Modifier.fillMaxWidth().padding(top = 18.dp)) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Text(
-                        "✗ 重新生成失败：$err",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.error,
-                        modifier = Modifier.fillMaxWidth().weight(1f)
+                        "📝 AI 总结",
+                        style = MaterialTheme.typography.titleSmall,
+                        color = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.weight(1f)
                     )
-                    IconButton(onClick = onDismissError) {
-                        Icon(Icons.Filled.Delete, contentDescription = "忽略", modifier = Modifier.size(18.dp))
+                    IconButton(
+                        onClick = onRegenerate,
+                        enabled = canRegenerate && !regenerating
+                    ) {
+                        if (regenerating) {
+                            CircularProgressIndicator(modifier = Modifier.size(18.dp), strokeWidth = 2.dp)
+                        } else {
+                            Icon(
+                                Icons.Filled.Refresh,
+                                contentDescription = "重新生成总结",
+                                modifier = Modifier.size(20.dp)
+                            )
+                        }
+                    }
+                }
+                Spacer(Modifier.height(4.dp))
+                if (isEmptyOrFallback) {
+                    Text(
+                        summary?.takeIf { it.isNotBlank() } ?: "AI 没能从这段录音提取到要点。",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Spacer(Modifier.height(8.dp))
+                    Button(
+                        onClick = onRegenerate,
+                        enabled = canRegenerate && !regenerating
+                    ) {
+                        if (regenerating) {
+                            CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp)
+                            Spacer(Modifier.size(8.dp))
+                            Text("生成中…")
+                        } else {
+                            Icon(Icons.Filled.Refresh, contentDescription = null, modifier = Modifier.size(18.dp))
+                            Spacer(Modifier.size(6.dp))
+                            Text("重新生成总结")
+                        }
+                    }
+                    if (!canRegenerate) {
+                        Spacer(Modifier.height(4.dp))
+                        Text(
+                            "尚无转写文本，先完成 ASR 转写。",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.error
+                        )
+                    }
+                } else {
+                    Text(summary!!, style = MaterialTheme.typography.bodyLarge)
+                }
+
+                regenerateError?.let { err ->
+                    Spacer(Modifier.height(8.dp))
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text(
+                            "✗ 重新生成失败：$err",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.error,
+                            modifier = Modifier.fillMaxWidth().weight(1f)
+                        )
+                        IconButton(onClick = onDismissError) {
+                            Icon(Icons.Filled.Delete, contentDescription = "忽略", modifier = Modifier.size(18.dp))
+                        }
                     }
                 }
             }
