@@ -136,17 +136,10 @@ class OllamaClient @Inject constructor(
         val rawContent = parsed.choices.firstOrNull()?.message?.content
             ?: error("Ollama 响应缺 content")
 
-        val cleaned = stripThink(rawContent).trim()
-        val jsonStr = extractJsonObject(cleaned)
-            ?: run {
-                logger.e("Ollama", "extractItems: no JSON object in response: ${cleaned.take(400)}")
-                error("无法从响应抽取 JSON: ${cleaned.take(400)}")
-            }
-        val fixedJson = fixLenientJson(jsonStr)
         val parsedResult = runCatching {
-            json.decodeFromString(ExtractionResult.serializer(), fixedJson)
+            ExtractionJsonParser.parse(rawContent, json)
         }.getOrElse { e ->
-            logger.e("Ollama", "extractItems: failed to parse ExtractionResult, raw=${jsonStr.take(300)} fixed=${fixedJson.take(300)}", e)
+            logger.e("Ollama", "extractItems: failed to parse ExtractionResult raw=${rawContent.take(300)}", e)
             // 降级：summary 用全文摘要，items 为空，让用户至少能看到转写内容
             ExtractionResult(summary = "", items = emptyList())
         }
@@ -354,7 +347,7 @@ class OllamaClient @Inject constructor(
         val parsed = json.decodeFromString(ChatCompletionResponse.serializer(), responseBody)
         val raw = parsed.choices.firstOrNull()?.message?.content
             ?: error("merge: 响应缺 content")
-        stripThink(raw).trim().takeIf { it.isNotBlank() }
+        ExtractionJsonParser.stripThink(raw).trim().takeIf { it.isNotBlank() }
             ?: error("merge: 响应为空")
     }
 
@@ -424,71 +417,4 @@ class OllamaClient @Inject constructor(
         if (res.isEmpty()) error("无可用模型")
     }
 
-    /** 修复模型输出中缺失引号的 JSON：给未加引号的 key 和 string value 补上双引号，转为标准 JSON。 */
-    private fun fixLenientJson(raw: String): String {
-        val sb = StringBuilder()
-        var i = 0
-        while (i < raw.length) {
-            val c = raw[i]
-            when {
-                // 冒号后可能是 value，检查是否需要补引号
-                c == ':' -> {
-                    sb.append(c)
-                    i++
-                    while (i < raw.length && raw[i].isWhitespace()) { sb.append(raw[i]); i++ }
-                    if (i >= raw.length) break
-                    val n = raw[i]
-                    when {
-                        n == '"' || n == '{' || n == '[' -> { /* already structured */ }
-                        raw.startsWith("null", i) || raw.startsWith("true", i) || raw.startsWith("false", i) -> {}
-                        n == '-' || n.isDigit() -> {}
-                        else -> {
-                            sb.append('"')
-                            while (i < raw.length) {
-                                when (raw[i]) {
-                                    ',', '}', ']' -> break
-                                    else -> sb.append(raw[i++])
-                                }
-                            }
-                            sb.append('"')
-                            continue
-                        }
-                    }
-                }
-            }
-            sb.append(raw[i])
-            i++
-        }
-        return sb.toString()
-    }
-
-    /** 去除 <think>...</think> */
-    private fun stripThink(s: String): String {
-        return Regex("<think>[\\s\\S]*?</think>", RegexOption.IGNORE_CASE).replace(s, "")
-            .replace("```json", "")
-            .replace("```", "")
-    }
-
-    /** 从字符串中抽取最外层的 JSON 对象 */
-    private fun extractJsonObject(s: String): String? {
-        var depth = 0
-        var start = -1
-        var inString = false
-        var escape = false
-        for (i in s.indices) {
-            val c = s[i]
-            if (escape) { escape = false; continue }
-            if (c == '\\') { escape = true; continue }
-            if (c == '"') { inString = !inString; continue }
-            if (inString) continue
-            when (c) {
-                '{' -> { if (depth == 0) start = i; depth++ }
-                '}' -> {
-                    depth--
-                    if (depth == 0 && start >= 0) return s.substring(start, i + 1)
-                }
-            }
-        }
-        return null
-    }
 }

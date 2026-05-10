@@ -31,10 +31,10 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.PrimaryTabRow
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Tab
-import androidx.compose.material3.TabRow
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
@@ -82,7 +82,7 @@ fun DebugScreen(
                         style = MaterialTheme.typography.labelMedium
                     )
                 }
-                TabRow(selectedTabIndex = tabIndex) {
+                PrimaryTabRow(selectedTabIndex = tabIndex) {
                     tabs.forEachIndexed { i, name ->
                         Tab(selected = tabIndex == i, onClick = { tabIndex = i }, text = { Text(name) })
                     }

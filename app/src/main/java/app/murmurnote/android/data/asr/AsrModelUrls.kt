@@ -11,17 +11,17 @@ package app.murmurnote.android.data.asr
 object AsrModelUrls {
 
     /** Qwen3-ASR 0.6B int8，压缩包约 838MiB，解压后运行文件约 940MiB。 */
-    const val FIRE_RED_ASR_TARBALL =
+    const val QWEN3_ASR_TARBALL =
         "https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/sherpa-onnx-qwen3-asr-0.6B-int8-2026-03-25.tar.bz2"
 
     /** 解压后顶层目录名，用于 tar 解包后从临时位置 rename 到 qwen3_asr_0_6b/ 。 */
-    const val FIRE_RED_ASR_TARBALL_TOP_DIR = "sherpa-onnx-qwen3-asr-0.6B-int8-2026-03-25"
+    const val QWEN3_ASR_TARBALL_TOP_DIR = "sherpa-onnx-qwen3-asr-0.6B-int8-2026-03-25"
 
     /** 标称大小（字节），UI 进度条与 ETA 用。 */
-    const val FIRE_RED_ASR_TARBALL_BYTES = 878_702_423L
+    const val QWEN3_ASR_TARBALL_BYTES = 878_702_423L
 
     /** 期望 SHA256（小写 hex）。空表示跳过校验（仅集成期临时）。 */
-    const val FIRE_RED_ASR_TARBALL_SHA256 = "393f8a14e2f5fb96746aaab342997a40641001fbd5bf9592a080a8329178ee96"
+    const val QWEN3_ASR_TARBALL_SHA256 = "393f8a14e2f5fb96746aaab342997a40641001fbd5bf9592a080a8329178ee96"
 
     /**
      * 解压后所有 .onnx 文件总和的健全性判定阈值。Qwen3-ASR int8 三个 ONNX 文件合计约 937MB。

@@ -25,7 +25,7 @@ class LocalAsrEngine @Inject constructor(
     private val logger: Logger
 ) : AsrEngine {
 
-    override val engineType: AsrEngineType = AsrEngineType.LOCAL_FIRE_RED_ASR
+    override val engineType: AsrEngineType = AsrEngineType.LOCAL_QWEN3_ASR
 
     private val bridges = mutableListOf<SherpaBridge>()
     private var poolSem = Semaphore(1)

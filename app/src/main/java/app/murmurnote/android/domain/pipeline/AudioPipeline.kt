@@ -239,7 +239,7 @@ class AudioPipeline @Inject constructor(
     ): List<TranscriptOf> = coroutineScope {
         // Qwen3 本地模型接近 1GB，固定单实例串行解码；云端 GLM 仍按原 ASR_CONCURRENCY 跑。
         val concurrency = when (engine.engineType) {
-            AsrEngineType.LOCAL_FIRE_RED_ASR -> {
+            AsrEngineType.LOCAL_QWEN3_ASR -> {
                 (engine as? LocalAsrEngine)?.setConcurrency(1)
                 1
             }

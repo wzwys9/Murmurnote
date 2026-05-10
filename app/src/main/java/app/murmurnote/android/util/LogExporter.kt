@@ -8,6 +8,7 @@ import android.os.Environment
 import android.provider.MediaStore
 import androidx.core.content.FileProvider
 import app.murmurnote.android.BuildConfig
+import app.murmurnote.android.data.asr.AsrModelManager
 import app.murmurnote.android.data.repository.ApiLogRepository
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.Dispatchers
@@ -26,16 +27,16 @@ import javax.inject.Singleton
 /**
  * 把日志打成 zip 导出到系统下载目录。
  * Zip 内容：
- *   - runtime.log         当前文本日志（HTTP / 录音 / Pipeline / 设置等）
- *   - runtime.log.old     上一份（轮转后保留）
- *   - api_logs.txt        最近 100 条 HTTP 请求/响应（含完整 body）
+ *   - runtime*.log        当前与轮转文本日志（HTTP / 录音 / Pipeline / 设置等）
+ *   - api_logs.txt        最近 100 条 HTTP 请求/响应（默认脱敏并截断）
  *   - meta.txt            APP 版本、构建时间、设备信息
  */
 @Singleton
 class LogExporter @Inject constructor(
     @ApplicationContext private val context: Context,
     private val logger: Logger,
-    private val apiLogRepository: ApiLogRepository
+    private val apiLogRepository: ApiLogRepository,
+    private val asrModelManager: AsrModelManager
 ) {
     suspend fun exportToDownloads(): Result<String> = runCatching {
         val ts = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US).format(Date())
@@ -107,24 +108,18 @@ class LogExporter @Inject constructor(
     private suspend fun buildZip(): ByteArray {
         val out = ByteArrayOutputStream()
         ZipOutputStream(out).use { zip ->
-            // 1) 当前 runtime.log
-            val current = logger.logFile()
-            if (current.exists() && current.length() > 0) {
-                writeFileEntry(zip, current, "runtime.log")
-            } else {
+            // 1) 当前与轮转 runtime 日志
+            val files = logger.logFiles().filter { it.exists() && it.length() > 0 }
+            if (files.isEmpty()) {
                 writeStringEntry(zip, "runtime.log", "(空：APP 还未产生任何运行日志)")
+            } else {
+                files.forEach { writeFileEntry(zip, it, it.name) }
             }
 
-            // 2) runtime.log.old（轮转备份）
-            val old = File(current.parentFile, "runtime.log.old")
-            if (old.exists() && old.length() > 0) {
-                writeFileEntry(zip, old, "runtime.log.old")
-            }
-
-            // 3) 最近 100 条 HTTP 调用（含完整 body，DB 记录）
+            // 2) 最近 100 条 HTTP 调用（DB 中已按默认策略脱敏和截断）
             writeStringEntry(zip, "api_logs.txt", buildApiLogText())
 
-            // 4) 元信息
+            // 3) 元信息
             writeStringEntry(zip, "meta.txt", buildMetaText())
         }
         return out.toByteArray()
@@ -152,9 +147,9 @@ class LogExporter @Inject constructor(
         logs.forEach { log ->
             sb.appendLine("[${fmt.format(Date(log.timestamp))}] ${log.apiName}  ${log.method}  HTTP ${log.responseCode}  ${log.durationMs}ms")
             sb.appendLine("  URL: ${log.url}")
-            log.requestBody?.let { sb.appendLine("  Request: ${it.take(2000)}") }
-            log.responseBody?.let { sb.appendLine("  Response: ${it.take(4000)}") }
-            log.errorMessage?.let { sb.appendLine("  Error: $it") }
+            log.requestBody?.let { sb.appendLine("  Request: ${LogSanitizer.body(it, 2000)}") }
+            log.responseBody?.let { sb.appendLine("  Response: ${LogSanitizer.body(it, 4000)}") }
+            log.errorMessage?.let { sb.appendLine("  Error: ${LogSanitizer.message(it)}") }
             sb.appendLine()
         }
         return sb.toString()
@@ -171,6 +166,14 @@ class LogExporter @Inject constructor(
         sb.appendLine("Device:       ${Build.MANUFACTURER} ${Build.MODEL}")
         sb.appendLine("Android:      ${Build.VERSION.RELEASE} (SDK ${Build.VERSION.SDK_INT})")
         sb.appendLine("ABI:          ${Build.SUPPORTED_ABIS.joinToString(",")}")
+        sb.appendLine("ASR bundled:  ${asrModelManager.hasBundledAssets()}")
+        sb.appendLine("ASR ready:    ${asrModelManager.isModelReady()}")
+        sb.appendLine("ASR files:    ${directorySize(asrModelManager.modelDir())}")
         return sb.toString()
     }
+
+    private fun directorySize(dir: File): Long =
+        if (!dir.exists()) 0L else dir.walkTopDown()
+            .filter { it.isFile }
+            .sumOf { it.length() }
 }

@@ -4,6 +4,7 @@ import app.murmurnote.android.data.local.dao.ApiLogDao
 import app.murmurnote.android.data.local.entity.ApiLog
 import app.murmurnote.android.di.ApplicationScope
 import app.murmurnote.android.util.Logger
+import app.murmurnote.android.util.LogSanitizer
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.launch
 import okhttp3.Interceptor
@@ -34,18 +35,19 @@ class ApiLogInterceptor @Inject constructor(
         val request = chain.request()
         val startTime = System.currentTimeMillis()
 
-        val requestBody = peekRequestBody(request) ?: ""
+        val requestBody = LogSanitizer.body(peekRequestBody(request) ?: "", 8 * 1024)
+        val safeUrl = LogSanitizer.message(request.url.toString(), 2_000)
         val apiName = when {
             request.url.host.contains("bigmodel") -> "GLM-ASR"
             request.url.host.contains("ollama") -> "Ollama"
             else -> request.url.host
         }
 
-        logger.i("HTTP", "${request.method} ${request.url}")
+        logger.i("HTTP", "${request.method} $safeUrl")
         val response = try {
             chain.proceed(request)
         } catch (e: IOException) {
-            logger.e("HTTP", "${request.method} ${request.url} → IOException", e)
+            logger.e("HTTP", "${request.method} $safeUrl → IOException", e)
             scope.launch {
                 runCatching {
                     apiLogDao.insert(
@@ -53,12 +55,12 @@ class ApiLogInterceptor @Inject constructor(
                             timestamp = startTime,
                             apiName = apiName,
                             method = request.method,
-                            url = request.url.toString(),
-                            requestBody = requestBody.truncate(8 * 1024),
+                            url = safeUrl,
+                            requestBody = requestBody,
                             responseCode = -1,
                             responseBody = null,
                             durationMs = System.currentTimeMillis() - startTime,
-                            errorMessage = e.message
+                            errorMessage = e.message?.let { LogSanitizer.message(it) }
                         )
                     )
                     apiLogDao.trimToNewest(API_LOG_KEEP)
@@ -73,15 +75,15 @@ class ApiLogInterceptor @Inject constructor(
             "<sse stream — body not captured>"
         } else {
             runCatching { response.peekBody(256 * 1024).string() }.getOrNull()
-        }
+        }?.let { LogSanitizer.body(it, 64 * 1024) }
         val durMs = System.currentTimeMillis() - startTime
         if (response.code in 200..399) {
-            logger.i("HTTP", "${request.method} ${request.url} → ${response.code} (${durMs}ms)")
+            logger.i("HTTP", "${request.method} $safeUrl → ${response.code} (${durMs}ms)")
         } else {
             // 错误响应把 body 摘要也写进文件日志，方便用户导出后排查
             logger.e(
                 "HTTP",
-                "${request.method} ${request.url} → ${response.code} (${durMs}ms) body=${responseBody?.take(800).orEmpty()}"
+                "${request.method} $safeUrl → ${response.code} (${durMs}ms) body=${responseBody?.take(800).orEmpty()}"
             )
         }
 
@@ -89,16 +91,16 @@ class ApiLogInterceptor @Inject constructor(
             runCatching {
                 apiLogDao.insert(
                     ApiLog(
-                        timestamp = startTime,
-                        apiName = apiName,
-                        method = request.method,
-                        url = request.url.toString(),
-                        requestBody = requestBody.truncate(8 * 1024),
-                        responseCode = response.code,
-                        responseBody = responseBody?.truncate(64 * 1024),
-                        durationMs = System.currentTimeMillis() - startTime,
-                        errorMessage = null
-                    )
+                            timestamp = startTime,
+                            apiName = apiName,
+                            method = request.method,
+                            url = safeUrl,
+                            requestBody = requestBody,
+                            responseCode = response.code,
+                            responseBody = responseBody,
+                            durationMs = System.currentTimeMillis() - startTime,
+                            errorMessage = null
+                        )
                 )
                 apiLogDao.trimToNewest(API_LOG_KEEP)
             }
@@ -117,7 +119,4 @@ class ApiLogInterceptor @Inject constructor(
             buf.readUtf8()
         }.getOrNull()
     }
-
-    private fun String.truncate(max: Int): String =
-        if (length <= max) this else substring(0, max) + "...<truncated>"
 }

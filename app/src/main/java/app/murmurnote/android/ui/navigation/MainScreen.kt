@@ -2,8 +2,8 @@ package app.murmurnote.android.ui.navigation
 
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.FormatListBulleted
 import androidx.compose.material.icons.filled.Checklist
-import androidx.compose.material.icons.filled.FormatListBulleted
 import androidx.compose.material.icons.filled.Lightbulb
 import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material.icons.filled.Settings
@@ -29,7 +29,7 @@ import app.murmurnote.android.ui.screen.todo.TodoScreen
 
 private enum class Tab(val titleRes: Int, val icon: ImageVector) {
     Home(R.string.tab_home, Icons.Filled.Mic),
-    List(R.string.tab_list, Icons.Filled.FormatListBulleted),
+    List(R.string.tab_list, Icons.AutoMirrored.Filled.FormatListBulleted),
     Todo(R.string.tab_todo, Icons.Filled.Checklist),
     Idea(R.string.tab_idea, Icons.Filled.Lightbulb),
     Settings(R.string.tab_settings, Icons.Filled.Settings)

@@ -203,4 +203,6 @@ dependencies {
     // sherpa-onnx-v1.12.39-android.tar.bz2 解压出来的 .aar 放到 app/libs/ 即可被自动拾取。
     // 缺失也能正常编译 —— LocalAsrEngine 走反射，运行时检测不到会显式报错让用户去设置页提示。
     implementation(fileTree(mapOf("dir" to "libs", "include" to listOf("*.aar"))))
+
+    testImplementation(libs.junit)
 }

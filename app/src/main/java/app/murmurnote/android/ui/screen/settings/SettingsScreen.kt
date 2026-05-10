@@ -30,12 +30,12 @@ import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExposedDropdownMenuBox
 import androidx.compose.material3.ExposedDropdownMenuDefaults
+import androidx.compose.material3.ExposedDropdownMenuAnchorType
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.ListItem
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.MenuAnchorType
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.RadioButton
@@ -419,7 +419,7 @@ fun OllamaModelSelector(
                     trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded) },
                     modifier = Modifier
                         .fillMaxWidth()
-                        .menuAnchor(MenuAnchorType.PrimaryNotEditable, true)
+                        .menuAnchor(ExposedDropdownMenuAnchorType.PrimaryNotEditable, true)
                 )
                 ExposedDropdownMenu(
                     expanded = expanded,
@@ -513,7 +513,7 @@ fun AsrEngineSection(
     onDeleteModel: () -> Unit
 ) {
     val ctx = LocalContext.current
-    val isLocal = engineType == AsrEngineType.LOCAL_FIRE_RED_ASR.name
+    val isLocal = AsrEngineType.parse(engineType) == AsrEngineType.LOCAL_QWEN3_ASR
 
     Card(modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp)) {
         Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -529,7 +529,7 @@ fun AsrEngineSection(
                 title = "本地（Qwen3-ASR 0.6B）",
                 subtitle = "完全离线、中文和方言覆盖更强、需约 1GB 存储",
                 selected = isLocal,
-                onSelected = { onEngineSelected(AsrEngineType.LOCAL_FIRE_RED_ASR.name) }
+                onSelected = { onEngineSelected(AsrEngineType.LOCAL_QWEN3_ASR.name) }
             )
 
             if (isLocal) {

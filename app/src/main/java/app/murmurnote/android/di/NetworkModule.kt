@@ -38,10 +38,9 @@ object NetworkModule {
             .readTimeout(5, TimeUnit.MINUTES)      // GLM 长流式
             .writeTimeout(2, TimeUnit.MINUTES)
             .callTimeout(0, TimeUnit.MILLISECONDS) // 不限制总时长（SSE 长跑）
-            // 顺序很重要：debug 拦截器先跑，它注入的延时/失败会经过 apiLog 拦截器记录到 api_logs，
-            // 这样调试开关产生的"假失败"也能在导出包里看到。
-            .addInterceptor(debugFlagsInterceptor)
             .addInterceptor(apiLogInterceptor)
+            // 顺序很重要：apiLog 拦截器包住 debug 拦截器，debug 注入的延时/失败才会进入 api_logs。
+            .addInterceptor(debugFlagsInterceptor)
             .addInterceptor(logging)
             .build()
     }

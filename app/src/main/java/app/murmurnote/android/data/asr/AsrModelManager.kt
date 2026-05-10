@@ -132,7 +132,7 @@ class AsrModelManager @Inject constructor(
             if (cancelRequested) throw CancellationException("下载已取消")
 
             // 校验
-            val expected = AsrModelUrls.FIRE_RED_ASR_TARBALL_SHA256
+            val expected = AsrModelUrls.QWEN3_ASR_TARBALL_SHA256
             if (expected.isNotBlank()) {
                 _status.value = ModelStatus.Extracting(0.86f)
                 val actual = sha256(tarball)
@@ -268,7 +268,7 @@ class AsrModelManager @Inject constructor(
         for (i in ordered) {
             if (cancelRequested) throw CancellationException("下载已取消")
             val prefix = AsrModelUrls.MIRROR_PREFIXES[i]
-            val url = prefix + AsrModelUrls.FIRE_RED_ASR_TARBALL
+            val url = prefix + AsrModelUrls.QWEN3_ASR_TARBALL
             tried += url
             try {
                 downloadOne(url, tarball)
@@ -307,7 +307,7 @@ class AsrModelManager @Inject constructor(
             // Content-Length 在 206 是"剩余字节数"，要加上 existing 才是文件总长
             val totalBytes = if (resp.code == 206 && totalContent > 0) existing + totalContent
                 else if (totalContent > 0) totalContent
-                else AsrModelUrls.FIRE_RED_ASR_TARBALL_BYTES
+                else AsrModelUrls.QWEN3_ASR_TARBALL_BYTES
 
             // 200 表示服务器忽略 Range，从头开始 → 截断重写
             val raf = RandomAccessFile(dest, "rw")
@@ -389,7 +389,7 @@ class AsrModelManager @Inject constructor(
 
     private suspend fun extractTarBz2(tarball: File) {
         val outRoot = rootDir()
-        val expectedTopDir = AsrModelUrls.FIRE_RED_ASR_TARBALL_TOP_DIR
+        val expectedTopDir = AsrModelUrls.QWEN3_ASR_TARBALL_TOP_DIR
         // 先解到一个临时位置，避免半成品占据 qwen3_asr_0_6b/
         val staging = File(outRoot, "_staging").apply {
             deleteRecursively()

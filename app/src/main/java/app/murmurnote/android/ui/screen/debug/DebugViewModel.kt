@@ -114,7 +114,7 @@ class DebugViewModel @Inject constructor(
     }
 
     fun clearRuntimeLog() = viewModelScope.launch(Dispatchers.IO) {
-        runCatching { logger.logFile().writeText("") }
+        runCatching { logger.clear() }
         _runtimeLogLines.value = emptyList()
     }
 

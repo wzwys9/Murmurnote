@@ -4,6 +4,7 @@ import android.app.Application
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.os.Build
+import android.os.Process
 import androidx.hilt.work.HiltWorkerFactory
 import androidx.work.Configuration
 import app.murmurnote.android.data.asr.AsrModelManager
@@ -52,7 +53,12 @@ class MurmurnoteApplication : Application(), Configuration.Provider {
         val previous = Thread.getDefaultUncaughtExceptionHandler()
         Thread.setDefaultUncaughtExceptionHandler { thread, throwable ->
             runCatching { logger.e("Crash", "uncaught on thread=${thread.name}", throwable) }
-            previous?.uncaughtException(thread, throwable)
+            if (previous != null) {
+                previous.uncaughtException(thread, throwable)
+            } else {
+                Process.killProcess(Process.myPid())
+                kotlin.system.exitProcess(10)
+            }
         }
     }
 

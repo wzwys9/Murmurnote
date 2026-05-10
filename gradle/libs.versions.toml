@@ -25,6 +25,7 @@ coreKtx = "1.13.1"
 appcompat = "1.7.0"
 material = "1.12.0"
 coroutines = "1.8.1"
+junit = "4.13.2"
 
 [libraries]
 androidx-core-ktx = { module = "androidx.core:core-ktx", version.ref = "coreKtx" }
@@ -78,6 +79,7 @@ coil-compose = { module = "io.coil-kt:coil-compose", version.ref = "coil" }
 
 # tar.bz2 解压（sherpa-onnx GitHub release 的模型包格式）。
 commons-compress = { module = "org.apache.commons:commons-compress", version.ref = "commonsCompress" }
+junit = { module = "junit:junit", version.ref = "junit" }
 
 [plugins]
 android-application = { id = "com.android.application", version.ref = "agp" }

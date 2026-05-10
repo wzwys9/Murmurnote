@@ -33,10 +33,13 @@ interface AsrEngine {
 
 enum class AsrEngineType {
     CLOUD_GLM,
-    LOCAL_FIRE_RED_ASR;
+    LOCAL_QWEN3_ASR;
 
     companion object {
-        fun parse(s: String?): AsrEngineType = entries.firstOrNull { it.name == s } ?: CLOUD_GLM
+        fun parse(s: String?): AsrEngineType = when (s) {
+            "LOCAL_FIRE_RED_ASR" -> LOCAL_QWEN3_ASR
+            else -> entries.firstOrNull { it.name == s } ?: CLOUD_GLM
+        }
     }
 }
 
