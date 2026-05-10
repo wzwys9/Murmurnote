@@ -83,7 +83,8 @@ class SherpaBridge private constructor(
          *   - FireRedASR CTC (model.int8.onnx > 500MB)：纯字符，无标点
          *   - FireRedASR AED (encoder.int8.onnx + decoder.int8.onnx)：encoder+decoder
          */
-        fun create(modelDir: File, logger: Logger): SherpaBridge {
+        fun create(modelDir: File, numThreads: Int, logger: Logger): SherpaBridge {
+            val threads = numThreads.coerceIn(1, 4)
             val tokens = File(modelDir, "tokens.txt").absolutePath
             val convFrontendFile = File(modelDir, "conv_frontend.onnx")
             val modelFile = File(modelDir, "model.int8.onnx")
@@ -111,7 +112,7 @@ class SherpaBridge private constructor(
                         "$PKG.OfflineModelConfig",
                         mapOf(
                             "qwen3Asr" to qwen3Peer,
-                            "numThreads" to 4,
+                            "numThreads" to threads,
                             "provider" to "cpu"
                         )
                     )
@@ -132,7 +133,7 @@ class SherpaBridge private constructor(
                         mapOf(
                             "senseVoice" to svPeer,
                             "tokens" to tokens,
-                            "numThreads" to 4,
+                            "numThreads" to threads,
                             "provider" to "cpu"
                         )
                     )
@@ -149,7 +150,7 @@ class SherpaBridge private constructor(
                         mapOf(
                             "fireRedAsrCtc" to ctcPeer,
                             "tokens" to tokens,
-                            "numThreads" to 4,
+                            "numThreads" to threads,
                             "provider" to "cpu"
                         )
                     )
@@ -169,7 +170,7 @@ class SherpaBridge private constructor(
                         mapOf(
                             "fireRedAsr" to aedPeer,
                             "tokens" to tokens,
-                            "numThreads" to 4,
+                            "numThreads" to threads,
                             "provider" to "cpu"
                         )
                     )
@@ -200,7 +201,7 @@ class SherpaBridge private constructor(
                 streamCls = streamCls,
                 mResultText = resultCls.getMethod("getText"),
                 logger = logger
-            ).also { logger.i("LocalAsr", "sherpa-onnx OfflineRecognizer initialized (modelDir=$modelDir)") }
+            ).also { logger.i("LocalAsr", "sherpa-onnx OfflineRecognizer initialized (threads=$threads modelDir=$modelDir)") }
         }
 
         /**

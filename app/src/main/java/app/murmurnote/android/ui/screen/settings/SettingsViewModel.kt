@@ -4,6 +4,7 @@ import android.content.Context
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import app.murmurnote.android.data.asr.AsrEngineType
+import app.murmurnote.android.data.asr.LocalAsrModelSpec
 import app.murmurnote.android.data.asr.AsrModelManager
 import app.murmurnote.android.data.asr.AsrModelUrls
 import app.murmurnote.android.data.preference.AppPreferences
@@ -57,6 +58,8 @@ class SettingsViewModel @Inject constructor(
         val asrEngineType: String = AsrEngineType.CLOUD_GLM.name,
         val asrMirrorIndex: Int = 0,
         val asrMirrorOptions: List<String> = listOf("GitHub 直连", "ghproxy 镜像", "gh-proxy 镜像"),
+        val asrLocalModelId: String = AsrModelUrls.DEFAULT_MODEL_ID,
+        val asrLocalModels: List<LocalAsrModelSpec> = AsrModelUrls.MODELS,
         val asrModelStatus: AsrModelManager.ModelStatus = AsrModelManager.ModelStatus.NotDownloaded,
         val showAsrDownloadConfirm: Boolean = false,
         // sherpa-onnx Kotlin/JNI 类是否能加载（即 app/libs/ 下的 AAR 是否打进了 APK）。
@@ -77,6 +80,7 @@ class SettingsViewModel @Inject constructor(
         viewModelScope.launch { appPreferences.llmModel.collect { v -> _uiState.update { it.copy(llmModel = v) } } }
         viewModelScope.launch { appPreferences.reasoningEffort.collect { v -> _uiState.update { it.copy(reasoningEffort = v) } } }
         viewModelScope.launch { appPreferences.asrEngineType.collect { v -> _uiState.update { it.copy(asrEngineType = v) } } }
+        viewModelScope.launch { appPreferences.asrLocalModelId.collect { v -> _uiState.update { it.copy(asrLocalModelId = v) } } }
         viewModelScope.launch { appPreferences.asrDownloadMirrorIndex.collect { v -> _uiState.update { it.copy(asrMirrorIndex = v) } } }
         viewModelScope.launch { asrModelManager.status.collect { v -> _uiState.update { it.copy(asrModelStatus = v) } } }
         viewModelScope.launch { appPreferences.asrLocalConcurrency.collect { v -> _uiState.update { it.copy(asrLocalConcurrency = v) } } }
@@ -203,6 +207,13 @@ class SettingsViewModel @Inject constructor(
 
     fun setAsrMirrorIndex(i: Int) = viewModelScope.launch {
         appPreferences.setAsrDownloadMirrorIndex(i.coerceIn(0, AsrModelUrls.MIRROR_PREFIXES.lastIndex))
+    }
+
+    fun setAsrLocalModel(id: String) = viewModelScope.launch {
+        localAsrEngine.release()
+        asrModelManager.selectModel(id)
+        _uiState.update { it.copy(asrLocalModelId = AsrModelUrls.modelById(id).id) }
+        logger.i("Settings", "local asr model switched → ${AsrModelUrls.modelById(id).id}")
     }
 
     fun requestAsrDownloadConfirm() {

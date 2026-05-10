@@ -166,6 +166,7 @@ class LogExporter @Inject constructor(
         sb.appendLine("Device:       ${Build.MANUFACTURER} ${Build.MODEL}")
         sb.appendLine("Android:      ${Build.VERSION.RELEASE} (SDK ${Build.VERSION.SDK_INT})")
         sb.appendLine("ABI:          ${Build.SUPPORTED_ABIS.joinToString(",")}")
+        sb.appendLine("ASR model:    ${asrModelManager.selectedModel().id}")
         sb.appendLine("ASR bundled:  ${asrModelManager.hasBundledAssets()}")
         sb.appendLine("ASR ready:    ${asrModelManager.isModelReady()}")
         sb.appendLine("ASR files:    ${directorySize(asrModelManager.modelDir())}")

@@ -89,12 +89,12 @@ android {
         disable += "AutoboxingStateCreation"
     }
 
-    // ffmpeg-kit 的原生 .so 在四个 ABI 上一共占 ~175 MB,通用 APK 把它们全打进去就是 ~180 MB。
-    // 按 ABI 拆四个 release APK:每个用户设备只对应一个,实际下载/安装包大小立刻降到 30-60 MB 量级。
-    // 仅 release 拆包;debug 仍是 universal,方便开发机随便装。
+    // onnxruntime / ffmpeg-kit / sherpa-onnx 的原生 .so 在四个 ABI 上合计超过 200 MB。
+    // Debug 和 release 都按 ABI 拆 APK；单个设备只需要一套 ABI。Release 单 APK 约 48-68 MB，
+    // debug 因未启用 R8 会额外带较大的 dex，但也不再生成 200+ MB 的 universal APK。
     splits {
         abi {
-            isEnable = gradle.startParameter.taskNames.any { it.contains("Release", ignoreCase = true) }
+            isEnable = true
             reset()
             include("armeabi-v7a", "arm64-v8a", "x86", "x86_64")
             isUniversalApk = false

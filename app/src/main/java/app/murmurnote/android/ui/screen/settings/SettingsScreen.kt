@@ -65,6 +65,8 @@ import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import app.murmurnote.android.BuildConfig
 import app.murmurnote.android.data.asr.AsrEngineType
+import app.murmurnote.android.data.asr.AsrModelUrls
+import app.murmurnote.android.data.asr.LocalAsrModelSpec
 import app.murmurnote.android.data.asr.AsrModelManager
 import app.murmurnote.android.data.remote.llm.LlmProvider
 
@@ -144,11 +146,14 @@ fun SettingsScreen(
             AsrEngineSection(
                 engineType = state.asrEngineType,
                 modelStatus = state.asrModelStatus,
+                selectedModelId = state.asrLocalModelId,
+                localModels = state.asrLocalModels,
                 mirrorIndex = state.asrMirrorIndex,
                 mirrorOptions = state.asrMirrorOptions,
                 nativeLibReady = state.asrNativeLibReady,
                 localConcurrency = state.asrLocalConcurrency,
                 onEngineSelected = viewModel::setAsrEngineType,
+                onModelSelected = viewModel::setAsrLocalModel,
                 onMirrorSelected = viewModel::setAsrMirrorIndex,
                 onConcurrencyChanged = viewModel::setAsrLocalConcurrency,
                 onRequestDownload = viewModel::requestAsrDownloadConfirm,
@@ -159,6 +164,7 @@ fun SettingsScreen(
         if (state.showAsrDownloadConfirm) {
             item {
                 AsrDownloadConfirmDialog(
+                    model = AsrModelUrls.modelById(state.asrLocalModelId),
                     onDismiss = viewModel::dismissAsrDownloadConfirm,
                     onConfirm = { viewModel.startAsrDownload(it) }
                 )
@@ -552,11 +558,14 @@ fun ReasoningEffortSelector(current: String, onSelected: (String) -> Unit) {
 fun AsrEngineSection(
     engineType: String,
     modelStatus: AsrModelManager.ModelStatus,
+    selectedModelId: String,
+    localModels: List<LocalAsrModelSpec>,
     mirrorIndex: Int,
     mirrorOptions: List<String>,
     nativeLibReady: Boolean,
     localConcurrency: Int,
     onEngineSelected: (String) -> Unit,
+    onModelSelected: (String) -> Unit,
     onMirrorSelected: (Int) -> Unit,
     onConcurrencyChanged: (Int) -> Unit,
     onRequestDownload: () -> Unit,
@@ -577,8 +586,8 @@ fun AsrEngineSection(
                 onSelected = { onEngineSelected(AsrEngineType.CLOUD_GLM.name) }
             )
             EngineRadioRow(
-                title = "本地（SenseVoiceSmall）",
-                subtitle = "完全离线、中文/粤语表现较好、需约 230MB 存储",
+                title = "本地模型",
+                subtitle = "完全离线，可在下方选择 SenseVoiceSmall 或 Qwen3-ASR",
                 selected = isLocal,
                 onSelected = { onEngineSelected(AsrEngineType.LOCAL_SENSE_VOICE.name) }
             )
@@ -586,8 +595,14 @@ fun AsrEngineSection(
             if (isLocal) {
                 Spacer(Modifier.height(4.dp))
                 NativeLibStatusRow(nativeLibReady)
+                LocalModelPicker(
+                    models = localModels,
+                    selectedModelId = selectedModelId,
+                    onSelected = onModelSelected
+                )
                 LocalModelStatusBlock(
                     status = modelStatus,
+                    model = AsrModelUrls.modelById(selectedModelId),
                     mirrorIndex = mirrorIndex,
                     mirrorOptions = mirrorOptions,
                     localConcurrency = localConcurrency,
@@ -641,8 +656,43 @@ private fun EngineRadioRow(
 }
 
 @Composable
+private fun LocalModelPicker(
+    models: List<LocalAsrModelSpec>,
+    selectedModelId: String,
+    onSelected: (String) -> Unit
+) {
+    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        Text(
+            "本地模型",
+            style = MaterialTheme.typography.labelMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+        models.forEach { model ->
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clickable { onSelected(model.id) }
+                    .padding(vertical = 2.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                RadioButton(selected = selectedModelId == model.id, onClick = { onSelected(model.id) })
+                Column(modifier = Modifier.padding(start = 8.dp)) {
+                    Text(model.displayName, style = MaterialTheme.typography.bodyMedium)
+                    Text(
+                        "${model.description} · 下载 ${model.sizeLabel}",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
 private fun LocalModelStatusBlock(
     status: AsrModelManager.ModelStatus,
+    model: LocalAsrModelSpec,
     mirrorIndex: Int,
     mirrorOptions: List<String>,
     localConcurrency: Int,
@@ -663,12 +713,12 @@ private fun LocalModelStatusBlock(
                 AsrModelManager.ModelStatus.NotDownloaded -> {
                     Text("模型未下载", style = MaterialTheme.typography.bodyMedium)
                     Text(
-                        "首次启用本地引擎前需要下载约 155MiB 的 SenseVoiceSmall int8 压缩包。",
+                        "首次启用 ${model.displayName} 前需要下载约 ${model.sizeLabel} 的压缩包。",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                     MirrorPicker(mirrorIndex, mirrorOptions, onMirrorSelected)
-                    Button(onClick = onRequestDownload) { Text("下载模型（约 155MiB）") }
+                    Button(onClick = onRequestDownload) { Text("下载模型（约 ${model.sizeLabel}）") }
                 }
                 is AsrModelManager.ModelStatus.Downloading -> {
                     Text("下载中：${(status.progress * 100).toInt()}%", style = MaterialTheme.typography.bodyMedium)
@@ -705,11 +755,15 @@ private fun LocalModelStatusBlock(
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
-                    Text(
-                        "SenseVoice 本地识别固定单路运行。",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
+                    if (model.supportsFastConcurrency) {
+                        ConcurrencySelector(localConcurrency, onConcurrencyChanged)
+                    } else {
+                        Text(
+                            "Qwen3-ASR 内存占用较高，本地识别固定单路运行。",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
                     OutlinedButton(onClick = onDeleteModel) { Text("删除模型") }
                 }
                 is AsrModelManager.ModelStatus.Corrupted -> {
@@ -773,7 +827,7 @@ private fun ConcurrencySelector(
 ) {
     Column {
         Text(
-            "并发度（约 ${current * 200}MB）",
+            "并行识别速度（约 ${current}x，最多 3x）",
             style = MaterialTheme.typography.labelMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant
         )
@@ -802,6 +856,7 @@ private fun ConcurrencySelector(
 
 @Composable
 fun AsrDownloadConfirmDialog(
+    model: LocalAsrModelSpec,
     onDismiss: () -> Unit,
     onConfirm: (android.content.Context) -> Unit
 ) {
@@ -811,7 +866,7 @@ fun AsrDownloadConfirmDialog(
         title = { Text("下载本地 ASR 模型") },
         text = {
             Text(
-                "SenseVoiceSmall int8 压缩包约 155MiB，解压后约 230MB。国内网络下载可能需要较长时间，建议在 WiFi 下进行。\n\n" +
+                "${model.displayName} 压缩包约 ${model.sizeLabel}。国内网络下载可能需要较长时间，建议在 WiFi 下进行。\n\n" +
                     "下载会在通知栏显示进度，可随时取消并继续（断点续传）。"
             )
         },

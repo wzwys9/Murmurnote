@@ -37,6 +37,7 @@ class AppPreferences @Inject constructor(
         val DEBUG_SIMULATE_DELAY_MS = stringPreferencesKey("debug_simulate_delay_ms")
         // ASR 引擎切换 / 镜像选择（本地引擎用）
         val ASR_ENGINE_TYPE = stringPreferencesKey("asr_engine_type")
+        val ASR_LOCAL_MODEL_ID = stringPreferencesKey("asr_local_model_id")
         val ASR_DOWNLOAD_MIRROR_INDEX = stringPreferencesKey("asr_download_mirror_index")
         // 标记 assets 中预置模型已成功拷贝到 filesDir，避免每次启动都重新校验+拷
         val ASR_BUNDLED_INSTALLED = booleanPreferencesKey("asr_bundled_installed")
@@ -108,12 +109,17 @@ class AppPreferences @Inject constructor(
         it[Keys.ASR_DOWNLOAD_MIRROR_INDEX]?.toIntOrNull() ?: 0
     }
 
+    /** 当前选中的本地 ASR 模型。默认 SenseVoiceSmall，旧安装升级后行为不变。 */
+    val asrLocalModelId: Flow<String> = context.dataStore.data.map {
+        it[Keys.ASR_LOCAL_MODEL_ID] ?: "sense_voice_zh_en_ja_ko_yue"
+    }
+
     /** assets 中的预置模型是否已经拷贝到 filesDir。 */
     val asrBundledInstalled: Flow<Boolean> = context.dataStore.data.map {
         it[Keys.ASR_BUNDLED_INSTALLED] ?: false
     }
 
-    /** 本地 ASR 并发度配置。当前实际固定单路运行，保留该偏好以兼容旧版本设置。 */
+    /** 本地小模型并行识别倍速，1..3。大模型会被运行时强制降到 1。 */
     val asrLocalConcurrency: Flow<Int> = context.dataStore.data.map {
         it[Keys.ASR_LOCAL_CONCURRENCY] ?: 1
     }
@@ -142,6 +148,7 @@ class AppPreferences @Inject constructor(
     suspend fun setDebugForceNetworkFail(v: Boolean) = context.dataStore.edit { it[Keys.DEBUG_FORCE_NETWORK_FAIL] = v }
     suspend fun setDebugSimulateDelayMs(ms: Long) = context.dataStore.edit { it[Keys.DEBUG_SIMULATE_DELAY_MS] = ms.toString() }
     suspend fun setAsrEngineType(t: String) = context.dataStore.edit { it[Keys.ASR_ENGINE_TYPE] = t }
+    suspend fun setAsrLocalModelId(id: String) = context.dataStore.edit { it[Keys.ASR_LOCAL_MODEL_ID] = id }
     suspend fun setAsrDownloadMirrorIndex(i: Int) = context.dataStore.edit { it[Keys.ASR_DOWNLOAD_MIRROR_INDEX] = i.toString() }
     suspend fun setAsrBundledInstalled(v: Boolean) = context.dataStore.edit { it[Keys.ASR_BUNDLED_INSTALLED] = v }
     suspend fun setAsrLocalConcurrency(v: Int) = context.dataStore.edit { it[Keys.ASR_LOCAL_CONCURRENCY] = v.coerceIn(1, 3) }

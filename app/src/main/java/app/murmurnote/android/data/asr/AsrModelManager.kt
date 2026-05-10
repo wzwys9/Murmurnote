@@ -2,14 +2,18 @@ package app.murmurnote.android.data.asr
 
 import android.content.Context
 import app.murmurnote.android.data.preference.AppPreferences
+import app.murmurnote.android.di.ApplicationScope
 import app.murmurnote.android.util.Logger
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.yield
 import okhttp3.OkHttpClient
@@ -48,7 +52,8 @@ class AsrModelManager @Inject constructor(
     @ApplicationContext private val context: Context,
     private val okHttpClient: OkHttpClient,
     private val appPreferences: AppPreferences,
-    private val logger: Logger
+    private val logger: Logger,
+    @ApplicationScope private val scope: CoroutineScope
 ) {
 
     sealed class ModelStatus {
@@ -64,36 +69,64 @@ class AsrModelManager @Inject constructor(
     val status: Flow<ModelStatus> = _status.asStateFlow()
 
     @Volatile private var cancelRequested = false
+    @Volatile private var selectedModelId: String = AsrModelUrls.DEFAULT_MODEL_ID
 
-    fun modelDir(): File = File(context.filesDir, "asr_models/sense_voice_zh_en_ja_ko_yue").apply { mkdirs() }
+    init {
+        scope.launch {
+            appPreferences.asrLocalModelId.collect { id ->
+                selectedModelId = AsrModelUrls.modelById(id).id
+                refreshStatus()
+            }
+        }
+    }
+
+    fun selectedModel(): LocalAsrModelSpec = AsrModelUrls.modelById(selectedModelId)
+
+    fun availableModels(): List<LocalAsrModelSpec> = AsrModelUrls.MODELS
+
+    suspend fun selectModel(id: String) {
+        val normalized = AsrModelUrls.modelById(id).id
+        selectedModelId = normalized
+        appPreferences.setAsrLocalModelId(normalized)
+        refreshStatus()
+    }
+
+    fun modelDir(): File = modelDir(selectedModel())
+
+    private fun modelDir(model: LocalAsrModelSpec): File = File(context.filesDir, "asr_models/${model.id}").apply { mkdirs() }
     private fun rootDir(): File = File(context.filesDir, "asr_models").apply { mkdirs() }
-    private fun tarballFile(): File = File(rootDir(), "sense_voice.downloading")
+    private fun tarballFile(model: LocalAsrModelSpec = selectedModel()): File = File(rootDir(), model.partialFileName)
 
     /**
      * 同步算一次"当前模型在不在"。AsrEngineProvider / LocalAsrEngine 调用，不写状态流。
      *
-     * 当前只把 SenseVoiceSmall int8 布局视为就绪。旧 Qwen3 目录会保留在 filesDir，
-     * 但不会作为当前本地引擎使用。
+     * 按当前选中的模型规格判断文件是否就绪。
      */
-    fun isModelReady(): Boolean {
-        val dir = modelDir()
+    fun isModelReady(): Boolean = isModelReady(selectedModel())
+
+    private fun isModelReady(model: LocalAsrModelSpec): Boolean {
+        val dir = modelDir(model)
         if (!dir.exists() || !dir.isDirectory) return false
-        val required = listOf(
-            "model.int8.onnx",
-            "tokens.txt"
-        )
-        val missing = required.filter { rel -> File(dir, rel).length() <= 0L }
+        val required = if (model.id == AsrModelUrls.QWEN3_ASR_ID) {
+            listOf("conv_frontend.onnx", "encoder.int8.onnx", "decoder.int8.onnx", "tokenizer")
+        } else {
+            listOf("model.int8.onnx", "tokens.txt")
+        }
+        val missing = required.filter { rel ->
+            val f = File(dir, rel)
+            !f.exists() || (f.isFile && f.length() <= 0L) || (f.isDirectory && f.list().isNullOrEmpty())
+        }
         if (missing.isNotEmpty()) {
-            logger.d("ModelMgr", "isModelReady=false: SenseVoice 文件缺失或为空：$missing")
+            logger.d("ModelMgr", "isModelReady=false: ${model.id} 文件缺失或为空：$missing")
             return false
         }
         val onnxTotal = onnxTotalBytes(dir)
-        if (onnxTotal < AsrModelUrls.MODEL_MIN_TOTAL_BYTES) {
+        if (onnxTotal < model.minOnnxTotalBytes) {
             val files = dir.walkTopDown()
                 .filter { it.isFile }
                 .joinToString(", ") { "${it.relativeTo(dir).path}=${it.length()}" }
                 .ifBlank { "<空目录>" }
-            logger.d("ModelMgr", "isModelReady=false: onnx 总大小 $onnxTotal < ${AsrModelUrls.MODEL_MIN_TOTAL_BYTES}; 目录内容=$files")
+            logger.d("ModelMgr", "isModelReady=false: onnx 总大小 $onnxTotal < ${model.minOnnxTotalBytes}; 目录内容=$files")
             return false
         }
         return true
@@ -119,13 +152,14 @@ class AsrModelManager @Inject constructor(
     suspend fun downloadAndInstall(): Result<Unit> = withContext(Dispatchers.IO) {
         cancelRequested = false
         runCatching {
+            val model = selectedModel()
             val mirrorIndex = appPreferences.asrDownloadMirrorIndex.first()
                 .coerceIn(0, AsrModelUrls.MIRROR_PREFIXES.lastIndex)
-            val tarball = downloadWithFallback(mirrorIndex)
+            val tarball = downloadWithFallback(model, mirrorIndex)
             if (cancelRequested) throw CancellationException("下载已取消")
 
             // 校验
-            val expected = AsrModelUrls.SENSE_VOICE_TARBALL_SHA256
+            val expected = model.tarballSha256
             if (expected.isNotBlank()) {
                 _status.value = ModelStatus.Extracting(0.86f)
                 val actual = sha256(tarball)
@@ -140,10 +174,10 @@ class AsrModelManager @Inject constructor(
             }
 
             // 解压
-            extractTarBz2(tarball)
+            extractTarBz2(model, tarball)
             tarball.delete()
 
-            if (!isModelReady()) {
+            if (!isModelReady(model)) {
                 val msg = "解压完成后模型文件大小异常"
                 _status.value = ModelStatus.Corrupted(msg)
                 error(msg)
@@ -164,15 +198,16 @@ class AsrModelManager @Inject constructor(
         logger.i("ModelMgr", "cancel requested")
     }
 
-    /** 用户点删除：只清掉当前 SenseVoice 模型，旧 Qwen 等目录保留。释放资源，重置状态。 */
+    /** 用户点删除：只清掉当前选中的模型。释放资源，重置状态。 */
     suspend fun delete() = withContext(Dispatchers.IO) {
-        modelDir().deleteRecursively()
-        tarballFile().delete()
+        val model = selectedModel()
+        modelDir(model).deleteRecursively()
+        tarballFile(model).delete()
         File(rootDir(), "_staging").deleteRecursively()
         // 删除后清掉"已从 assets 安装"标志，下次启动会重新从 assets 拷一遍
         appPreferences.setAsrBundledInstalled(false)
         _status.value = ModelStatus.NotDownloaded
-        logger.i("ModelMgr", "current model files deleted")
+        logger.i("ModelMgr", "model files deleted: ${model.id}")
     }
 
     /**
@@ -184,8 +219,9 @@ class AsrModelManager @Inject constructor(
      */
     suspend fun installBundledModelIfNeeded(): Boolean = withContext(Dispatchers.IO) {
         if (isModelReady()) return@withContext true
+        val model = selectedModel()
         val am = context.assets
-        val assetRoot = "asr_models/sense_voice_zh_en_ja_ko_yue"
+        val assetRoot = model.assetRoot
         val assetEntries = runCatching { listAssetFiles(assetRoot) }
             .getOrElse { emptyList() }
         if (assetEntries.isEmpty()) {
@@ -193,7 +229,7 @@ class AsrModelManager @Inject constructor(
             return@withContext false
         }
         logger.i("ModelMgr", "installing bundled model from assets, ${assetEntries.size} files")
-        val outDir = modelDir().apply {
+        val outDir = modelDir(model).apply {
             deleteRecursively()
             mkdirs()
         }
@@ -243,7 +279,7 @@ class AsrModelManager @Inject constructor(
 
     /** 是否在 assets 里塞了内置模型；UI 用来决定要不要显示"下载模型"按钮。 */
     fun hasBundledAssets(): Boolean = runCatching {
-        context.assets.list("asr_models/sense_voice_zh_en_ja_ko_yue")?.isNotEmpty() == true
+        context.assets.list(selectedModel().assetRoot)?.isNotEmpty() == true
     }.getOrDefault(false)
 
     // -------------------- 下载实现 --------------------
@@ -252,18 +288,18 @@ class AsrModelManager @Inject constructor(
      * 顺序尝试镜像（从 mirrorIndex 起），每个镜像都用 Range 续传到同一个 tarball 文件。
      * 一个镜像在"持续 10s 速度低于 50KB/s"时主动放弃切下一个。
      */
-    private suspend fun downloadWithFallback(startIndex: Int): File {
-        val tarball = tarballFile()
+    private suspend fun downloadWithFallback(model: LocalAsrModelSpec, startIndex: Int): File {
+        val tarball = tarballFile(model)
         val tried = mutableListOf<String>()
         val ordered = (startIndex until AsrModelUrls.MIRROR_PREFIXES.size).map { it } +
             (0 until startIndex).map { it }
         for (i in ordered) {
             if (cancelRequested) throw CancellationException("下载已取消")
             val prefix = AsrModelUrls.MIRROR_PREFIXES[i]
-            val url = prefix + AsrModelUrls.SENSE_VOICE_TARBALL
+            val url = prefix + model.tarballUrl
             tried += url
             try {
-                downloadOne(url, tarball)
+                downloadOne(model, url, tarball)
                 return tarball
             } catch (e: SlowDownloadAbort) {
                 logger.w("ModelMgr", "镜像 #$i 速度过慢，切下一个：$url")
@@ -281,7 +317,7 @@ class AsrModelManager @Inject constructor(
      * 下载单一 URL 到 tarball；如果文件已部分存在，发 Range: bytes=N- 续传。
      * 在每次写盘时检查 cancel + 速度采样，触发慢速 abort 抛 SlowDownloadAbort。
      */
-    private suspend fun downloadOne(url: String, dest: File) {
+    private suspend fun downloadOne(model: LocalAsrModelSpec, url: String, dest: File) {
         val existing = if (dest.exists()) dest.length() else 0L
         val request = Request.Builder()
             .url(url)
@@ -299,7 +335,7 @@ class AsrModelManager @Inject constructor(
             // Content-Length 在 206 是"剩余字节数"，要加上 existing 才是文件总长
             val totalBytes = if (resp.code == 206 && totalContent > 0) existing + totalContent
                 else if (totalContent > 0) totalContent
-                else AsrModelUrls.SENSE_VOICE_TARBALL_BYTES
+                else model.tarballBytes
 
             // 200 表示服务器忽略 Range，从头开始 → 截断重写
             val raf = RandomAccessFile(dest, "rw")
@@ -379,9 +415,9 @@ class AsrModelManager @Inject constructor(
         return md.digest().joinToString("") { "%02x".format(it) }
     }
 
-    private suspend fun extractTarBz2(tarball: File) {
+    private suspend fun extractTarBz2(model: LocalAsrModelSpec, tarball: File) {
         val outRoot = rootDir()
-        val expectedTopDir = AsrModelUrls.SENSE_VOICE_TARBALL_TOP_DIR
+        val expectedTopDir = model.tarballTopDir
         // 先解到一个临时位置，避免半成品占据 sense_voice_zh_en_ja_ko_yue/
         val staging = File(outRoot, "_staging").apply {
             deleteRecursively()
@@ -433,11 +469,11 @@ class AsrModelManager @Inject constructor(
             }
         }
 
-        // 把 staging/<expectedTopDir>/* rename 到 sense_voice_zh_en_ja_ko_yue/
+        // 把 staging/<expectedTopDir>/* rename 到当前模型目录。
         val src = File(staging, expectedTopDir).takeIf { it.exists() }
             ?: staging.listFiles()?.firstOrNull { it.isDirectory }
             ?: error("解压后找不到模型顶层目录")
-        val dest = modelDir()
+        val dest = modelDir(model)
         dest.deleteRecursively()
         dest.parentFile?.mkdirs()
         if (!src.renameTo(dest)) {
