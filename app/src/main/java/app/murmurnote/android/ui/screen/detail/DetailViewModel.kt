@@ -9,7 +9,7 @@ import app.murmurnote.android.data.local.entity.ItemType
 import app.murmurnote.android.data.local.entity.ProcessingStatus
 import app.murmurnote.android.data.local.entity.Recording
 import app.murmurnote.android.data.local.entity.TranscriptSegment
-import app.murmurnote.android.data.remote.ollama.OllamaClient
+import app.murmurnote.android.data.remote.llm.LlmClient
 import app.murmurnote.android.data.repository.ItemRepository
 import app.murmurnote.android.data.repository.RecordingRepository
 import app.murmurnote.android.service.TranscriptionService
@@ -32,7 +32,7 @@ class DetailViewModel @Inject constructor(
     private val recordingRepo: RecordingRepository,
     private val itemRepo: ItemRepository,
     private val player: AudioPlayer,
-    private val ollamaClient: OllamaClient,
+    private val llmClient: LlmClient,
     private val logger: Logger
 ) : ViewModel() {
 
@@ -200,7 +200,7 @@ class DetailViewModel @Inject constructor(
         viewModelScope.launch {
             _state.update { it.copy(regeneratingSummary = true, regenerateError = null) }
             logger.i("Detail", "regenerateSummary id=${rec.id} chars=${transcript.length}")
-            ollamaClient.extractItems(transcript).fold(
+            llmClient.extractItems(transcript).fold(
                 onSuccess = { ext ->
                     val createdAtPretty = formatPretty(rec.createdAt)
                     // 旧 items 删干净再插，不然每次重试都会叠出重复条目

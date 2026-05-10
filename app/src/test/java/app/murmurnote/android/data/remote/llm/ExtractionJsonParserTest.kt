@@ -1,4 +1,4 @@
-package app.murmurnote.android.data.remote.ollama
+package app.murmurnote.android.data.remote.llm
 
 import kotlinx.serialization.json.Json
 import org.junit.Assert.assertEquals

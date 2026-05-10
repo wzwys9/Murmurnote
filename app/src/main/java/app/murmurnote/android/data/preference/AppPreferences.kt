@@ -7,6 +7,7 @@ import androidx.datastore.preferences.core.intPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import app.murmurnote.android.BuildConfig
+import app.murmurnote.android.data.remote.llm.LlmProvider
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.first
@@ -22,7 +23,9 @@ class AppPreferences @Inject constructor(
 ) {
     private object Keys {
         val GLM_API_KEY = stringPreferencesKey("glm_api_key")
+        // Legacy key names are kept so existing installs retain their saved LLM settings.
         val OLLAMA_API_KEY = stringPreferencesKey("ollama_api_key")
+        val LLM_PROVIDER = stringPreferencesKey("llm_provider")
         val OLLAMA_MODEL = stringPreferencesKey("ollama_model")
         val REASONING_EFFORT = stringPreferencesKey("reasoning_effort")
         val GLM_BASE_URL = stringPreferencesKey("glm_base_url")
@@ -47,13 +50,17 @@ class AppPreferences @Inject constructor(
         else BuildConfig.GLM_API_KEY.orEmpty()
     }
 
-    val ollamaApiKey: Flow<String> = context.dataStore.data.map { prefs ->
+    val llmApiKey: Flow<String> = context.dataStore.data.map { prefs ->
         if (prefs.contains(Keys.OLLAMA_API_KEY)) prefs[Keys.OLLAMA_API_KEY].orEmpty()
         else BuildConfig.OLLAMA_API_KEY.orEmpty()
     }
 
-    val ollamaModel: Flow<String> = context.dataStore.data.map {
-        it[Keys.OLLAMA_MODEL] ?: "deepseek-v4-pro"
+    val llmProvider: Flow<String> = context.dataStore.data.map {
+        it[Keys.LLM_PROVIDER] ?: LlmProvider.DEEPSEEK.name
+    }
+
+    val llmModel: Flow<String> = context.dataStore.data.map {
+        it[Keys.OLLAMA_MODEL].orEmpty()
     }
 
     val reasoningEffort: Flow<String> = context.dataStore.data.map {
@@ -64,8 +71,8 @@ class AppPreferences @Inject constructor(
         it[Keys.GLM_BASE_URL]?.takeIf { it.isNotBlank() } ?: "https://open.bigmodel.cn/api/paas/v4/"
     }
 
-    val ollamaBaseUrl: Flow<String> = context.dataStore.data.map {
-        it[Keys.OLLAMA_BASE_URL]?.takeIf { it.isNotBlank() } ?: "https://api.deepseek.com"
+    val llmBaseUrl: Flow<String> = context.dataStore.data.map {
+        it[Keys.OLLAMA_BASE_URL]?.takeIf { it.isNotBlank() } ?: LlmProvider.DEEPSEEK.defaultBaseUrl
     }
 
     val onboardingCompleted: Flow<Boolean> = context.dataStore.data.map {
@@ -112,11 +119,16 @@ class AppPreferences @Inject constructor(
     }
 
     suspend fun setGlmApiKey(key: String) = context.dataStore.edit { it[Keys.GLM_API_KEY] = key.trim() }
-    suspend fun setOllamaApiKey(key: String) = context.dataStore.edit { it[Keys.OLLAMA_API_KEY] = key.trim() }
-    suspend fun setOllamaModel(model: String) = context.dataStore.edit { it[Keys.OLLAMA_MODEL] = model }
+    suspend fun setLlmApiKey(key: String) = context.dataStore.edit { it[Keys.OLLAMA_API_KEY] = key.trim() }
+    suspend fun setLlmProvider(provider: LlmProvider) = context.dataStore.edit {
+        it[Keys.LLM_PROVIDER] = provider.name
+        it[Keys.OLLAMA_BASE_URL] = provider.defaultBaseUrl
+        it.remove(Keys.OLLAMA_MODEL)
+    }
+    suspend fun setLlmModel(model: String) = context.dataStore.edit { it[Keys.OLLAMA_MODEL] = model }
     suspend fun setReasoningEffort(effort: String) = context.dataStore.edit { it[Keys.REASONING_EFFORT] = effort }
     suspend fun setGlmBaseUrl(url: String) = context.dataStore.edit { it[Keys.GLM_BASE_URL] = url.trim() }
-    suspend fun setOllamaBaseUrl(url: String) = context.dataStore.edit { it[Keys.OLLAMA_BASE_URL] = url.trim() }
+    suspend fun setLlmBaseUrl(url: String) = context.dataStore.edit { it[Keys.OLLAMA_BASE_URL] = url.trim() }
     suspend fun setOnboardingCompleted(c: Boolean) = context.dataStore.edit { it[Keys.ONBOARDING_COMPLETED] = c }
 
     suspend fun setSystemPromptOverride(p: String?) = context.dataStore.edit {
@@ -134,5 +146,5 @@ class AppPreferences @Inject constructor(
     suspend fun setAsrBundledInstalled(v: Boolean) = context.dataStore.edit { it[Keys.ASR_BUNDLED_INSTALLED] = v }
     suspend fun setAsrLocalConcurrency(v: Int) = context.dataStore.edit { it[Keys.ASR_LOCAL_CONCURRENCY] = v.coerceIn(1, 3) }
 
-    suspend fun hasAllApiKeys(): Boolean = glmApiKey.first().isNotBlank() && ollamaApiKey.first().isNotBlank()
+    suspend fun hasAllApiKeys(): Boolean = glmApiKey.first().isNotBlank() && llmApiKey.first().isNotBlank()
 }

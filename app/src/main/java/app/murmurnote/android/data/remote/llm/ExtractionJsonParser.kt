@@ -1,6 +1,6 @@
-package app.murmurnote.android.data.remote.ollama
+package app.murmurnote.android.data.remote.llm
 
-import app.murmurnote.android.data.remote.ollama.dto.ExtractionResult
+import app.murmurnote.android.data.remote.llm.dto.ExtractionResult
 import kotlinx.serialization.json.Json
 
 internal object ExtractionJsonParser {

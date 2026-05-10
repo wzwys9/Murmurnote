@@ -66,6 +66,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import app.murmurnote.android.BuildConfig
 import app.murmurnote.android.data.asr.AsrEngineType
 import app.murmurnote.android.data.asr.AsrModelManager
+import app.murmurnote.android.data.remote.llm.LlmProvider
 
 @Composable
 fun SettingsScreen(
@@ -74,7 +75,8 @@ fun SettingsScreen(
     viewModel: SettingsViewModel = hiltViewModel()
 ) {
     val state by viewModel.uiState.collectAsStateWithLifecycle()
-    LaunchedEffect(Unit) { viewModel.refreshOllamaModels() }
+    val llmProvider = LlmProvider.parse(state.llmProvider)
+    LaunchedEffect(Unit) { viewModel.refreshLlmModels() }
 
     var versionClickCount by remember { mutableIntStateOf(0) }
     var lastClickTime by remember { mutableLongStateOf(0L) }
@@ -99,15 +101,15 @@ fun SettingsScreen(
         }
         item {
             ApiKeySettingItem(
-                title = "Ollama API Key",
-                description = "用于AI文本提取",
-                placeholder = "请输入您的 Ollama API Key",
-                value = state.ollamaApiKey,
-                isConfigured = state.ollamaApiKey.isNotBlank(),
-                onValueChange = viewModel::updateOllamaApiKey,
-                onTest = viewModel::testOllamaConnection,
-                testStatus = state.ollamaTestStatus,
-                helpUrl = "https://ollama.com/settings/keys"
+                title = "${llmProvider.displayName} API Key",
+                description = "用于 AI 文本提取与总结",
+                placeholder = "请输入您的 ${llmProvider.displayName} API Key",
+                value = state.llmApiKey,
+                isConfigured = state.llmApiKey.isNotBlank(),
+                onValueChange = viewModel::updateLlmApiKey,
+                onTest = viewModel::testLlmConnection,
+                testStatus = state.llmTestStatus,
+                helpUrl = llmProvider.apiKeyHelpUrl
             )
         }
 
@@ -122,9 +124,9 @@ fun SettingsScreen(
                         singleLine = true
                     )
                     OutlinedTextField(
-                        value = state.ollamaBaseUrl,
-                        onValueChange = viewModel::updateOllamaBaseUrl,
-                        label = { Text("Ollama Base URL") },
+                        value = state.llmBaseUrl,
+                        onValueChange = viewModel::updateLlmBaseUrl,
+                        label = { Text("${llmProvider.displayName} Base URL") },
                         modifier = Modifier.fillMaxWidth(),
                         singleLine = true
                     )
@@ -165,12 +167,19 @@ fun SettingsScreen(
 
         item { SettingSectionHeader("AI模型") }
         item {
-            OllamaModelSelector(
-                currentModel = state.ollamaModel,
-                availableModels = state.availableOllamaModels,
+            LlmProviderSelector(
+                currentProvider = state.llmProvider,
+                onProviderSelected = viewModel::updateLlmProvider
+            )
+        }
+        item {
+            LlmModelSelector(
+                provider = llmProvider,
+                currentModel = state.llmModel,
+                availableModels = state.availableLlmModels,
                 isLoading = state.isLoadingModels,
-                onRefresh = viewModel::refreshOllamaModels,
-                onModelSelected = viewModel::updateOllamaModel,
+                onRefresh = viewModel::refreshLlmModels,
+                onModelSelected = viewModel::updateLlmModel,
                 error = state.modelLoadError
             )
         }
@@ -370,7 +379,54 @@ private fun StatusBadge(configured: Boolean) {
 }
 
 @Composable
-fun OllamaModelSelector(
+fun LlmProviderSelector(
+    currentProvider: String,
+    onProviderSelected: (String) -> Unit
+) {
+    val current = LlmProvider.parse(currentProvider)
+    val providers = LlmProvider.entries
+
+    Card(modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp)) {
+        Column(modifier = Modifier.padding(16.dp)) {
+            Text("官方模式", style = MaterialTheme.typography.titleMedium)
+            Text(
+                "切换后从对应官方接口拉取可用模型",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            Spacer(Modifier.height(8.dp))
+            providers.forEach { provider ->
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable { onProviderSelected(provider.name) }
+                        .padding(vertical = 6.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    RadioButton(
+                        selected = current == provider,
+                        onClick = { onProviderSelected(provider.name) }
+                    )
+                    Column(modifier = Modifier.padding(start = 8.dp)) {
+                        Text(
+                            if (provider == LlmProvider.OLLAMA) "Ollama Cloud" else provider.displayName,
+                            style = MaterialTheme.typography.bodyLarge
+                        )
+                        Text(
+                            provider.defaultBaseUrl,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+fun LlmModelSelector(
+    provider: LlmProvider,
     currentModel: String,
     availableModels: List<String>,
     isLoading: Boolean,
@@ -379,24 +435,21 @@ fun OllamaModelSelector(
     error: String?
 ) {
     var expanded by remember { mutableStateOf(false) }
-    val recommended = remember {
-        listOf(
-            "deepseek-v4-pro" to "DeepSeek V4 Pro（默认，支持思考）",
-            "deepseek-v4-flash" to "DeepSeek V4 Flash（快速响应）",
-            "glm-4.7" to "智谱 GLM-4.7",
-            "kimi-k2.6" to "Moonshot Kimi",
-            "qwen3-coder:480b" to "代码场景"
-        )
+    val display = remember(availableModels, currentModel) {
+        if (currentModel.isNotBlank() && currentModel !in availableModels) {
+            listOf(currentModel) + availableModels
+        } else {
+            availableModels
+        }
     }
-    val display = if (availableModels.isNotEmpty()) availableModels else recommended.map { it.first }
 
     Card(modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp)) {
         Column(modifier = Modifier.padding(16.dp)) {
             Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                 Column(modifier = Modifier.fillMaxWidth().weight(1f)) {
-                    Text("Ollama 模型", style = MaterialTheme.typography.titleMedium)
+                    Text("${provider.displayName} 模型", style = MaterialTheme.typography.titleMedium)
                     Text(
-                        "选择用于AI提取的模型",
+                        "从 ${provider.displayName} 官方模型接口获取",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
@@ -415,7 +468,7 @@ fun OllamaModelSelector(
                     value = currentModel,
                     onValueChange = {},
                     readOnly = true,
-                    label = { Text("当前模型") },
+                    label = { Text(if (currentModel.isBlank()) "请刷新并选择模型" else "当前模型") },
                     trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded) },
                     modifier = Modifier
                         .fillMaxWidth()
@@ -425,31 +478,29 @@ fun OllamaModelSelector(
                     expanded = expanded,
                     onDismissRequest = { expanded = false }
                 ) {
-                    display.forEach { model ->
-                        val desc = recommended.firstOrNull { it.first == model }?.second
+                    if (display.isEmpty()) {
                         DropdownMenuItem(
-                            text = {
-                                Column {
-                                    Text(model, fontWeight = FontWeight.Medium)
-                                    if (desc != null) Text(
-                                        desc,
-                                        style = MaterialTheme.typography.bodySmall,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                                    )
-                                }
-                            },
-                            onClick = { onModelSelected(model); expanded = false },
-                            trailingIcon = if (model == currentModel) {
-                                { Icon(Icons.Filled.Check, null) }
-                            } else null
+                            text = { Text("请先刷新模型列表") },
+                            onClick = { expanded = false },
+                            enabled = false
                         )
+                    } else {
+                        display.forEach { model ->
+                            DropdownMenuItem(
+                                text = { Text(model, fontWeight = FontWeight.Medium) },
+                                onClick = { onModelSelected(model); expanded = false },
+                                trailingIcon = if (model == currentModel) {
+                                    { Icon(Icons.Filled.Check, null) }
+                                } else null
+                            )
+                        }
                     }
                 }
             }
             if (error != null) {
                 Spacer(Modifier.height(8.dp))
                 Text(
-                    "⚠ $error\n显示的是推荐模型列表",
+                    "无法从官方接口获取模型列表：$error",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.error
                 )
@@ -467,9 +518,9 @@ fun ReasoningEffortSelector(current: String, onSelected: (String) -> Unit) {
     )
     Card(modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp)) {
         Column(modifier = Modifier.padding(16.dp)) {
-            Text("思考模式 (DeepSeek Thinking)", style = MaterialTheme.typography.titleMedium)
+            Text("思考深度", style = MaterialTheme.typography.titleMedium)
             Text(
-                "开启后模型会先思考再回答，质量更高但耗时更长",
+                "支持的供应商会按官方 thinking / reasoning 参数发送",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )

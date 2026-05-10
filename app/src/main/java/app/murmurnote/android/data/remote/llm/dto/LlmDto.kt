@@ -1,21 +1,6 @@
-package app.murmurnote.android.data.remote.ollama.dto
+package app.murmurnote.android.data.remote.llm.dto
 
 import kotlinx.serialization.Serializable
-
-@Serializable
-data class ChatMessage(
-    val role: String,
-    val content: String
-)
-
-@Serializable
-data class ChatCompletionRequest(
-    val model: String,
-    val messages: List<ChatMessage>,
-    val reasoning_effort: String? = null,
-    val temperature: Double = 0.3,
-    val stream: Boolean = false
-)
 
 @Serializable
 data class ChatCompletionResponse(
@@ -35,8 +20,7 @@ data class ChatChoice(
 data class ChatResponseMessage(
     val role: String? = null,
     val content: String? = null,
-    val reasoning_content: String? = null,
-    val reasoning: String? = null  // Ollama 实际返回的字段名
+    val reasoning_content: String? = null
 )
 
 @Serializable
@@ -46,20 +30,7 @@ data class ChatUsage(
     val total_tokens: Int = 0
 )
 
-@Serializable
-data class ModelsResponse(
-    val data: List<ModelInfo> = emptyList()
-)
-
-@Serializable
-data class ModelInfo(
-    val id: String,
-    val `object`: String = "model",
-    val created: Long = 0,
-    val owned_by: String = ""
-)
-
-// === 业务层 DTO（Ollama 返回的 content 解析后映射到这个）===
+// === 业务层 DTO（LLM 返回的 content 解析后映射到这个）===
 @Serializable
 data class ExtractionResult(
     val summary: String = "",

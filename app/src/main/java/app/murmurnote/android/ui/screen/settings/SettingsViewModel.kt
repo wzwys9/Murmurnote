@@ -7,8 +7,9 @@ import app.murmurnote.android.data.asr.AsrEngineType
 import app.murmurnote.android.data.asr.AsrModelManager
 import app.murmurnote.android.data.asr.AsrModelUrls
 import app.murmurnote.android.data.preference.AppPreferences
+import app.murmurnote.android.data.remote.llm.LlmProvider
 import app.murmurnote.android.data.remote.glm.GlmAsrClient
-import app.murmurnote.android.data.remote.ollama.OllamaClient
+import app.murmurnote.android.data.remote.llm.LlmClient
 import app.murmurnote.android.service.AsrModelDownloadService
 import app.murmurnote.android.util.LogExporter
 import app.murmurnote.android.util.Logger
@@ -29,7 +30,7 @@ sealed class TestStatus {
 @HiltViewModel
 class SettingsViewModel @Inject constructor(
     private val appPreferences: AppPreferences,
-    private val ollamaClient: OllamaClient,
+    private val llmClient: LlmClient,
     private val glmAsrClient: GlmAsrClient,
     private val asrModelManager: AsrModelManager,
     private val localAsrEngine: app.murmurnote.android.data.asr.LocalAsrEngine,
@@ -39,16 +40,17 @@ class SettingsViewModel @Inject constructor(
 
     data class UiState(
         val glmApiKey: String = "",
-        val ollamaApiKey: String = "",
+        val llmApiKey: String = "",
+        val llmProvider: String = LlmProvider.DEEPSEEK.name,
         val glmBaseUrl: String = "",
-        val ollamaBaseUrl: String = "",
-        val ollamaModel: String = "deepseek-v4-pro",
+        val llmBaseUrl: String = "",
+        val llmModel: String = "",
         val reasoningEffort: String = "high",
-        val availableOllamaModels: List<String> = emptyList(),
+        val availableLlmModels: List<String> = emptyList(),
         val isLoadingModels: Boolean = false,
         val modelLoadError: String? = null,
         val glmTestStatus: TestStatus = TestStatus.Idle,
-        val ollamaTestStatus: TestStatus = TestStatus.Idle,
+        val llmTestStatus: TestStatus = TestStatus.Idle,
         val exportLogResult: String? = null,
         val exportingLog: Boolean = false,
         // ASR 引擎切换
@@ -68,10 +70,11 @@ class SettingsViewModel @Inject constructor(
 
     init {
         viewModelScope.launch { appPreferences.glmApiKey.collect { v -> _uiState.update { it.copy(glmApiKey = v) } } }
-        viewModelScope.launch { appPreferences.ollamaApiKey.collect { v -> _uiState.update { it.copy(ollamaApiKey = v) } } }
+        viewModelScope.launch { appPreferences.llmApiKey.collect { v -> _uiState.update { it.copy(llmApiKey = v) } } }
+        viewModelScope.launch { appPreferences.llmProvider.collect { v -> _uiState.update { it.copy(llmProvider = v) } } }
         viewModelScope.launch { appPreferences.glmBaseUrl.collect { v -> _uiState.update { it.copy(glmBaseUrl = v) } } }
-        viewModelScope.launch { appPreferences.ollamaBaseUrl.collect { v -> _uiState.update { it.copy(ollamaBaseUrl = v) } } }
-        viewModelScope.launch { appPreferences.ollamaModel.collect { v -> _uiState.update { it.copy(ollamaModel = v) } } }
+        viewModelScope.launch { appPreferences.llmBaseUrl.collect { v -> _uiState.update { it.copy(llmBaseUrl = v) } } }
+        viewModelScope.launch { appPreferences.llmModel.collect { v -> _uiState.update { it.copy(llmModel = v) } } }
         viewModelScope.launch { appPreferences.reasoningEffort.collect { v -> _uiState.update { it.copy(reasoningEffort = v) } } }
         viewModelScope.launch { appPreferences.asrEngineType.collect { v -> _uiState.update { it.copy(asrEngineType = v) } } }
         viewModelScope.launch { appPreferences.asrDownloadMirrorIndex.collect { v -> _uiState.update { it.copy(asrMirrorIndex = v) } } }
@@ -88,19 +91,38 @@ class SettingsViewModel @Inject constructor(
         appPreferences.setGlmApiKey(key)
         _uiState.update { it.copy(glmTestStatus = TestStatus.Idle) }
     }
-    fun updateOllamaApiKey(key: String) = viewModelScope.launch {
-        appPreferences.setOllamaApiKey(key)
-        _uiState.update { it.copy(ollamaTestStatus = TestStatus.Idle) }
+    fun updateLlmApiKey(key: String) = viewModelScope.launch {
+        appPreferences.setLlmApiKey(key)
+        _uiState.update { it.copy(llmTestStatus = TestStatus.Idle) }
     }
-    fun updateOllamaModel(m: String) = viewModelScope.launch { appPreferences.setOllamaModel(m) }
+    fun updateLlmProvider(providerName: String) = viewModelScope.launch {
+        val provider = LlmProvider.parse(providerName)
+        appPreferences.setLlmProvider(provider)
+        _uiState.update {
+            it.copy(
+                llmProvider = provider.name,
+                llmTestStatus = TestStatus.Idle,
+                availableLlmModels = emptyList(),
+                modelLoadError = null
+            )
+        }
+        refreshLlmModels()
+    }
+    fun updateLlmModel(m: String) = viewModelScope.launch { appPreferences.setLlmModel(m) }
     fun updateReasoningEffort(e: String) = viewModelScope.launch { appPreferences.setReasoningEffort(e) }
     fun updateGlmBaseUrl(u: String) = viewModelScope.launch { appPreferences.setGlmBaseUrl(u) }
-    fun updateOllamaBaseUrl(u: String) = viewModelScope.launch { appPreferences.setOllamaBaseUrl(u) }
+    fun updateLlmBaseUrl(u: String) = viewModelScope.launch { appPreferences.setLlmBaseUrl(u) }
 
-    fun refreshOllamaModels() = viewModelScope.launch {
+    fun refreshLlmModels() = viewModelScope.launch {
         _uiState.update { it.copy(isLoadingModels = true, modelLoadError = null) }
-        ollamaClient.fetchAvailableModels().fold(
-            onSuccess = { models -> _uiState.update { it.copy(availableOllamaModels = models, isLoadingModels = false) } },
+        llmClient.fetchAvailableModels().fold(
+            onSuccess = { models ->
+                val selected = _uiState.value.llmModel
+                if (selected.isBlank() && models.isNotEmpty()) {
+                    appPreferences.setLlmModel(models.first())
+                }
+                _uiState.update { it.copy(availableLlmModels = models, isLoadingModels = false) }
+            },
             onFailure = { e -> _uiState.update { it.copy(isLoadingModels = false, modelLoadError = e.message ?: "未知错误") } }
         )
     }
@@ -118,16 +140,16 @@ class SettingsViewModel @Inject constructor(
         }
     }
 
-    fun testOllamaConnection() = viewModelScope.launch {
-        logger.i("Settings", "test Ollama connection requested")
-        _uiState.update { it.copy(ollamaTestStatus = TestStatus.Testing) }
-        val r = ollamaClient.testConnection()
+    fun testLlmConnection() = viewModelScope.launch {
+        logger.i("Settings", "test LLM connection requested")
+        _uiState.update { it.copy(llmTestStatus = TestStatus.Testing) }
+        val r = llmClient.testConnection()
         r.fold(
-            onSuccess = { logger.i("Settings", "Ollama test → success") },
-            onFailure = { e -> logger.e("Settings", "Ollama test → FAILED: ${describe(e)}", e) }
+            onSuccess = { logger.i("Settings", "LLM test → success") },
+            onFailure = { e -> logger.e("Settings", "LLM test → FAILED: ${describe(e)}", e) }
         )
         _uiState.update {
-            it.copy(ollamaTestStatus = r.fold({ TestStatus.Success }, { TestStatus.Failed(describe(it)) }))
+            it.copy(llmTestStatus = r.fold({ TestStatus.Success }, { TestStatus.Failed(describe(it)) }))
         }
     }
 

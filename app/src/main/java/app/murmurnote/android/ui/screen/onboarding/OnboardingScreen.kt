@@ -61,7 +61,7 @@ fun OnboardingScreen(
                     2 -> ApiKeyConfigPage(
                         state = state,
                         onGlmKeyChange = viewModel::updateGlmApiKey,
-                        onOllamaKeyChange = viewModel::updateOllamaApiKey,
+                        onLlmKeyChange = viewModel::updateLlmApiKey,
                         onTest = viewModel::testBothConnections
                     )
                     3 -> PermissionPage()
@@ -113,7 +113,7 @@ fun OnboardingScreen(
                         }
                     },
                     enabled = when (pagerState.currentPage) {
-                        2 -> state.glmApiKey.isNotBlank() && state.ollamaApiKey.isNotBlank()
+                        2 -> state.glmApiKey.isNotBlank() && state.llmApiKey.isNotBlank()
                         else -> true
                     }
                 ) {
@@ -170,7 +170,7 @@ private fun CapabilitiesPage() {
 private fun ApiKeyConfigPage(
     state: OnboardingViewModel.UiState,
     onGlmKeyChange: (String) -> Unit,
-    onOllamaKeyChange: (String) -> Unit,
+    onLlmKeyChange: (String) -> Unit,
     onTest: () -> Unit
 ) {
     val context = LocalContext.current
@@ -180,7 +180,7 @@ private fun ApiKeyConfigPage(
     ) {
         Text("配置 AI 服务", style = MaterialTheme.typography.headlineMedium)
         Text(
-            "Murmurnote 使用智谱 AI 做语音识别，使用 Ollama 做文本提取。请先配置您的 API Key。",
+            "Murmurnote 使用智谱 AI 做语音识别，默认使用 DeepSeek 做文本提取与总结。其他官方模式可稍后在设置中切换。",
             style = MaterialTheme.typography.bodyMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant
         )
@@ -195,18 +195,18 @@ private fun ApiKeyConfigPage(
             context.startActivity(Intent(Intent.ACTION_VIEW, "https://bigmodel.cn/usercenter/apikeys".toUri()))
         }) { Text("→ 没有？点这里去申请") }
         OutlinedTextField(
-            value = state.ollamaApiKey,
-            onValueChange = onOllamaKeyChange,
-            label = { Text("Ollama API Key") },
+            value = state.llmApiKey,
+            onValueChange = onLlmKeyChange,
+            label = { Text("DeepSeek API Key") },
             modifier = Modifier.fillMaxWidth(),
             singleLine = true
         )
         TextButton(onClick = {
-            context.startActivity(Intent(Intent.ACTION_VIEW, "https://ollama.com/settings/keys".toUri()))
+            context.startActivity(Intent(Intent.ACTION_VIEW, "https://platform.deepseek.com/api_keys".toUri()))
         }) { Text("→ 没有？点这里去申请") }
         Button(
             onClick = onTest,
-            enabled = state.glmApiKey.isNotBlank() && state.ollamaApiKey.isNotBlank() && !state.testing,
+            enabled = state.glmApiKey.isNotBlank() && state.llmApiKey.isNotBlank() && !state.testing,
             modifier = Modifier.fillMaxWidth()
         ) { Text(if (state.testing) "测试中..." else "测试两个连接") }
 

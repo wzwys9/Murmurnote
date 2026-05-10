@@ -33,8 +33,8 @@
     <string name="settings_section_about">关于</string>
     <string name="settings_glm_key_title">智谱 GLM API Key</string>
     <string name="settings_glm_key_desc">用于语音转文字 (GLM-ASR-2512)</string>
-    <string name="settings_ollama_key_title">Ollama API Key</string>
-    <string name="settings_ollama_key_desc">用于AI文本提取</string>
+    <string name="settings_ollama_key_title">LLM API Key</string>
+    <string name="settings_ollama_key_desc">用于 AI 文本提取与总结</string>
     <string name="settings_test_connection">测试连接</string>
     <string name="settings_how_to_get">如何获取?</string>
 

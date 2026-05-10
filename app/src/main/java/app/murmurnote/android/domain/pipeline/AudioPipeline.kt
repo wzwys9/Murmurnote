@@ -15,8 +15,8 @@ import app.murmurnote.android.data.preference.AppPreferences
 import app.murmurnote.android.data.local.entity.Recording
 import app.murmurnote.android.data.local.entity.RecordingSource
 import app.murmurnote.android.data.local.entity.TranscriptSegment
-import app.murmurnote.android.data.remote.ollama.OllamaClient
-import app.murmurnote.android.data.remote.ollama.dto.ExtractionResult
+import app.murmurnote.android.data.remote.llm.LlmClient
+import app.murmurnote.android.data.remote.llm.dto.ExtractionResult
 import app.murmurnote.android.data.repository.ItemRepository
 import app.murmurnote.android.data.repository.RecordingRepository
 import app.murmurnote.android.util.Logger
@@ -50,7 +50,7 @@ class AudioPipeline @Inject constructor(
     private val audioSplitter: AudioSplitter,
     private val audioInspector: AudioFileInspector,
     private val asrEngineProvider: AsrEngineProvider,
-    private val llmClient: OllamaClient,
+    private val llmClient: LlmClient,
     private val recordingRepository: RecordingRepository,
     private val itemRepository: ItemRepository,
     private val appPreferences: AppPreferences,
@@ -291,7 +291,7 @@ class AudioPipeline @Inject constructor(
     private fun formatPretty(epochMs: Long): String =
         SimpleDateFormat("yyyy年MM月dd日 HH时mm分ss秒", Locale.US).format(Date(epochMs))
 
-    private fun app.murmurnote.android.data.remote.ollama.dto.ExtractedItemDto.toItemType(): ItemType =
+    private fun app.murmurnote.android.data.remote.llm.dto.ExtractedItemDto.toItemType(): ItemType =
         when (type.lowercase()) {
             "todo" -> ItemType.TODO
             "idea" -> ItemType.IDEA
