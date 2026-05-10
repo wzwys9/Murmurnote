@@ -61,6 +61,7 @@ class AsrModelManager @Inject constructor(
         data class Downloading(val progress: Float, val bytesPerSec: Long, val etaSec: Long) : ModelStatus()
         data class Extracting(val progress: Float) : ModelStatus()
         data class Ready(val sizeBytes: Long) : ModelStatus()
+        data class HashMismatch(val expected: String, val actual: String) : ModelStatus()
         data class Corrupted(val reason: String) : ModelStatus()
         data class Failed(val message: String) : ModelStatus()
     }
@@ -167,30 +168,56 @@ class AsrModelManager @Inject constructor(
             _status.value = ModelStatus.Extracting(0.86f)
             val actual = sha256(tarball)
             if (!actual.equals(expected, ignoreCase = true)) {
-                tarball.delete()
                 val msg = "SHA256 校验失败：期望=$expected 实际=$actual"
-                _status.value = ModelStatus.Corrupted(msg)
+                _status.value = ModelStatus.HashMismatch(expected, actual)
                 error(msg)
             }
 
-            // 解压
-            extractTarBz2(model, tarball)
-
-            if (!isModelReady(model)) {
-                val msg = "解压完成后模型文件大小异常"
-                _status.value = ModelStatus.Corrupted(msg)
-                error(msg)
-            }
-            tarball.delete()
+            installVerifiedTarball(model, tarball)
             refreshStatus()
         }.onFailure { e ->
             logger.e("ModelMgr", "downloadAndInstall failed: ${e.message}", e)
+            if (e is CancellationException) {
+                _status.value = ModelStatus.NotDownloaded
+            } else if (_status.value !is ModelStatus.HashMismatch) {
+                _status.value = ModelStatus.Failed(e.message ?: e.javaClass.simpleName)
+            }
+        }
+    }
+
+    /**
+     * 用户明确选择忽略 SHA256 不匹配时调用。仍会做解压后的运行文件完整性检查；
+     * 只有模型目录检查通过后才删除 tarball。
+     */
+    suspend fun installDownloadedWithoutHashCheck(): Result<Unit> = withContext(Dispatchers.IO) {
+        cancelRequested = false
+        runCatching {
+            val model = selectedModel()
+            val tarball = tarballFile(model)
+            if (!tarball.exists() || tarball.length() <= 0L) {
+                error("找不到已下载的模型包，请重新下载")
+            }
+            logger.w("ModelMgr", "user accepted SHA256 mismatch; installing unverified tarball for ${model.id}")
+            installVerifiedTarball(model, tarball)
+            refreshStatus()
+        }.onFailure { e ->
+            logger.e("ModelMgr", "installDownloadedWithoutHashCheck failed: ${e.message}", e)
             if (e is CancellationException) {
                 _status.value = ModelStatus.NotDownloaded
             } else {
                 _status.value = ModelStatus.Failed(e.message ?: e.javaClass.simpleName)
             }
         }
+    }
+
+    private suspend fun installVerifiedTarball(model: LocalAsrModelSpec, tarball: File) {
+        extractTarBz2(model, tarball)
+        if (!isModelReady(model)) {
+            val msg = "解压完成后模型文件大小异常"
+            _status.value = ModelStatus.Corrupted(msg)
+            error(msg)
+        }
+        tarball.delete()
     }
 
     fun cancel() {
@@ -290,6 +317,10 @@ class AsrModelManager @Inject constructor(
      */
     private suspend fun downloadWithFallback(model: LocalAsrModelSpec, startIndex: Int): File {
         val tarball = tarballFile(model)
+        if (_status.value is ModelStatus.HashMismatch && tarball.exists()) {
+            logger.i("ModelMgr", "discard hash-mismatched tarball before redownload: ${tarball.name}")
+            tarball.delete()
+        }
         if (tarball.exists()) {
             when {
                 isCompleteTarball(model, tarball) -> {

@@ -34,6 +34,7 @@ class AsrModelDownloadService : Service() {
     companion object {
         const val NOTIFICATION_ID = 1002
         const val ACTION_START = "app.murmurnote.android.action.ASR_DOWNLOAD_START"
+        const val ACTION_INSTALL_UNVERIFIED = "app.murmurnote.android.action.ASR_INSTALL_UNVERIFIED"
         const val ACTION_CANCEL = "app.murmurnote.android.action.ASR_DOWNLOAD_CANCEL"
 
         fun start(context: Context) {
@@ -45,6 +46,12 @@ class AsrModelDownloadService : Service() {
         fun cancel(context: Context) {
             val i = Intent(context, AsrModelDownloadService::class.java).setAction(ACTION_CANCEL)
             context.startService(i)
+        }
+
+        fun installUnverified(context: Context) {
+            val i = Intent(context, AsrModelDownloadService::class.java).setAction(ACTION_INSTALL_UNVERIFIED)
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) context.startForegroundService(i)
+            else context.startService(i)
         }
     }
 
@@ -92,6 +99,27 @@ class AsrModelDownloadService : Service() {
                 }
                 return START_NOT_STICKY
             }
+            ACTION_INSTALL_UNVERIFIED -> {
+                if (job?.isActive == true) {
+                    logger.w("AsrDl", "已有任务在跑，忽略本次 INSTALL_UNVERIFIED")
+                    return START_NOT_STICKY
+                }
+                job = scope.launch {
+                    try {
+                        val collector = launch {
+                            modelManager.status.collect { st -> updateNotification(st) }
+                        }
+                        modelManager.installDownloadedWithoutHashCheck()
+                            .onFailure { logger.e("AsrDl", "install unverified failed", it) }
+                            .onSuccess { logger.i("AsrDl", "install unverified success") }
+                        collector.cancel()
+                    } finally {
+                        stopForegroundSelf()
+                        stopSelf(startId)
+                    }
+                }
+                return START_NOT_STICKY
+            }
             else -> {
                 stopForegroundSelf()
                 stopSelf(startId)
@@ -111,6 +139,7 @@ class AsrModelDownloadService : Service() {
             is AsrModelManager.ModelStatus.Extracting ->
                 Triple("解压模型 ${(st.progress * 100).toInt()}%", false, (st.progress * 100).toInt())
             is AsrModelManager.ModelStatus.Ready -> Triple("模型已就绪", false, 100)
+            is AsrModelManager.ModelStatus.HashMismatch -> Triple("模型校验不匹配，请回到设置页确认", false, 0)
             is AsrModelManager.ModelStatus.Failed -> Triple("下载失败：${st.message.take(40)}", false, 0)
             is AsrModelManager.ModelStatus.Corrupted -> Triple("模型已损坏：${st.reason.take(40)}", false, 0)
             AsrModelManager.ModelStatus.NotDownloaded -> Triple("准备下载…", true, 0)

@@ -157,6 +157,7 @@ fun SettingsScreen(
                 onMirrorSelected = viewModel::setAsrMirrorIndex,
                 onConcurrencyChanged = viewModel::setAsrLocalConcurrency,
                 onRequestDownload = viewModel::requestAsrDownloadConfirm,
+                onRequestInstallHashMismatch = viewModel::requestInstallHashMismatchModel,
                 onCancelDownload = { viewModel.cancelAsrDownload(it) },
                 onDeleteModel = viewModel::deleteAsrModel
             )
@@ -167,6 +168,16 @@ fun SettingsScreen(
                     model = AsrModelUrls.modelById(state.asrLocalModelId),
                     onDismiss = viewModel::dismissAsrDownloadConfirm,
                     onConfirm = { viewModel.startAsrDownload(it) }
+                )
+            }
+        }
+        if (state.showAsrHashMismatchConfirm && state.asrModelStatus is AsrModelManager.ModelStatus.HashMismatch) {
+            item {
+                AsrHashMismatchConfirmDialog(
+                    model = AsrModelUrls.modelById(state.asrLocalModelId),
+                    status = state.asrModelStatus as AsrModelManager.ModelStatus.HashMismatch,
+                    onDismiss = viewModel::dismissInstallHashMismatchModel,
+                    onConfirm = { viewModel.installHashMismatchModel(it) }
                 )
             }
         }
@@ -569,6 +580,7 @@ fun AsrEngineSection(
     onMirrorSelected: (Int) -> Unit,
     onConcurrencyChanged: (Int) -> Unit,
     onRequestDownload: () -> Unit,
+    onRequestInstallHashMismatch: () -> Unit,
     onCancelDownload: (android.content.Context) -> Unit,
     onDeleteModel: () -> Unit
 ) {
@@ -609,6 +621,7 @@ fun AsrEngineSection(
                     onMirrorSelected = onMirrorSelected,
                     onConcurrencyChanged = onConcurrencyChanged,
                     onRequestDownload = onRequestDownload,
+                    onRequestInstallHashMismatch = onRequestInstallHashMismatch,
                     onCancelDownload = { onCancelDownload(ctx) },
                     onDeleteModel = onDeleteModel
                 )
@@ -699,6 +712,7 @@ private fun LocalModelStatusBlock(
     onMirrorSelected: (Int) -> Unit,
     onConcurrencyChanged: (Int) -> Unit,
     onRequestDownload: () -> Unit,
+    onRequestInstallHashMismatch: () -> Unit,
     onCancelDownload: () -> Unit,
     onDeleteModel: () -> Unit
 ) {
@@ -765,6 +779,18 @@ private fun LocalModelStatusBlock(
                         )
                     }
                     OutlinedButton(onClick = onDeleteModel) { Text("删除模型") }
+                }
+                is AsrModelManager.ModelStatus.HashMismatch -> {
+                    Text("✗ 模型校验不匹配", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.error)
+                    Text(
+                        "下载文件的 SHA256 与内置校验值不一致。建议重新下载；确认来源可信时可以继续安装。",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Button(onClick = onRequestDownload) { Text("重新下载") }
+                        OutlinedButton(onClick = onRequestInstallHashMismatch) { Text("继续安装") }
+                    }
                 }
                 is AsrModelManager.ModelStatus.Corrupted -> {
                     Text("✗ 模型已损坏", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.error)
@@ -872,6 +898,34 @@ fun AsrDownloadConfirmDialog(
         },
         confirmButton = {
             Button(onClick = { onConfirm(ctx) }) { Text("开始下载") }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) { Text("取消") }
+        }
+    )
+}
+
+@Composable
+fun AsrHashMismatchConfirmDialog(
+    model: LocalAsrModelSpec,
+    status: AsrModelManager.ModelStatus.HashMismatch,
+    onDismiss: () -> Unit,
+    onConfirm: (android.content.Context) -> Unit
+) {
+    val ctx = LocalContext.current
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("模型校验不匹配") },
+        text = {
+            Text(
+                "${model.displayName} 的下载文件与内置 SHA256 不一致。\n\n" +
+                    "期望：${status.expected.take(12)}…\n" +
+                    "实际：${status.actual.take(12)}…\n\n" +
+                    "继续安装可能使用被篡改或损坏的模型。"
+            )
+        },
+        confirmButton = {
+            Button(onClick = { onConfirm(ctx) }) { Text("仍然安装") }
         },
         dismissButton = {
             TextButton(onClick = onDismiss) { Text("取消") }

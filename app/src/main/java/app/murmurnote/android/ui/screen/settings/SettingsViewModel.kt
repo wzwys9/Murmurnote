@@ -62,6 +62,7 @@ class SettingsViewModel @Inject constructor(
         val asrLocalModels: List<LocalAsrModelSpec> = AsrModelUrls.MODELS,
         val asrModelStatus: AsrModelManager.ModelStatus = AsrModelManager.ModelStatus.NotDownloaded,
         val showAsrDownloadConfirm: Boolean = false,
+        val showAsrHashMismatchConfirm: Boolean = false,
         // sherpa-onnx Kotlin/JNI 类是否能加载（即 app/libs/ 下的 AAR 是否打进了 APK）。
         // 跟模型文件状态正交：模型文件可以在线下，但 AAR 必须编译期就绪。
         val asrNativeLibReady: Boolean = false,
@@ -82,7 +83,16 @@ class SettingsViewModel @Inject constructor(
         viewModelScope.launch { appPreferences.asrEngineType.collect { v -> _uiState.update { it.copy(asrEngineType = v) } } }
         viewModelScope.launch { appPreferences.asrLocalModelId.collect { v -> _uiState.update { it.copy(asrLocalModelId = v) } } }
         viewModelScope.launch { appPreferences.asrDownloadMirrorIndex.collect { v -> _uiState.update { it.copy(asrMirrorIndex = v) } } }
-        viewModelScope.launch { asrModelManager.status.collect { v -> _uiState.update { it.copy(asrModelStatus = v) } } }
+        viewModelScope.launch {
+            asrModelManager.status.collect { v ->
+                _uiState.update {
+                    it.copy(
+                        asrModelStatus = v,
+                        showAsrHashMismatchConfirm = v is AsrModelManager.ModelStatus.HashMismatch
+                    )
+                }
+            }
+        }
         viewModelScope.launch { appPreferences.asrLocalConcurrency.collect { v -> _uiState.update { it.copy(asrLocalConcurrency = v) } } }
         // 进设置页主动算一次"模型在不在"，触发状态广播；同时探测一次原生库是否在 classpath。
         viewModelScope.launch {
@@ -224,10 +234,24 @@ class SettingsViewModel @Inject constructor(
         _uiState.update { it.copy(showAsrDownloadConfirm = false) }
     }
 
+    fun requestInstallHashMismatchModel() {
+        _uiState.update { it.copy(showAsrHashMismatchConfirm = true) }
+    }
+
+    fun dismissInstallHashMismatchModel() {
+        _uiState.update { it.copy(showAsrHashMismatchConfirm = false) }
+    }
+
     fun startAsrDownload(activityContext: Context) {
         _uiState.update { it.copy(showAsrDownloadConfirm = false) }
         logger.i("Settings", "asr download start requested")
         AsrModelDownloadService.start(activityContext)
+    }
+
+    fun installHashMismatchModel(activityContext: Context) {
+        _uiState.update { it.copy(showAsrHashMismatchConfirm = false) }
+        logger.w("Settings", "user confirmed installing ASR model with SHA256 mismatch")
+        AsrModelDownloadService.installUnverified(activityContext)
     }
 
     fun setAsrLocalConcurrency(v: Int) = viewModelScope.launch {
