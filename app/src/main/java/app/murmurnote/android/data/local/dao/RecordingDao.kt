@@ -105,6 +105,29 @@ interface RecordingDao {
     """)
     fun searchRecordings(query: String): Flow<List<Recording>>
 
+    @Query("""
+        SELECT * FROM recordings
+        WHERE (:fromMs IS NULL OR createdAt >= :fromMs)
+          AND (:toMs IS NULL OR createdAt <= :toMs)
+          AND (
+              (:searchSummary = 1 AND (
+                  title LIKE '%' || :query || '%'
+                  OR summary LIKE '%' || :query || '%'
+                  OR draftSummary LIKE '%' || :query || '%'
+                  OR finalSummary LIKE '%' || :query || '%'
+              ))
+              OR (:searchTranscript = 1 AND rawTranscript LIKE '%' || :query || '%')
+          )
+        ORDER BY createdAt DESC
+    """)
+    fun searchRecordingsFiltered(
+        query: String,
+        fromMs: Long?,
+        toMs: Long?,
+        searchSummary: Boolean,
+        searchTranscript: Boolean
+    ): Flow<List<Recording>>
+
     @Query("DELETE FROM recordings WHERE expirationDate IS NOT NULL AND expirationDate < :nowMs")
     suspend fun deleteExpired(nowMs: Long): Int
 }

@@ -49,6 +49,19 @@ class RecordingRepository @Inject constructor(
         recordingDao.observeRecordingSegments(recordingId)
 
     fun search(query: String): Flow<List<Recording>> = recordingDao.searchRecordings(query)
+    fun searchFiltered(
+        query: String,
+        fromMs: Long?,
+        toMs: Long?,
+        searchSummary: Boolean,
+        searchTranscript: Boolean
+    ): Flow<List<Recording>> = recordingDao.searchRecordingsFiltered(
+        query = query,
+        fromMs = fromMs,
+        toMs = toMs,
+        searchSummary = searchSummary,
+        searchTranscript = searchTranscript
+    )
     fun observeTotalCount(): Flow<Int> = recordingDao.countAll()
     fun observeCountSince(since: Long): Flow<Int> = recordingDao.countSince(since)
 

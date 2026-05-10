@@ -21,4 +21,10 @@ class ItemRepository @Inject constructor(
     fun observeByType(type: ItemType): Flow<List<ExtractedItem>> = itemDao.observeByType(type)
     fun observeAllTodos(): Flow<List<ExtractedItem>> = itemDao.observeAllTodos()
     fun search(query: String): Flow<List<ExtractedItem>> = itemDao.search(query)
+    fun searchFiltered(
+        query: String,
+        fromMs: Long?,
+        toMs: Long?,
+        type: ItemType?
+    ): Flow<List<ExtractedItem>> = itemDao.searchFiltered(query, fromMs, toMs, type)
 }

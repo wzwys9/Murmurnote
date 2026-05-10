@@ -43,6 +43,21 @@ interface ItemDao {
     """)
     fun search(query: String): Flow<List<ExtractedItem>>
 
+    @Query("""
+        SELECT * FROM extracted_items
+        WHERE content LIKE '%' || :query || '%'
+          AND (:fromMs IS NULL OR createdAt >= :fromMs)
+          AND (:toMs IS NULL OR createdAt <= :toMs)
+          AND (:type IS NULL OR type = :type)
+        ORDER BY createdAt DESC
+    """)
+    fun searchFiltered(
+        query: String,
+        fromMs: Long?,
+        toMs: Long?,
+        type: ItemType?
+    ): Flow<List<ExtractedItem>>
+
     @Query("SELECT COUNT(*) FROM extracted_items WHERE recordingId = :recordingId AND type = :type")
     suspend fun countOfType(recordingId: String, type: ItemType): Int
 }
