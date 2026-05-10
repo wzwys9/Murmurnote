@@ -237,8 +237,9 @@ class AudioPipeline @Inject constructor(
         engine: AsrEngine,
         onProgress: suspend (Int, Int, String) -> Unit
     ): List<TranscriptOf> = coroutineScope {
-        // Qwen3 本地模型接近 1GB，固定单实例串行解码；云端 GLM 仍按原 ASR_CONCURRENCY 跑。
+        // 本地 sherpa-onnx 固定单实例串行解码；云端 GLM 仍按原 ASR_CONCURRENCY 跑。
         val concurrency = when (engine.engineType) {
+            AsrEngineType.LOCAL_SENSE_VOICE,
             AsrEngineType.LOCAL_QWEN3_ASR -> {
                 (engine as? LocalAsrEngine)?.setConcurrency(1)
                 1

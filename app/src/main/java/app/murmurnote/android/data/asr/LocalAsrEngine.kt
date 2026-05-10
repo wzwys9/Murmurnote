@@ -11,12 +11,12 @@ import javax.inject.Inject
 import javax.inject.Singleton
 
 /**
- * 本地 ASR 引擎：sherpa-onnx + Qwen3-ASR 0.6B int8。
+ * 本地 ASR 引擎：sherpa-onnx + SenseVoiceSmall int8。
  *
  * 与 sherpa-onnx 类的耦合走反射，目的是让 sherpa-onnx 的 AAR 不在 app/libs/ 时，整个 app 仍能编译运行；
  * 只有"用户实际选了本地引擎并触发转写"那一刻才会感知到反射失败，由 UI 引导其放置 AAR。
  *
- * 并发：Qwen3 模型接近 1GB，固定单实例串行解码，避免并发加载多个 OfflineRecognizer 造成 OOM。
+ * 并发：固定单实例串行解码，避免并发加载多个 OfflineRecognizer 造成移动端内存压力。
  */
 @Singleton
 class LocalAsrEngine @Inject constructor(
@@ -25,7 +25,7 @@ class LocalAsrEngine @Inject constructor(
     private val logger: Logger
 ) : AsrEngine {
 
-    override val engineType: AsrEngineType = AsrEngineType.LOCAL_QWEN3_ASR
+    override val engineType: AsrEngineType = AsrEngineType.LOCAL_SENSE_VOICE
 
     private val bridges = mutableListOf<SherpaBridge>()
     private var poolSem = Semaphore(1)
@@ -38,7 +38,7 @@ class LocalAsrEngine @Inject constructor(
     fun nativeLibReady(): Boolean = nativeLibAvailable()
 
     /**
-     * Qwen3-ASR 模型较大，忽略外部并发设置，固定单路运行。
+     * 本地模型忽略外部并发设置，固定单路运行。
      * 调用时机：AudioPipeline.transcribeAll 在并发跑之前，传入用户设置的并发度。
      */
     fun setConcurrency(n: Int) {
@@ -50,7 +50,7 @@ class LocalAsrEngine @Inject constructor(
         onProgress: suspend (Float) -> Unit
     ): Result<AsrResult> = runCatching {
         if (!modelManager.isModelReady()) {
-            throw LocalAsrError.ModelMissing("Qwen3-ASR 模型未下载或文件不完整")
+            throw LocalAsrError.ModelMissing("SenseVoice 模型未下载或文件不完整")
         }
         poolSem.withPermit {
             val br = acquireBridge()

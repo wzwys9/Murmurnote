@@ -34,6 +34,7 @@ class AsrEngineProvider @Inject constructor(
                 if (cloud.isReady()) Selection.Active(cloud)
                 else Selection.NotReady(type, "云端引擎未就绪：请在设置页填写智谱 GLM API Key")
             }
+            AsrEngineType.LOCAL_SENSE_VOICE,
             AsrEngineType.LOCAL_QWEN3_ASR -> {
                 val local = localProvider.get()
                 val modelOk = local.modelReady()

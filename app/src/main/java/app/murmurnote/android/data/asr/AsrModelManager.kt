@@ -31,12 +31,10 @@ import javax.inject.Singleton
  *
  * 仓库布局（context.filesDir）：
  *   asr_models/
- *     qwen3_asr_0_6b/
- *       conv_frontend.onnx
- *       encoder.int8.onnx
- *       decoder.int8.onnx
- *       tokenizer/
- *     qwen3_asr.downloading   ← 临时文件，下载中或被中断
+ *     sense_voice_zh_en_ja_ko_yue/
+ *       model.int8.onnx
+ *       tokens.txt
+ *     sense_voice.downloading   ← 临时文件，下载中或被中断
  *
  * 下载：OkHttp + Range 断点续传。请求 200 直接覆盖；206 追加。下载到 *.downloading，
  * 校验 + 解压完毕才 delete 它，确保不会被半成品当成完整文件。
@@ -67,31 +65,26 @@ class AsrModelManager @Inject constructor(
 
     @Volatile private var cancelRequested = false
 
-    fun modelDir(): File = File(context.filesDir, "asr_models/qwen3_asr_0_6b").apply { mkdirs() }
+    fun modelDir(): File = File(context.filesDir, "asr_models/sense_voice_zh_en_ja_ko_yue").apply { mkdirs() }
     private fun rootDir(): File = File(context.filesDir, "asr_models").apply { mkdirs() }
-    private fun legacyModelDir(): File = File(context.filesDir, "asr_models/fire_red_asr_v2")
-    private fun tarballFile(): File = File(rootDir(), "qwen3_asr.downloading")
+    private fun tarballFile(): File = File(rootDir(), "sense_voice.downloading")
 
     /**
      * 同步算一次"当前模型在不在"。AsrEngineProvider / LocalAsrEngine 调用，不写状态流。
      *
-     * 当前只把 Qwen3-ASR 0.6B 布局视为就绪。旧版 SenseVoice / FireRedASR 即使仍在 filesDir，
-     * 也会被视为过期，启动后由 bundled assets 或用户下载替换。
+     * 当前只把 SenseVoiceSmall int8 布局视为就绪。旧 Qwen3 目录会保留在 filesDir，
+     * 但不会作为当前本地引擎使用。
      */
     fun isModelReady(): Boolean {
         val dir = modelDir()
         if (!dir.exists() || !dir.isDirectory) return false
         val required = listOf(
-            "conv_frontend.onnx",
-            "encoder.int8.onnx",
-            "decoder.int8.onnx",
-            "tokenizer/merges.txt",
-            "tokenizer/tokenizer_config.json",
-            "tokenizer/vocab.json"
+            "model.int8.onnx",
+            "tokens.txt"
         )
         val missing = required.filter { rel -> File(dir, rel).length() <= 0L }
         if (missing.isNotEmpty()) {
-            logger.d("ModelMgr", "isModelReady=false: Qwen3-ASR 文件缺失或为空：$missing")
+            logger.d("ModelMgr", "isModelReady=false: SenseVoice 文件缺失或为空：$missing")
             return false
         }
         val onnxTotal = onnxTotalBytes(dir)
@@ -132,7 +125,7 @@ class AsrModelManager @Inject constructor(
             if (cancelRequested) throw CancellationException("下载已取消")
 
             // 校验
-            val expected = AsrModelUrls.QWEN3_ASR_TARBALL_SHA256
+            val expected = AsrModelUrls.SENSE_VOICE_TARBALL_SHA256
             if (expected.isNotBlank()) {
                 _status.value = ModelStatus.Extracting(0.86f)
                 val actual = sha256(tarball)
@@ -149,7 +142,6 @@ class AsrModelManager @Inject constructor(
             // 解压
             extractTarBz2(tarball)
             tarball.delete()
-            deleteLegacyModelIfPresent()
 
             if (!isModelReady()) {
                 val msg = "解压完成后模型文件大小异常"
@@ -172,14 +164,15 @@ class AsrModelManager @Inject constructor(
         logger.i("ModelMgr", "cancel requested")
     }
 
-    /** 用户点删除：清掉 asr_models/。释放资源，重置状态。 */
+    /** 用户点删除：只清掉当前 SenseVoice 模型，旧 Qwen 等目录保留。释放资源，重置状态。 */
     suspend fun delete() = withContext(Dispatchers.IO) {
-        rootDir().deleteRecursively()
-        rootDir().mkdirs()
+        modelDir().deleteRecursively()
+        tarballFile().delete()
+        File(rootDir(), "_staging").deleteRecursively()
         // 删除后清掉"已从 assets 安装"标志，下次启动会重新从 assets 拷一遍
         appPreferences.setAsrBundledInstalled(false)
         _status.value = ModelStatus.NotDownloaded
-        logger.i("ModelMgr", "model files deleted")
+        logger.i("ModelMgr", "current model files deleted")
     }
 
     /**
@@ -192,7 +185,7 @@ class AsrModelManager @Inject constructor(
     suspend fun installBundledModelIfNeeded(): Boolean = withContext(Dispatchers.IO) {
         if (isModelReady()) return@withContext true
         val am = context.assets
-        val assetRoot = "asr_models/qwen3_asr_0_6b"
+        val assetRoot = "asr_models/sense_voice_zh_en_ja_ko_yue"
         val assetEntries = runCatching { listAssetFiles(assetRoot) }
             .getOrElse { emptyList() }
         if (assetEntries.isEmpty()) {
@@ -242,7 +235,6 @@ class AsrModelManager @Inject constructor(
             logger.e("ModelMgr", msg, null)
             return@withContext false
         }
-        deleteLegacyModelIfPresent()
         appPreferences.setAsrBundledInstalled(true)
         refreshStatus()
         logger.i("ModelMgr", "bundled model install done")
@@ -251,7 +243,7 @@ class AsrModelManager @Inject constructor(
 
     /** 是否在 assets 里塞了内置模型；UI 用来决定要不要显示"下载模型"按钮。 */
     fun hasBundledAssets(): Boolean = runCatching {
-        context.assets.list("asr_models/qwen3_asr_0_6b")?.isNotEmpty() == true
+        context.assets.list("asr_models/sense_voice_zh_en_ja_ko_yue")?.isNotEmpty() == true
     }.getOrDefault(false)
 
     // -------------------- 下载实现 --------------------
@@ -268,7 +260,7 @@ class AsrModelManager @Inject constructor(
         for (i in ordered) {
             if (cancelRequested) throw CancellationException("下载已取消")
             val prefix = AsrModelUrls.MIRROR_PREFIXES[i]
-            val url = prefix + AsrModelUrls.QWEN3_ASR_TARBALL
+            val url = prefix + AsrModelUrls.SENSE_VOICE_TARBALL
             tried += url
             try {
                 downloadOne(url, tarball)
@@ -307,7 +299,7 @@ class AsrModelManager @Inject constructor(
             // Content-Length 在 206 是"剩余字节数"，要加上 existing 才是文件总长
             val totalBytes = if (resp.code == 206 && totalContent > 0) existing + totalContent
                 else if (totalContent > 0) totalContent
-                else AsrModelUrls.QWEN3_ASR_TARBALL_BYTES
+                else AsrModelUrls.SENSE_VOICE_TARBALL_BYTES
 
             // 200 表示服务器忽略 Range，从头开始 → 截断重写
             val raf = RandomAccessFile(dest, "rw")
@@ -389,8 +381,8 @@ class AsrModelManager @Inject constructor(
 
     private suspend fun extractTarBz2(tarball: File) {
         val outRoot = rootDir()
-        val expectedTopDir = AsrModelUrls.QWEN3_ASR_TARBALL_TOP_DIR
-        // 先解到一个临时位置，避免半成品占据 qwen3_asr_0_6b/
+        val expectedTopDir = AsrModelUrls.SENSE_VOICE_TARBALL_TOP_DIR
+        // 先解到一个临时位置，避免半成品占据 sense_voice_zh_en_ja_ko_yue/
         val staging = File(outRoot, "_staging").apply {
             deleteRecursively()
             mkdirs()
@@ -398,7 +390,7 @@ class AsrModelManager @Inject constructor(
         val tarSize = tarball.length().coerceAtLeast(1)
         var processed = 0L
 
-        // 解压阶段进度刷新：Qwen3 的 decoder/encoder 是大文件，按 entry 刷新会长时间卡在 85%。
+        // 解压阶段按字节进度刷新，避免大文件 entry 期间 UI 长时间卡在 85%。
         // 改成每 ~1MB 或 500ms 节流刷一次，UI 持续动起来。
         var lastEmittedAt = 0L
         var lastEmittedBytes = 0L
@@ -441,7 +433,7 @@ class AsrModelManager @Inject constructor(
             }
         }
 
-        // 把 staging/<expectedTopDir>/* rename 到 qwen3_asr_0_6b/
+        // 把 staging/<expectedTopDir>/* rename 到 sense_voice_zh_en_ja_ko_yue/
         val src = File(staging, expectedTopDir).takeIf { it.exists() }
             ?: staging.listFiles()?.firstOrNull { it.isDirectory }
             ?: error("解压后找不到模型顶层目录")
@@ -467,14 +459,6 @@ class AsrModelManager @Inject constructor(
         if (!dir.exists()) 0L else dir.walkTopDown()
             .filter { it.isFile }
             .sumOf { it.length() }
-
-    private fun deleteLegacyModelIfPresent() {
-        val legacy = legacyModelDir()
-        if (legacy.exists()) {
-            legacy.deleteRecursively()
-            logger.i("ModelMgr", "deleted legacy model dir: ${legacy.absolutePath}")
-        }
-    }
 
     private fun deleteNonRuntimeModelFiles(dir: File) {
         File(dir, "test_wavs").deleteRecursively()

@@ -513,7 +513,7 @@ fun AsrEngineSection(
     onDeleteModel: () -> Unit
 ) {
     val ctx = LocalContext.current
-    val isLocal = AsrEngineType.parse(engineType) == AsrEngineType.LOCAL_QWEN3_ASR
+    val isLocal = AsrEngineType.parse(engineType) == AsrEngineType.LOCAL_SENSE_VOICE
 
     Card(modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp)) {
         Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -526,10 +526,10 @@ fun AsrEngineSection(
                 onSelected = { onEngineSelected(AsrEngineType.CLOUD_GLM.name) }
             )
             EngineRadioRow(
-                title = "本地（Qwen3-ASR 0.6B）",
-                subtitle = "完全离线、中文和方言覆盖更强、需约 1GB 存储",
+                title = "本地（SenseVoiceSmall）",
+                subtitle = "完全离线、中文/粤语表现较好、需约 230MB 存储",
                 selected = isLocal,
-                onSelected = { onEngineSelected(AsrEngineType.LOCAL_QWEN3_ASR.name) }
+                onSelected = { onEngineSelected(AsrEngineType.LOCAL_SENSE_VOICE.name) }
             )
 
             if (isLocal) {
@@ -612,12 +612,12 @@ private fun LocalModelStatusBlock(
                 AsrModelManager.ModelStatus.NotDownloaded -> {
                     Text("模型未下载", style = MaterialTheme.typography.bodyMedium)
                     Text(
-                        "首次启用本地引擎前需要下载约 838MiB 的 Qwen3-ASR 0.6B 压缩包。",
+                        "首次启用本地引擎前需要下载约 155MiB 的 SenseVoiceSmall int8 压缩包。",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                     MirrorPicker(mirrorIndex, mirrorOptions, onMirrorSelected)
-                    Button(onClick = onRequestDownload) { Text("下载模型（约 838MiB）") }
+                    Button(onClick = onRequestDownload) { Text("下载模型（约 155MiB）") }
                 }
                 is AsrModelManager.ModelStatus.Downloading -> {
                     Text("下载中：${(status.progress * 100).toInt()}%", style = MaterialTheme.typography.bodyMedium)
@@ -655,7 +655,7 @@ private fun LocalModelStatusBlock(
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                     Text(
-                        "Qwen3 模型较大，本地识别固定单路运行。",
+                        "SenseVoice 本地识别固定单路运行。",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
@@ -760,7 +760,7 @@ fun AsrDownloadConfirmDialog(
         title = { Text("下载本地 ASR 模型") },
         text = {
             Text(
-                "Qwen3-ASR 0.6B int8 压缩包约 838MiB，解压后接近 1GB。国内网络下载可能需要较长时间，建议在 WiFi 下进行。\n\n" +
+                "SenseVoiceSmall int8 压缩包约 155MiB，解压后约 230MB。国内网络下载可能需要较长时间，建议在 WiFi 下进行。\n\n" +
                     "下载会在通知栏显示进度，可随时取消并继续（断点续传）。"
             )
         },

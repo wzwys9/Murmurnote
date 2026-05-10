@@ -106,7 +106,7 @@ class AppPreferences @Inject constructor(
         it[Keys.ASR_BUNDLED_INSTALLED] ?: false
     }
 
-    /** 本地 ASR 并发度配置。Qwen3-ASR 实际固定单路运行，保留该偏好以兼容旧版本设置。 */
+    /** 本地 ASR 并发度配置。当前实际固定单路运行，保留该偏好以兼容旧版本设置。 */
     val asrLocalConcurrency: Flow<Int> = context.dataStore.data.map {
         it[Keys.ASR_LOCAL_CONCURRENCY] ?: 1
     }
