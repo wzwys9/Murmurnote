@@ -158,30 +158,30 @@ class AsrModelManager @Inject constructor(
             val tarball = downloadWithFallback(model, mirrorIndex)
             if (cancelRequested) throw CancellationException("下载已取消")
 
-            // 校验
             val expected = model.tarballSha256
-            if (expected.isNotBlank()) {
-                _status.value = ModelStatus.Extracting(0.86f)
-                val actual = sha256(tarball)
-                if (!actual.equals(expected, ignoreCase = true)) {
-                    tarball.delete()
-                    val msg = "SHA256 校验失败：期望=$expected 实际=$actual"
-                    _status.value = ModelStatus.Corrupted(msg)
-                    error(msg)
-                }
-            } else {
-                logger.w("ModelMgr", "SHA256 校验跳过（AsrModelUrls 里未配置 hash）")
+            if (expected.isBlank()) {
+                val msg = "模型 ${model.id} 未配置 SHA256，拒绝安装未校验的下载文件"
+                _status.value = ModelStatus.Corrupted(msg)
+                error(msg)
+            }
+            _status.value = ModelStatus.Extracting(0.86f)
+            val actual = sha256(tarball)
+            if (!actual.equals(expected, ignoreCase = true)) {
+                tarball.delete()
+                val msg = "SHA256 校验失败：期望=$expected 实际=$actual"
+                _status.value = ModelStatus.Corrupted(msg)
+                error(msg)
             }
 
             // 解压
             extractTarBz2(model, tarball)
-            tarball.delete()
 
             if (!isModelReady(model)) {
                 val msg = "解压完成后模型文件大小异常"
                 _status.value = ModelStatus.Corrupted(msg)
                 error(msg)
             }
+            tarball.delete()
             refreshStatus()
         }.onFailure { e ->
             logger.e("ModelMgr", "downloadAndInstall failed: ${e.message}", e)
@@ -290,6 +290,18 @@ class AsrModelManager @Inject constructor(
      */
     private suspend fun downloadWithFallback(model: LocalAsrModelSpec, startIndex: Int): File {
         val tarball = tarballFile(model)
+        if (tarball.exists()) {
+            when {
+                isCompleteTarball(model, tarball) -> {
+                    logger.i("ModelMgr", "reuse complete tarball for ${model.id}: size=${tarball.length()}")
+                    return tarball
+                }
+                tarball.length() > model.tarballBytes -> {
+                    logger.w("ModelMgr", "partial tarball is larger than expected, restart download: size=${tarball.length()} expected=${model.tarballBytes}")
+                    tarball.delete()
+                }
+            }
+        }
         val tried = mutableListOf<String>()
         val ordered = (startIndex until AsrModelUrls.MIRROR_PREFIXES.size).map { it } +
             (0 until startIndex).map { it }
@@ -318,7 +330,12 @@ class AsrModelManager @Inject constructor(
      * 在每次写盘时检查 cancel + 速度采样，触发慢速 abort 抛 SlowDownloadAbort。
      */
     private suspend fun downloadOne(model: LocalAsrModelSpec, url: String, dest: File) {
-        val existing = if (dest.exists()) dest.length() else 0L
+        var existing = if (dest.exists()) dest.length() else 0L
+        if (existing > model.tarballBytes) {
+            logger.w("ModelMgr", "local tarball exceeds expected size; deleting before retry: $existing > ${model.tarballBytes}")
+            dest.delete()
+            existing = 0L
+        }
         val request = Request.Builder()
             .url(url)
             .apply { if (existing > 0) header("Range", "bytes=$existing-") }
@@ -326,6 +343,14 @@ class AsrModelManager @Inject constructor(
         logger.i("ModelMgr", "download begin url=$url offset=$existing")
 
         okHttpClient.newCall(request).execute().use { resp: Response ->
+            if (resp.code == 416 && isCompleteTarball(model, dest)) {
+                logger.i("ModelMgr", "server returned 416 but local tarball is complete; skip download and reuse ${dest.name}")
+                return
+            }
+            if (resp.code == 416 && existing > 0) {
+                dest.delete()
+                throw IOException("HTTP 416 Range Not Satisfiable; 已清理本地断点文件，请重试从头下载")
+            }
             if (resp.code !in setOf(200, 206)) {
                 val body = runCatching { resp.body?.string()?.take(200) }.getOrNull().orEmpty()
                 throw IOException("HTTP ${resp.code} $body")
@@ -396,6 +421,9 @@ class AsrModelManager @Inject constructor(
         logger.i("ModelMgr", "download done url=$url size=${dest.length()}")
     }
 
+    private fun isCompleteTarball(model: LocalAsrModelSpec, file: File): Boolean =
+        file.exists() && file.isFile && file.length() == model.tarballBytes
+
     private object SlowDownloadAbort : RuntimeException() {
         private fun readResolve(): Any = SlowDownloadAbort
     }
@@ -418,7 +446,7 @@ class AsrModelManager @Inject constructor(
     private suspend fun extractTarBz2(model: LocalAsrModelSpec, tarball: File) {
         val outRoot = rootDir()
         val expectedTopDir = model.tarballTopDir
-        // 先解到一个临时位置，避免半成品占据 sense_voice_zh_en_ja_ko_yue/
+        // 先解到一个临时位置，避免半成品占据当前模型目录。
         val staging = File(outRoot, "_staging").apply {
             deleteRecursively()
             mkdirs()

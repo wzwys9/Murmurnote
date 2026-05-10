@@ -5,8 +5,7 @@ package app.murmurnote.android.data.asr
  *
  * 选用 SenseVoiceSmall int8。它覆盖普通话、粤语和中英混说；体积明显小于 Qwen3-ASR。
  *
- * SHA256 占位：首次本地下载一次官方 tar.bz2 后用 `sha256sum` 算出真实值填入；为空时 AsrModelManager
- * 会跳过校验并在日志里 WARN，方便集成期跑通；上线前必须填实值，否则 release 构建里只能下到不可信文件。
+ * SHA256 必须配置真实值。AsrModelManager 会拒绝安装未配置 hash 或 hash 不匹配的下载文件。
  */
 data class LocalAsrModelSpec(
     val id: String,
@@ -42,7 +41,7 @@ object AsrModelUrls {
     /** 标称大小（字节），UI 进度条与 ETA 用。 */
     const val SENSE_VOICE_TARBALL_BYTES = 163_002_883L
 
-    /** 期望 SHA256（小写 hex）。空表示跳过校验（仅集成期临时）。 */
+    /** 期望 SHA256（小写 hex）。不能为空，否则拒绝安装。 */
     const val SENSE_VOICE_TARBALL_SHA256 = "7d1efa2138a65b0b488df37f8b89e3d91a60676e416f515b952358d83dfd347e"
 
     /**
@@ -60,7 +59,7 @@ object AsrModelUrls {
     /** 标称大小（字节），UI 进度条与 ETA 用。 */
     const val QWEN3_ASR_TARBALL_BYTES = 878_702_423L
 
-    /** 期望 SHA256（小写 hex）。空表示跳过校验（仅集成期临时）。 */
+    /** 期望 SHA256（小写 hex）。不能为空，否则拒绝安装。 */
     const val QWEN3_ASR_TARBALL_SHA256 = "393f8a14e2f5fb96746aaab342997a40641001fbd5bf9592a080a8329178ee96"
 
     const val QWEN3_ASR_MIN_TOTAL_BYTES = 850L * 1024 * 1024
