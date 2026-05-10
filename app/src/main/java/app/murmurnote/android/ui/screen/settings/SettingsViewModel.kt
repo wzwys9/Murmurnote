@@ -66,7 +66,9 @@ class SettingsViewModel @Inject constructor(
         // sherpa-onnx Kotlin/JNI 类是否能加载（即 app/libs/ 下的 AAR 是否打进了 APK）。
         // 跟模型文件状态正交：模型文件可以在线下，但 AAR 必须编译期就绪。
         val asrNativeLibReady: Boolean = false,
-        val asrLocalConcurrency: Int = 1
+        val asrLocalConcurrency: Int = 1,
+        val realtimePerformanceMode: String = "BALANCED",
+        val lowBatteryProtection: Boolean = true
     )
 
     private val _uiState = MutableStateFlow(UiState())
@@ -94,6 +96,8 @@ class SettingsViewModel @Inject constructor(
             }
         }
         viewModelScope.launch { appPreferences.asrLocalConcurrency.collect { v -> _uiState.update { it.copy(asrLocalConcurrency = v) } } }
+        viewModelScope.launch { appPreferences.realtimePerformanceMode.collect { v -> _uiState.update { it.copy(realtimePerformanceMode = v) } } }
+        viewModelScope.launch { appPreferences.lowBatteryProtection.collect { v -> _uiState.update { it.copy(lowBatteryProtection = v) } } }
         // 进设置页主动算一次"模型在不在"，触发状态广播；同时探测一次原生库是否在 classpath。
         viewModelScope.launch {
             asrModelManager.refreshStatus()
@@ -256,6 +260,14 @@ class SettingsViewModel @Inject constructor(
 
     fun setAsrLocalConcurrency(v: Int) = viewModelScope.launch {
         appPreferences.setAsrLocalConcurrency(v)
+    }
+
+    fun setRealtimePerformanceMode(v: String) = viewModelScope.launch {
+        appPreferences.setRealtimePerformanceMode(v)
+    }
+
+    fun setLowBatteryProtection(v: Boolean) = viewModelScope.launch {
+        appPreferences.setLowBatteryProtection(v)
     }
 
     fun cancelAsrDownload(activityContext: Context) {

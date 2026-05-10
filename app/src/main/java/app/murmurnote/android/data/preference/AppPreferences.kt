@@ -42,6 +42,8 @@ class AppPreferences @Inject constructor(
         // 标记 assets 中预置模型已成功拷贝到 filesDir，避免每次启动都重新校验+拷
         val ASR_BUNDLED_INSTALLED = booleanPreferencesKey("asr_bundled_installed")
         val ASR_LOCAL_CONCURRENCY = intPreferencesKey("asr_local_concurrency")
+        val REALTIME_PERFORMANCE_MODE = stringPreferencesKey("realtime_performance_mode")
+        val LOW_BATTERY_PROTECTION = booleanPreferencesKey("low_battery_protection")
     }
 
     // 关键：用 contains 判断"用户是否显式设置过"，而不是用 isNotBlank。
@@ -124,6 +126,14 @@ class AppPreferences @Inject constructor(
         it[Keys.ASR_LOCAL_CONCURRENCY] ?: 1
     }
 
+    val realtimePerformanceMode: Flow<String> = context.dataStore.data.map {
+        it[Keys.REALTIME_PERFORMANCE_MODE] ?: "BALANCED"
+    }
+
+    val lowBatteryProtection: Flow<Boolean> = context.dataStore.data.map {
+        it[Keys.LOW_BATTERY_PROTECTION] ?: true
+    }
+
     suspend fun setGlmApiKey(key: String) = context.dataStore.edit { it[Keys.GLM_API_KEY] = key.trim() }
     suspend fun setLlmApiKey(key: String) = context.dataStore.edit { it[Keys.OLLAMA_API_KEY] = key.trim() }
     suspend fun setLlmProvider(provider: LlmProvider) = context.dataStore.edit {
@@ -152,6 +162,8 @@ class AppPreferences @Inject constructor(
     suspend fun setAsrDownloadMirrorIndex(i: Int) = context.dataStore.edit { it[Keys.ASR_DOWNLOAD_MIRROR_INDEX] = i.toString() }
     suspend fun setAsrBundledInstalled(v: Boolean) = context.dataStore.edit { it[Keys.ASR_BUNDLED_INSTALLED] = v }
     suspend fun setAsrLocalConcurrency(v: Int) = context.dataStore.edit { it[Keys.ASR_LOCAL_CONCURRENCY] = v.coerceIn(1, 3) }
+    suspend fun setRealtimePerformanceMode(v: String) = context.dataStore.edit { it[Keys.REALTIME_PERFORMANCE_MODE] = v }
+    suspend fun setLowBatteryProtection(v: Boolean) = context.dataStore.edit { it[Keys.LOW_BATTERY_PROTECTION] = v }
 
     suspend fun hasAllApiKeys(): Boolean = glmApiKey.first().isNotBlank() && llmApiKey.first().isNotBlank()
 }

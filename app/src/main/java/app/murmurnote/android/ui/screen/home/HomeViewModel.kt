@@ -2,6 +2,7 @@ package app.murmurnote.android.ui.screen.home
 
 import android.content.Context
 import android.net.Uri
+import android.os.BatteryManager
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
@@ -16,6 +17,7 @@ import app.murmurnote.android.data.local.entity.Recording
 import app.murmurnote.android.data.local.entity.RecordingSegment
 import app.murmurnote.android.data.local.entity.RecordingSegmentStatus
 import app.murmurnote.android.data.local.entity.RecordingSource
+import app.murmurnote.android.data.preference.AppPreferences
 import app.murmurnote.android.data.remote.llm.LlmClient
 import app.murmurnote.android.data.repository.RecordingRepository
 import app.murmurnote.android.domain.pipeline.PipelineStage
@@ -24,6 +26,7 @@ import app.murmurnote.android.domain.pipeline.ProcessingQueueEntry
 import app.murmurnote.android.domain.pipeline.ProcessingQueueTracker
 import app.murmurnote.android.service.TranscriptionService
 import app.murmurnote.android.util.Logger
+import dagger.hilt.android.qualifiers.ApplicationContext
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
@@ -41,11 +44,13 @@ import javax.inject.Inject
 @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
 @HiltViewModel
 class HomeViewModel @Inject constructor(
+    @ApplicationContext private val appContext: Context,
     private val recordingRepository: RecordingRepository,
     private val recordingController: RecordingController,
     private val audioImporter: AudioImporter,
     private val asrEngineProvider: AsrEngineProvider,
     private val llmClient: LlmClient,
+    private val appPreferences: AppPreferences,
     private val statusBus: PipelineStatusBus,
     private val queueTracker: ProcessingQueueTracker,
     private val logger: Logger
@@ -53,9 +58,14 @@ class HomeViewModel @Inject constructor(
 
     companion object {
         private const val LIVE_SEGMENT_AUTO_RETRIES = 1
-        private const val DRAFT_SUMMARY_MIN_NEW_CHARS = 600
-        private const val DRAFT_SUMMARY_MIN_INTERVAL_MS = 2L * 60 * 1000
+        private const val LOW_BATTERY_THRESHOLD_PERCENT = 20
     }
+
+    private data class DraftPolicy(
+        val enabled: Boolean,
+        val minNewChars: Int,
+        val minIntervalMs: Long
+    )
 
     enum class LiveTranscriptStatus { WAITING, TRANSCRIBING, TRANSCRIBED, FAILED }
 
@@ -93,6 +103,8 @@ class HomeViewModel @Inject constructor(
     private var activeRecordingId: String? = null
     private val pendingDraftTranscript = StringBuilder()
     private var lastDraftSummaryAtMs: Long = 0L
+    private var realtimePerformanceMode: String = "BALANCED"
+    private var lowBatteryProtection: Boolean = true
 
     init {
         viewModelScope.launch {
@@ -119,6 +131,12 @@ class HomeViewModel @Inject constructor(
             queueTracker.entries.collect { entries ->
                 _uiState.update { it.copy(processingQueue = entries) }
             }
+        }
+        viewModelScope.launch {
+            appPreferences.realtimePerformanceMode.collect { realtimePerformanceMode = it }
+        }
+        viewModelScope.launch {
+            appPreferences.lowBatteryProtection.collect { lowBatteryProtection = it }
         }
     }
 
@@ -308,6 +326,15 @@ class HomeViewModel @Inject constructor(
     private fun startLiveTranscription() {
         liveTranscriptionJob?.cancel()
         liveTranscriptionJob = viewModelScope.launch {
+            if (realtimePerformanceMode == "OFF") {
+                _uiState.update {
+                    it.copy(
+                        liveTranscriptionActive = false,
+                        liveTranscriptionMessage = "实时处理已关闭；停止后会完整转写。"
+                    )
+                }
+                return@launch
+            }
             val engine = currentLocalLiveEngine() ?: return@launch
 
             val processedSequences = mutableSetOf<Int>()
@@ -489,12 +516,14 @@ class HomeViewModel @Inject constructor(
         val cleaned = newTranscript.trim()
         if (cleaned.isBlank()) return
         pendingDraftTranscript.appendLine(cleaned)
+        val policy = currentDraftPolicy()
+        if (!policy.enabled) return
 
         val now = System.currentTimeMillis()
         val shouldUpdate =
             lastDraftSummaryAtMs == 0L ||
-                pendingDraftTranscript.length >= DRAFT_SUMMARY_MIN_NEW_CHARS ||
-                now - lastDraftSummaryAtMs >= DRAFT_SUMMARY_MIN_INTERVAL_MS
+                pendingDraftTranscript.length >= policy.minNewChars ||
+                now - lastDraftSummaryAtMs >= policy.minIntervalMs
         if (!shouldUpdate || draftSummaryJob?.isActive == true) return
 
         draftSummaryJob = viewModelScope.launch {
@@ -520,6 +549,23 @@ class HomeViewModel @Inject constructor(
                     logger.w("Home", "draft summary update failed: ${e.message}")
                 }
         }
+    }
+
+    private fun currentDraftPolicy(): DraftPolicy {
+        if (lowBatteryProtection && batteryPercent() in 0 until LOW_BATTERY_THRESHOLD_PERCENT) {
+            return DraftPolicy(enabled = false, minNewChars = Int.MAX_VALUE, minIntervalMs = Long.MAX_VALUE)
+        }
+        return when (realtimePerformanceMode) {
+            "OFF" -> DraftPolicy(enabled = false, minNewChars = Int.MAX_VALUE, minIntervalMs = Long.MAX_VALUE)
+            "POWER_SAVE" -> DraftPolicy(enabled = true, minNewChars = 1_200, minIntervalMs = 5L * 60 * 1000)
+            "FAST" -> DraftPolicy(enabled = true, minNewChars = 300, minIntervalMs = 60_000)
+            else -> DraftPolicy(enabled = true, minNewChars = 600, minIntervalMs = 2L * 60 * 1000)
+        }
+    }
+
+    private fun batteryPercent(): Int {
+        val bm = appContext.getSystemService(BatteryManager::class.java) ?: return -1
+        return bm.getIntProperty(BatteryManager.BATTERY_PROPERTY_CAPACITY)
     }
 
     private fun stopLiveTranscription() {

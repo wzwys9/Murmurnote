@@ -41,6 +41,7 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.material3.Switch
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -142,6 +143,14 @@ fun SettingsScreen(
         }
 
         item { SettingSectionHeader("语音识别引擎") }
+        item {
+            RealtimePerformanceSection(
+                mode = state.realtimePerformanceMode,
+                lowBatteryProtection = state.lowBatteryProtection,
+                onModeSelected = viewModel::setRealtimePerformanceMode,
+                onLowBatteryProtectionChanged = viewModel::setLowBatteryProtection
+            )
+        }
         item {
             AsrEngineSection(
                 engineType = state.asrEngineType,
@@ -271,6 +280,59 @@ fun SettingsScreen(
                         )
                     }
                 }
+            }
+        }
+    }
+}
+
+@Composable
+private fun RealtimePerformanceSection(
+    mode: String,
+    lowBatteryProtection: Boolean,
+    onModeSelected: (String) -> Unit,
+    onLowBatteryProtectionChanged: (Boolean) -> Unit
+) {
+    val options = listOf(
+        "OFF" to ("关闭" to "录音中不做实时转写和滚动总结，停止后完整处理"),
+        "POWER_SAVE" to ("省电" to "保留实时转写，降低滚动总结频率"),
+        "BALANCED" to ("平衡" to "默认实时转写和滚动总结频率"),
+        "FAST" to ("快速" to "更频繁更新滚动总结，耗电更高")
+    )
+    Card(modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp)) {
+        Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Text("实时处理性能", style = MaterialTheme.typography.titleMedium)
+            options.forEach { (value, label) ->
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable { onModeSelected(value) }
+                        .padding(vertical = 2.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    RadioButton(selected = mode == value, onClick = { onModeSelected(value) })
+                    Column(modifier = Modifier.padding(start = 8.dp)) {
+                        Text(label.first, style = MaterialTheme.typography.bodyMedium)
+                        Text(
+                            label.second,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
+            }
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text("低电量保护", style = MaterialTheme.typography.bodyMedium)
+                    Text(
+                        "电量低于 20% 时暂停滚动总结，只保留录音和必要转写",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+                Switch(
+                    checked = lowBatteryProtection,
+                    onCheckedChange = onLowBatteryProtectionChanged
+                )
             }
         }
     }
