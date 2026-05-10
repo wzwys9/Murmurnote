@@ -1,6 +1,8 @@
 package app.murmurnote.android.ui.screen.home
 
+import android.content.Context
 import android.net.Uri
+import androidx.core.content.ContextCompat
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import app.murmurnote.android.audio.AudioImporter
@@ -18,6 +20,9 @@ import app.murmurnote.android.data.remote.llm.LlmClient
 import app.murmurnote.android.data.repository.RecordingRepository
 import app.murmurnote.android.domain.pipeline.PipelineStage
 import app.murmurnote.android.domain.pipeline.PipelineStatusBus
+import app.murmurnote.android.domain.pipeline.ProcessingQueueEntry
+import app.murmurnote.android.domain.pipeline.ProcessingQueueTracker
+import app.murmurnote.android.service.TranscriptionService
 import app.murmurnote.android.util.Logger
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.Job
@@ -42,6 +47,7 @@ class HomeViewModel @Inject constructor(
     private val asrEngineProvider: AsrEngineProvider,
     private val llmClient: LlmClient,
     private val statusBus: PipelineStatusBus,
+    private val queueTracker: ProcessingQueueTracker,
     private val logger: Logger
 ) : ViewModel() {
 
@@ -72,6 +78,7 @@ class HomeViewModel @Inject constructor(
         val totalCount: Int = 0,
         val errorMessage: String? = null,
         val pipelineStage: PipelineStage = PipelineStage.Idle,
+        val processingQueue: List<ProcessingQueueEntry> = emptyList(),
         val liveTranscriptionActive: Boolean = false,
         val liveTranscriptionMessage: String? = null,
         val liveTranscriptSegments: List<LiveTranscriptSegment> = emptyList()
@@ -106,6 +113,11 @@ class HomeViewModel @Inject constructor(
         viewModelScope.launch {
             statusBus.stage.collect { st ->
                 _uiState.update { it.copy(pipelineStage = st) }
+            }
+        }
+        viewModelScope.launch {
+            queueTracker.entries.collect { entries ->
+                _uiState.update { it.copy(processingQueue = entries) }
             }
         }
     }
@@ -252,6 +264,11 @@ class HomeViewModel @Inject constructor(
 
     fun dismissPipelineStatus() {
         statusBus.dismiss()
+    }
+
+    fun cancelCurrentProcessing(context: Context) {
+        logger.w("Home", "cancelCurrentProcessing requested")
+        ContextCompat.startForegroundService(context, TranscriptionService.cancelCurrentIntent(context))
     }
 
     fun clearMessages() {

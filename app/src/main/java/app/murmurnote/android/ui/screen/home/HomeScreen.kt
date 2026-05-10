@@ -50,6 +50,8 @@ import androidx.core.content.ContextCompat
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import app.murmurnote.android.domain.pipeline.PipelineStage
+import app.murmurnote.android.domain.pipeline.ProcessingQueueEntry
+import app.murmurnote.android.domain.pipeline.ProcessingQueueStatus
 
 @Composable
 fun HomeScreen(
@@ -197,10 +199,82 @@ fun HomeScreen(
                 )
             }
 
+            if (state.processingQueue.isNotEmpty()) {
+                Spacer(Modifier.height(12.dp))
+                ProcessingQueueCard(
+                    entries = state.processingQueue,
+                    onCancelCurrent = { viewModel.cancelCurrentProcessing(context) }
+                )
+            }
+
             state.errorMessage?.let { msg ->
                 Spacer(Modifier.height(12.dp))
                 Text(msg, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
             }
+        }
+    }
+}
+
+@Composable
+private fun ProcessingQueueCard(
+    entries: List<ProcessingQueueEntry>,
+    onCancelCurrent: () -> Unit
+) {
+    val running = entries.firstOrNull { it.status == ProcessingQueueStatus.RUNNING }
+    val waiting = entries.count { it.status == ProcessingQueueStatus.WAITING }
+    Card(
+        modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
+    ) {
+        Column(modifier = Modifier.padding(14.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(
+                    "处理队列",
+                    style = MaterialTheme.typography.titleSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.weight(1f)
+                )
+                if (running != null) {
+                    TextButton(onClick = onCancelCurrent) {
+                        Text("取消当前")
+                    }
+                }
+            }
+            running?.let {
+                Text(
+                    "${it.fileName} · ${it.detail}",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis
+                )
+            }
+            if (waiting > 0) {
+                Spacer(Modifier.height(4.dp))
+                Text(
+                    "等待中 $waiting 个",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+            entries
+                .filter {
+                    it.status == ProcessingQueueStatus.FAILED ||
+                        it.status == ProcessingQueueStatus.CANCELLED ||
+                        it.status == ProcessingQueueStatus.COMPLETED
+                }
+                .takeLast(2)
+                .forEach {
+                    Spacer(Modifier.height(4.dp))
+                    Text(
+                        "${queueStatusLabel(it.status)} · ${it.fileName}${it.errorMessage?.let { msg -> " · $msg" } ?: ""}",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = if (it.status == ProcessingQueueStatus.FAILED) MaterialTheme.colorScheme.error
+                        else MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                }
         }
     }
 }
@@ -283,6 +357,14 @@ private fun RealtimeTranscriptCard(
             }
         }
     }
+}
+
+private fun queueStatusLabel(status: ProcessingQueueStatus): String = when (status) {
+    ProcessingQueueStatus.WAITING -> "等待"
+    ProcessingQueueStatus.RUNNING -> "处理中"
+    ProcessingQueueStatus.COMPLETED -> "完成"
+    ProcessingQueueStatus.FAILED -> "失败"
+    ProcessingQueueStatus.CANCELLED -> "已取消"
 }
 
 @Composable
