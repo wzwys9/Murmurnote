@@ -4,7 +4,16 @@ import android.net.Uri
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import app.murmurnote.android.audio.AudioImporter
+import app.murmurnote.android.audio.AudioRecorder
 import app.murmurnote.android.audio.RecordingController
+import app.murmurnote.android.data.asr.AsrEngine
+import app.murmurnote.android.data.asr.AsrEngineProvider
+import app.murmurnote.android.data.asr.AsrEngineType
+import app.murmurnote.android.data.local.entity.ProcessingStatus
+import app.murmurnote.android.data.local.entity.Recording
+import app.murmurnote.android.data.local.entity.RecordingSegment
+import app.murmurnote.android.data.local.entity.RecordingSegmentStatus
+import app.murmurnote.android.data.local.entity.RecordingSource
 import app.murmurnote.android.data.repository.RecordingRepository
 import app.murmurnote.android.domain.pipeline.PipelineStage
 import app.murmurnote.android.domain.pipeline.PipelineStatusBus
@@ -17,6 +26,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import java.time.LocalDate
 import java.time.ZoneId
@@ -28,9 +38,26 @@ class HomeViewModel @Inject constructor(
     private val recordingRepository: RecordingRepository,
     private val recordingController: RecordingController,
     private val audioImporter: AudioImporter,
+    private val asrEngineProvider: AsrEngineProvider,
     private val statusBus: PipelineStatusBus,
     private val logger: Logger
 ) : ViewModel() {
+
+    companion object {
+        private const val LIVE_SEGMENT_AUTO_RETRIES = 1
+    }
+
+    enum class LiveTranscriptStatus { WAITING, TRANSCRIBING, TRANSCRIBED, FAILED }
+
+    data class LiveTranscriptSegment(
+        val sequence: Int,
+        val startMs: Long,
+        val endMs: Long,
+        val status: LiveTranscriptStatus,
+        val text: String = "",
+        val errorMessage: String? = null,
+        val progress: Float? = null
+    )
 
     data class UiState(
         val isRecording: Boolean = false,
@@ -40,13 +67,18 @@ class HomeViewModel @Inject constructor(
         val todayCount: Int = 0,
         val totalCount: Int = 0,
         val errorMessage: String? = null,
-        val pipelineStage: PipelineStage = PipelineStage.Idle
+        val pipelineStage: PipelineStage = PipelineStage.Idle,
+        val liveTranscriptionActive: Boolean = false,
+        val liveTranscriptionMessage: String? = null,
+        val liveTranscriptSegments: List<LiveTranscriptSegment> = emptyList()
     )
 
     private val _uiState = MutableStateFlow(UiState())
     val uiState = _uiState.asStateFlow()
 
     private var tickerJob: Job? = null
+    private var liveTranscriptionJob: Job? = null
+    private var activeRecordingId: String? = null
 
     init {
         viewModelScope.launch {
@@ -87,35 +119,76 @@ class HomeViewModel @Inject constructor(
     fun startRecording() {
         if (recordingController.isRecording) return
         logger.i("Home", "startRecording requested")
-        recordingController.start()
-            .onSuccess {
-                _uiState.update { it.copy(isRecording = true, isPaused = false, errorMessage = null, elapsedMs = 0) }
-                startTicker()
-            }
-            .onFailure { e ->
-                logger.e("Home", "startRecording failed", e)
-                _uiState.update { it.copy(errorMessage = "录音启动失败：${e.message ?: e.javaClass.simpleName}") }
-            }
+        viewModelScope.launch {
+            recordingController.start()
+                .onSuccess { active ->
+                    runCatching {
+                        recordingRepository.insert(
+                            Recording(
+                                id = active.id,
+                                title = "录音中",
+                                originalFilePath = active.file.absolutePath,
+                                durationMs = 0L,
+                                createdAt = active.createdAt,
+                                source = RecordingSource.RECORDED,
+                                processingStatus = ProcessingStatus.RECORDING,
+                                expirationDate = active.createdAt + 30L * 24 * 3600 * 1000
+                            )
+                        )
+                    }.onFailure { e ->
+                        recordingController.cancel()
+                        logger.e("Home", "failed to create recording draft", e)
+                        _uiState.update { it.copy(errorMessage = "创建录音记录失败：${e.message ?: e.javaClass.simpleName}") }
+                        return@onSuccess
+                    }
+                    activeRecordingId = active.id
+                    _uiState.update {
+                        it.copy(
+                            isRecording = true,
+                            isPaused = false,
+                            errorMessage = null,
+                            elapsedMs = 0,
+                            liveTranscriptionActive = false,
+                            liveTranscriptionMessage = "等待第一个稳定片段…",
+                            liveTranscriptSegments = emptyList()
+                        )
+                    }
+                    startTicker()
+                    startLiveTranscription()
+                }
+                .onFailure { e ->
+                    logger.e("Home", "startRecording failed", e)
+                    _uiState.update { it.copy(errorMessage = "录音启动失败：${e.message ?: e.javaClass.simpleName}") }
+                }
+        }
     }
 
     fun stopRecording() {
         if (!recordingController.isRecording) return
         logger.i("Home", "stopRecording requested elapsed=${recordingController.elapsedMs()}ms")
         tickerJob?.cancel()
+        stopLiveTranscription()
         recordingController.stopAndSubmit()
             .onSuccess { f ->
                 logger.i("Home", "submitted to pipeline file=${f.absolutePath} size=${f.length()}")
+                activeRecordingId = null
                 _uiState.update {
                     it.copy(
                         isRecording = false,
                         isPaused = false,
                         elapsedMs = 0,
-                        errorMessage = null
+                        errorMessage = null,
+                        liveTranscriptionActive = false,
+                        liveTranscriptionMessage = null
                     )
                 }
             }
             .onFailure { e ->
                 logger.e("Home", "stopRecording failed", e)
+                activeRecordingId?.let { id ->
+                    viewModelScope.launch { recordingRepository.delete(id) }
+                }
+                activeRecordingId = null
                 _uiState.update { it.copy(isRecording = false, errorMessage = e.message ?: "停止失败") }
             }
     }
@@ -129,8 +202,22 @@ class HomeViewModel @Inject constructor(
     fun cancelRecording() {
         logger.i("Home", "cancelRecording")
         tickerJob?.cancel()
+        stopLiveTranscription()
         recordingController.cancel()
-        _uiState.update { it.copy(isRecording = false, isPaused = false, elapsedMs = 0) }
+        activeRecordingId?.let { id ->
+            viewModelScope.launch { recordingRepository.delete(id) }
+        }
+        activeRecordingId = null
+        _uiState.update {
+            it.copy(
+                isRecording = false,
+                isPaused = false,
+                elapsedMs = 0,
+                liveTranscriptionActive = false,
+                liveTranscriptionMessage = null,
+                liveTranscriptSegments = emptyList()
+            )
+        }
     }
 
     fun reportPermissionDenied() {
@@ -159,6 +246,21 @@ class HomeViewModel @Inject constructor(
         _uiState.update { it.copy(errorMessage = null) }
     }
 
+    fun retryLiveSegment(sequence: Int) {
+        if (!recordingController.isRecording) return
+        viewModelScope.launch {
+            val segment = recordingController.recordedSegments().firstOrNull { it.sequence == sequence }
+            if (segment == null) {
+                _uiState.update { it.copy(liveTranscriptionMessage = "第 ${sequence + 1} 段音频已不可用") }
+                return@launch
+            }
+            val engine = currentLocalLiveEngine() ?: return@launch
+            logger.i("Home", "retry live segment $sequence")
+            persistRecordingSegment(segment, RecordingSegmentStatus.READY)
+            transcribeLiveSegment(segment, engine)
+        }
+    }
+
     private fun startTicker() {
         tickerJob?.cancel()
         tickerJob = viewModelScope.launch {
@@ -174,7 +276,192 @@ class HomeViewModel @Inject constructor(
         }
     }
 
+    private fun startLiveTranscription() {
+        liveTranscriptionJob?.cancel()
+        liveTranscriptionJob = viewModelScope.launch {
+            val engine = currentLocalLiveEngine() ?: return@launch
+
+            val processedSequences = mutableSetOf<Int>()
+            _uiState.update {
+                it.copy(
+                    liveTranscriptionActive = true,
+                    liveTranscriptionMessage = "等待第一个稳定片段…"
+                )
+            }
+            while (isActive && recordingController.isRecording) {
+                val pending = recordingController.recordedSegments()
+                    .filter { it.sequence !in processedSequences && it.file.exists() && it.file.length() > 44L }
+                    .sortedBy { it.sequence }
+                if (pending.isEmpty()) {
+                    delay(1_000)
+                    continue
+                }
+                pending.forEach { segment ->
+                    processedSequences += segment.sequence
+                    persistRecordingSegment(
+                        segment = segment,
+                        status = RecordingSegmentStatus.READY
+                    )
+                    transcribeLiveSegment(segment, engine)
+                }
+            }
+        }
+    }
+
+    private suspend fun currentLocalLiveEngine(): AsrEngine? =
+        when (val selection = asrEngineProvider.current()) {
+            is AsrEngineProvider.Selection.NotReady -> {
+                _uiState.update {
+                    it.copy(
+                        liveTranscriptionActive = false,
+                        liveTranscriptionMessage = selection.reason
+                    )
+                }
+                null
+            }
+            is AsrEngineProvider.Selection.Active -> {
+                if (selection.engine.engineType == AsrEngineType.CLOUD_GLM) {
+                    _uiState.update {
+                        it.copy(
+                            liveTranscriptionActive = false,
+                            liveTranscriptionMessage = "录音中预览当前仅支持本地 ASR；停止后会完整转写。"
+                        )
+                    }
+                    null
+                } else {
+                    selection.engine
+                }
+            }
+        }
+
+    private suspend fun transcribeLiveSegment(
+        segment: AudioRecorder.RecordedSegment,
+        engine: AsrEngine,
+        attempt: Int = 0
+    ) {
+        upsertLiveSegment(
+            LiveTranscriptSegment(
+                sequence = segment.sequence,
+                startMs = segment.startMs,
+                endMs = segment.endMs,
+                status = LiveTranscriptStatus.TRANSCRIBING,
+                progress = 0f
+            )
+        )
+        persistRecordingSegment(
+            segment = segment,
+            status = RecordingSegmentStatus.TRANSCRIBING
+        )
+        _uiState.update {
+            it.copy(
+                liveTranscriptionActive = true,
+                liveTranscriptionMessage = "正在转写第 ${segment.sequence + 1} 段…"
+            )
+        }
+
+        val result = engine.transcribe(segment.file) { progress ->
+            upsertLiveSegment(
+                LiveTranscriptSegment(
+                    sequence = segment.sequence,
+                    startMs = segment.startMs,
+                    endMs = segment.endMs,
+                    status = LiveTranscriptStatus.TRANSCRIBING,
+                    progress = progress
+                )
+            )
+        }
+        result
+            .onSuccess { asr ->
+                persistRecordingSegment(
+                    segment = segment,
+                    status = RecordingSegmentStatus.TRANSCRIBED,
+                    transcriptText = asr.text
+                )
+                upsertLiveSegment(
+                    LiveTranscriptSegment(
+                        sequence = segment.sequence,
+                        startMs = segment.startMs,
+                        endMs = segment.endMs,
+                        status = LiveTranscriptStatus.TRANSCRIBED,
+                        text = asr.text,
+                        progress = 1f
+                    )
+                )
+                _uiState.update {
+                    it.copy(liveTranscriptionMessage = "已实时转写 ${it.liveTranscriptSegments.count { seg -> seg.status == LiveTranscriptStatus.TRANSCRIBED }} 段")
+                }
+                logger.i("Home", "live segment ${segment.sequence} transcribed chars=${asr.text.length}")
+            }
+            .onFailure { e ->
+                if (attempt < LIVE_SEGMENT_AUTO_RETRIES) {
+                    _uiState.update {
+                        it.copy(liveTranscriptionMessage = "第 ${segment.sequence + 1} 段转写失败，正在自动重试…")
+                    }
+                    logger.w("Home", "live segment ${segment.sequence} failed, retrying: ${e.message}")
+                    delay(1_000)
+                    transcribeLiveSegment(segment, engine, attempt + 1)
+                    return
+                }
+                persistRecordingSegment(
+                    segment = segment,
+                    status = RecordingSegmentStatus.FAILED,
+                    errorMessage = e.message ?: e.javaClass.simpleName
+                )
+                upsertLiveSegment(
+                    LiveTranscriptSegment(
+                        sequence = segment.sequence,
+                        startMs = segment.startMs,
+                        endMs = segment.endMs,
+                        status = LiveTranscriptStatus.FAILED,
+                        errorMessage = e.message ?: e.javaClass.simpleName
+                    )
+                )
+                _uiState.update { it.copy(liveTranscriptionMessage = "第 ${segment.sequence + 1} 段实时转写失败") }
+                logger.w("Home", "live segment ${segment.sequence} failed: ${e.message}")
+            }
+    }
+
+    private fun upsertLiveSegment(segment: LiveTranscriptSegment) {
+        _uiState.update { state ->
+            state.copy(
+                liveTranscriptSegments = (state.liveTranscriptSegments.filterNot { it.sequence == segment.sequence } + segment)
+                    .sortedBy { it.sequence }
+            )
+        }
+    }
+
+    private suspend fun persistRecordingSegment(
+        segment: AudioRecorder.RecordedSegment,
+        status: RecordingSegmentStatus,
+        errorMessage: String? = null,
+        transcriptText: String? = null
+    ) {
+        val recordingId = activeRecordingId ?: return
+        runCatching {
+            recordingRepository.insertRecordingSegment(
+                RecordingSegment(
+                    recordingId = recordingId,
+                    sequence = segment.sequence,
+                    filePath = segment.file.absolutePath,
+                    startMs = segment.startMs,
+                    endMs = segment.endMs,
+                    status = status,
+                    errorMessage = errorMessage,
+                    transcriptText = transcriptText
+                )
+            )
+        }.onFailure { e ->
+            logger.w("Home", "failed to persist live segment ${segment.sequence}: ${e.message}")
+        }
+    }
+
+    private fun stopLiveTranscription() {
+        liveTranscriptionJob?.cancel()
+        liveTranscriptionJob = null
+    }
+
     override fun onCleared() {
         tickerJob?.cancel()
+        stopLiveTranscription()
     }
 }

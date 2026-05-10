@@ -3,6 +3,7 @@ package app.murmurnote.android.data.repository
 import app.murmurnote.android.data.local.dao.RecordingDao
 import app.murmurnote.android.data.local.entity.ProcessingStatus
 import app.murmurnote.android.data.local.entity.Recording
+import app.murmurnote.android.data.local.entity.RecordingSegment
 import app.murmurnote.android.data.local.entity.TranscriptSegment
 import kotlinx.coroutines.flow.Flow
 import javax.inject.Inject
@@ -27,6 +28,17 @@ class RecordingRepository @Inject constructor(
     suspend fun deleteSegments(recordingId: String) = recordingDao.deleteSegmentsForRecording(recordingId)
     suspend fun getSegments(recordingId: String): List<TranscriptSegment> = recordingDao.getSegments(recordingId)
     fun observeSegments(recordingId: String): Flow<List<TranscriptSegment>> = recordingDao.observeSegments(recordingId)
+
+    suspend fun insertRecordingSegments(segments: List<RecordingSegment>) =
+        recordingDao.insertRecordingSegments(segments)
+    suspend fun insertRecordingSegment(segment: RecordingSegment) =
+        recordingDao.insertRecordingSegment(segment)
+    suspend fun deleteRecordingSegments(recordingId: String) =
+        recordingDao.deleteRecordingSegmentsForRecording(recordingId)
+    suspend fun getRecordingSegments(recordingId: String): List<RecordingSegment> =
+        recordingDao.getRecordingSegments(recordingId)
+    fun observeRecordingSegments(recordingId: String): Flow<List<RecordingSegment>> =
+        recordingDao.observeRecordingSegments(recordingId)
 
     fun search(query: String): Flow<List<Recording>> = recordingDao.searchRecordings(query)
     fun observeTotalCount(): Flow<Int> = recordingDao.countAll()

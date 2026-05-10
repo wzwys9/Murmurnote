@@ -44,6 +44,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
 import androidx.hilt.navigation.compose.hiltViewModel
@@ -171,6 +172,13 @@ fun HomeScreen(
                         Text("取消")
                     }
                 }
+                Spacer(Modifier.height(12.dp))
+                RealtimeTranscriptCard(
+                    active = state.liveTranscriptionActive,
+                    message = state.liveTranscriptionMessage,
+                    segments = state.liveTranscriptSegments,
+                    onRetryFailedSegment = viewModel::retryLiveSegment
+                )
             } else {
                 Spacer(Modifier.height(20.dp))
                 FilledTonalButton(onClick = { pickAudioLauncher.launch(arrayOf("audio/*")) }) {
@@ -192,6 +200,86 @@ fun HomeScreen(
             state.errorMessage?.let { msg ->
                 Spacer(Modifier.height(12.dp))
                 Text(msg, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
+            }
+        }
+    }
+}
+
+@Composable
+private fun RealtimeTranscriptCard(
+    active: Boolean,
+    message: String?,
+    segments: List<HomeViewModel.LiveTranscriptSegment>,
+    onRetryFailedSegment: (Int) -> Unit
+) {
+    if (message == null && segments.isEmpty()) return
+    Card(
+        modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
+    ) {
+        Column(modifier = Modifier.padding(14.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                if (active) {
+                    CircularProgressIndicator(
+                        modifier = Modifier.size(16.dp),
+                        strokeWidth = 2.dp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Spacer(Modifier.width(8.dp))
+                }
+                Text(
+                    "实时转写",
+                    style = MaterialTheme.typography.titleSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+            message?.takeIf { it.isNotBlank() }?.let {
+                Spacer(Modifier.height(4.dp))
+                Text(
+                    it,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+            segments.takeLast(3).forEach { segment ->
+                Spacer(Modifier.height(8.dp))
+                Text(
+                    liveSegmentLabel(segment),
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                when (segment.status) {
+                    HomeViewModel.LiveTranscriptStatus.TRANSCRIBING -> {
+                        Spacer(Modifier.height(4.dp))
+                        LinearProgressIndicator(
+                            progress = { segment.progress ?: 0f },
+                            modifier = Modifier.fillMaxWidth(),
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                    HomeViewModel.LiveTranscriptStatus.TRANSCRIBED -> {
+                        Text(
+                            segment.text.ifBlank { "（识别为空）" },
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            maxLines = 3,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                    }
+                    HomeViewModel.LiveTranscriptStatus.FAILED -> {
+                        Text(
+                            segment.errorMessage ?: "转写失败",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.error,
+                            maxLines = 2,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                        TextButton(onClick = { onRetryFailedSegment(segment.sequence) }) {
+                            Text("重试此段")
+                        }
+                    }
+                    HomeViewModel.LiveTranscriptStatus.WAITING -> Unit
+                }
             }
         }
     }
@@ -293,6 +381,16 @@ private fun describe(s: PipelineStage): StageDescription = when (s) {
         "阶段：${s.stage}\n${s.errorMessage}\n\n请到「设置 → 导出日志包」查看详情。",
         null, true, false
     )
+}
+
+private fun liveSegmentLabel(segment: HomeViewModel.LiveTranscriptSegment): String {
+    val status = when (segment.status) {
+        HomeViewModel.LiveTranscriptStatus.WAITING -> "等待"
+        HomeViewModel.LiveTranscriptStatus.TRANSCRIBING -> "转写中"
+        HomeViewModel.LiveTranscriptStatus.TRANSCRIBED -> "已完成"
+        HomeViewModel.LiveTranscriptStatus.FAILED -> "失败"
+    }
+    return "第 ${segment.sequence + 1} 段 · ${formatElapsed(segment.startMs)}-${formatElapsed(segment.endMs)} · $status"
 }
 
 private fun formatElapsed(ms: Long): String {

@@ -4,6 +4,7 @@ import android.content.Context
 import app.murmurnote.android.audio.AudioConverter
 import app.murmurnote.android.audio.AudioFileInspector
 import app.murmurnote.android.audio.AudioSplitter
+import app.murmurnote.android.audio.RecordingSegmentManifest
 import app.murmurnote.android.data.asr.AsrEngine
 import app.murmurnote.android.data.asr.AsrEngineProvider
 import app.murmurnote.android.data.asr.AsrEngineType
@@ -13,6 +14,8 @@ import app.murmurnote.android.data.local.entity.ItemType
 import app.murmurnote.android.data.local.entity.ProcessingStatus
 import app.murmurnote.android.data.preference.AppPreferences
 import app.murmurnote.android.data.local.entity.Recording
+import app.murmurnote.android.data.local.entity.RecordingSegment
+import app.murmurnote.android.data.local.entity.RecordingSegmentStatus
 import app.murmurnote.android.data.local.entity.RecordingSource
 import app.murmurnote.android.data.local.entity.TranscriptSegment
 import app.murmurnote.android.data.remote.llm.LlmClient
@@ -113,6 +116,7 @@ class AudioPipeline @Inject constructor(
             )
             recordingRepository.insert(recording)
         }
+        persistRollingRecordingSegments(recordingId, audioFile)
         // 标题与每个待办都要带"录音时间点"，重跑沿用原 createdAt，新录音用 now。
         val createdAtPretty = formatPretty(recording.createdAt)
 
@@ -136,7 +140,7 @@ class AudioPipeline @Inject constructor(
                 stageName = "split"
                 send(PipelineStage.Splitting(0))
                 recordingRepository.setStatus(recordingId, ProcessingStatus.SPLITTING)
-                val slices = audioSplitter.split(monoWav, File(workDir, "segments"))
+                val slices = splitOrReuseSlices(monoWav, File(workDir, "segments"))
                 logger.i("Pipe", "split → ${slices.size} segments, durationMs=$durationMs")
                 send(PipelineStage.Splitting(slices.size))
 
@@ -362,6 +366,56 @@ class AudioPipeline @Inject constructor(
             sourceLength = length().toString(),
             sourceLastModified = lastModified().toString()
         )
+
+    private suspend fun persistRollingRecordingSegments(recordingId: String, audioFile: File) {
+        runCatching {
+            val manifest = RecordingSegmentManifest.read(audioFile) ?: return
+            val existingBySequence = recordingRepository.getRecordingSegments(recordingId)
+                .associateBy { it.sequence }
+            val rows = manifest.segments.map { segment ->
+                val existing = existingBySequence[segment.sequence]
+                if (
+                    existing != null &&
+                    existing.filePath == segment.file.absolutePath &&
+                    existing.startMs == segment.startMs &&
+                    existing.endMs == segment.endMs
+                ) {
+                    existing
+                } else {
+                    RecordingSegment(
+                        recordingId = recordingId,
+                        sequence = segment.sequence,
+                        filePath = segment.file.absolutePath,
+                        startMs = segment.startMs,
+                        endMs = segment.endMs,
+                        status = RecordingSegmentStatus.READY
+                    )
+                }
+            }
+            recordingRepository.deleteRecordingSegments(recordingId)
+            recordingRepository.insertRecordingSegments(rows)
+            logger.i("Pipe", "persisted rolling recording segments count=${rows.size} id=$recordingId")
+        }.onFailure { e ->
+            logger.w("Pipe", "failed to persist rolling recording segments: ${e.message}")
+        }
+    }
+
+    private suspend fun splitOrReuseSlices(monoWav: File, outputDir: File): List<AudioSplitter.Slice> {
+        val metaFile = File(outputDir, "segments.properties")
+        val cached = SegmentSliceCache.read(metaFile, outputDir, monoWav)
+        if (cached != null) {
+            logger.i("Pipe", "reuse segment cache count=${cached.size}")
+            return cached
+        }
+
+        val slices = audioSplitter.split(monoWav, outputDir)
+        runCatching {
+            SegmentSliceCache.write(metaFile, monoWav, slices)
+        }.onFailure { e ->
+            logger.w("Pipe", "failed to write segment cache metadata: ${e.message}")
+        }
+        return slices
+    }
 
     private fun normalizeSegments(segments: List<TranscriptSegment>): List<TranscriptSegment> =
         segments

@@ -1,104 +1,189 @@
 package app.murmurnote.android.audio
 
-import android.content.Context
+import android.annotation.SuppressLint
+import android.media.AudioFormat
+import android.media.AudioRecord
 import android.media.MediaRecorder
-import android.os.Build
 import android.os.SystemClock
 import app.murmurnote.android.util.Logger
-import dagger.hilt.android.qualifiers.ApplicationContext
 import java.io.File
+import java.io.RandomAccessFile
 import javax.inject.Inject
 import javax.inject.Singleton
 import kotlin.math.log10
 
 @Singleton
 class AudioRecorder @Inject constructor(
-    @ApplicationContext private val context: Context,
     private val logger: Logger
 ) {
-    private var recorder: MediaRecorder? = null
+    companion object {
+        const val SAMPLE_RATE_HZ = 16_000
+        const val ROLLING_SEGMENT_MS = 60_000L
+        private const val CHANNEL_COUNT = 1
+        private const val BITS_PER_SAMPLE = 16
+        private const val BYTES_PER_SAMPLE = BITS_PER_SAMPLE / 8
+        private const val BYTE_RATE = SAMPLE_RATE_HZ * CHANNEL_COUNT * BYTES_PER_SAMPLE
+        private const val WAV_HEADER_BYTES = 44
+        private const val MAX_UINT32 = 0xffff_ffffL
+        private val SEGMENT_PCM_BYTES = msToPcmBytes(ROLLING_SEGMENT_MS)
+
+        private fun msToPcmBytes(ms: Long): Long =
+            ((ms * BYTE_RATE) / 1000L).coerceAtLeast(0L)
+    }
+
+    data class RecordedSegment(
+        val sequence: Int,
+        val file: File,
+        val startMs: Long,
+        val endMs: Long
+    )
+
+    private val lock = Any()
+    private var audioRecord: AudioRecord? = null
+    private var recordingThread: Thread? = null
     private var startedAtMs: Long = 0
     private var pausedAccumulatedMs: Long = 0
     private var pauseStartMs: Long = 0
     private var currentFile: File? = null
+    private var segmentDir: File? = null
+    private var finalWriter: WavWriter? = null
+    private var segmentWriter: WavWriter? = null
+    private val segments = mutableListOf<RecordedSegment>()
+    private var currentSegmentSequence: Int = 0
+    private var currentSegmentStartPcmBytes: Long = 0L
+    private var totalPcmBytes: Long = 0L
+    @Volatile private var lastAmplitude: Int = 0
+
     @Volatile var isRecording: Boolean = false
         private set
     @Volatile var isPaused: Boolean = false
         private set
 
+    @SuppressLint("MissingPermission")
     fun start(target: File): File {
         check(!isRecording) { "Recorder already started" }
         target.parentFile?.mkdirs()
-        val mr = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) MediaRecorder(context) else @Suppress("DEPRECATION") MediaRecorder()
-        mr.setAudioSource(MediaRecorder.AudioSource.MIC)
-        mr.setOutputFormat(MediaRecorder.OutputFormat.MPEG_4)
-        mr.setAudioEncoder(MediaRecorder.AudioEncoder.AAC)
-        mr.setAudioChannels(1)
-        mr.setAudioSamplingRate(16000)
-        mr.setAudioEncodingBitRate(64_000)
-        mr.setOutputFile(target.absolutePath)
+        if (target.exists()) target.delete()
+
+        val minBuffer = AudioRecord.getMinBufferSize(
+            SAMPLE_RATE_HZ,
+            AudioFormat.CHANNEL_IN_MONO,
+            AudioFormat.ENCODING_PCM_16BIT
+        )
+        check(minBuffer > 0) { "AudioRecord min buffer unavailable: $minBuffer" }
+        val bufferSize = maxOf(minBuffer, BYTE_RATE / 5)
+
+        val record = AudioRecord(
+            MediaRecorder.AudioSource.MIC,
+            SAMPLE_RATE_HZ,
+            AudioFormat.CHANNEL_IN_MONO,
+            AudioFormat.ENCODING_PCM_16BIT,
+            bufferSize
+        )
+        if (record.state != AudioRecord.STATE_INITIALIZED) {
+            record.release()
+            error("AudioRecord 初始化失败")
+        }
+
+        val segmentsDirectory = File(target.parentFile, "${target.nameWithoutExtension}_segments")
+        if (segmentsDirectory.exists()) segmentsDirectory.deleteRecursively()
+        segmentsDirectory.mkdirs()
+
+        synchronized(lock) {
+            currentFile = target
+            segmentDir = segmentsDirectory
+            finalWriter = WavWriter(target).also { it.open() }
+            segments.clear()
+            totalPcmBytes = 0L
+            currentSegmentSequence = 0
+            currentSegmentStartPcmBytes = 0L
+            openSegmentLocked()
+        }
+
         try {
-            mr.prepare()
-            mr.start()
+            record.startRecording()
         } catch (t: Throwable) {
-            // MediaRecorder.start 抛 IllegalStateException 是常见症状（麦克风被占用 / OEM 限制 / 录音权限黑名单）；
-            // 先把异常落日志，再让调用方处理。否则上层只看到一个空 Result.failure 没有线索。
-            logger.e("Rec", "MediaRecorder.start failed for ${target.name}", t)
-            runCatching { mr.release() }
+            cleanupAfterFailedStart(record, target, segmentsDirectory)
+            logger.e("Rec", "AudioRecord.startRecording failed for ${target.name}", t)
             throw t
         }
-        recorder = mr
-        currentFile = target
+
+        audioRecord = record
         startedAtMs = SystemClock.elapsedRealtime()
-        pausedAccumulatedMs = 0
+        pausedAccumulatedMs = 0L
+        pauseStartMs = 0L
+        lastAmplitude = 0
         isRecording = true
         isPaused = false
+
+        recordingThread = Thread(
+            { recordLoop(record, bufferSize) },
+            "MurmurnoteAudioRecorder"
+        ).also { it.start() }
+        logger.i("Rec", "start wav → ${target.absolutePath}; rolling=${ROLLING_SEGMENT_MS}ms")
         return target
     }
 
     fun pause() {
         if (!isRecording || isPaused) return
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
-            recorder?.pause()
-            isPaused = true
-            pauseStartMs = SystemClock.elapsedRealtime()
+        isPaused = true
+        pauseStartMs = SystemClock.elapsedRealtime()
+        synchronized(lock) {
+            if (finishSegmentLocked()) {
+                currentSegmentSequence += 1
+            }
+            currentSegmentStartPcmBytes = totalPcmBytes
         }
     }
 
     fun resume() {
         if (!isRecording || !isPaused) return
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
-            recorder?.resume()
-            pausedAccumulatedMs += SystemClock.elapsedRealtime() - pauseStartMs
-            isPaused = false
+        synchronized(lock) {
+            currentSegmentStartPcmBytes = totalPcmBytes
+            if (segmentWriter == null) openSegmentLocked()
         }
+        pausedAccumulatedMs += SystemClock.elapsedRealtime() - pauseStartMs
+        isPaused = false
     }
 
     fun stop(): File? {
         if (!isRecording) return null
-        val result = runCatching {
-            recorder?.stop()
-            recorder?.release()
-            currentFile
-        }
-        recorder = null
         isRecording = false
         isPaused = false
-        // stop 在录音 < 1s 时会抛 IllegalStateException，文件可能未写完；记日志便于排查
-        // 用户那种"按住就松开"的误触发到底是录到一段还是 0 字节文件。
-        result.exceptionOrNull()?.let { logger.w("Rec", "MediaRecorder.stop threw (likely <1s recording)", it) }
-        return result.getOrNull()
+        runCatching { audioRecord?.stop() }
+        recordingThread?.join(2_000)
+        runCatching { audioRecord?.release() }
+
+        val result = synchronized(lock) {
+            finishSegmentLocked()
+            finalWriter?.close()
+            writeSegmentManifestLocked()
+            val segmentCount = segments.size
+            val file = currentFile
+            clearStateLocked()
+            file to segmentCount
+        }
+        logger.i(
+            "Rec",
+            "stop wav → ${result.first?.absolutePath} segments=${result.second} size=${result.first?.length() ?: 0}"
+        )
+        return result.first
     }
 
     fun cancel() {
         val cancelledFile = currentFile?.absolutePath
-        runCatching { recorder?.stop() }
-        runCatching { recorder?.release() }
-        currentFile?.delete()
-        recorder = null
-        currentFile = null
         isRecording = false
         isPaused = false
+        runCatching { audioRecord?.stop() }
+        recordingThread?.join(2_000)
+        runCatching { audioRecord?.release() }
+        synchronized(lock) {
+            runCatching { segmentWriter?.close() }
+            runCatching { finalWriter?.close() }
+            currentFile?.delete()
+            segmentDir?.deleteRecursively()
+            clearStateLocked()
+        }
         if (cancelledFile != null) logger.d("Rec", "low-level cancel cleared $cancelledFile")
     }
 
@@ -108,8 +193,176 @@ class AudioRecorder @Inject constructor(
         return SystemClock.elapsedRealtime() - startedAtMs - pausedAccumulatedMs - pausedExtra
     }
 
-    fun amplitudeDb(): Int {
-        val amp = recorder?.maxAmplitude ?: 0
-        return if (amp <= 0) 0 else (20 * log10(amp.toDouble())).toInt().coerceIn(0, 100)
+    fun amplitudeDb(): Int = lastAmplitude
+
+    fun recordedSegments(): List<RecordedSegment> = synchronized(lock) { segments.toList() }
+
+    private fun recordLoop(record: AudioRecord, bufferSize: Int) {
+        val buffer = ByteArray(bufferSize - (bufferSize % 2))
+        while (isRecording) {
+            val read = record.read(buffer, 0, buffer.size)
+            if (read > 0) {
+                val evenRead = read - (read % BYTES_PER_SAMPLE)
+                if (evenRead <= 0) continue
+                updateAmplitude(buffer, evenRead)
+                if (!isPaused) {
+                    synchronized(lock) {
+                        finalWriter?.write(buffer, evenRead)
+                        segmentWriter?.write(buffer, evenRead)
+                        totalPcmBytes += evenRead
+                        if (totalPcmBytes - currentSegmentStartPcmBytes >= SEGMENT_PCM_BYTES) {
+                            if (finishSegmentLocked()) {
+                                currentSegmentSequence += 1
+                            }
+                            currentSegmentStartPcmBytes = totalPcmBytes
+                            openSegmentLocked()
+                        }
+                    }
+                }
+            } else if (read < 0 && isRecording) {
+                logger.w("Rec", "AudioRecord.read returned $read")
+            }
+        }
+    }
+
+    private fun openSegmentLocked() {
+        val dir = segmentDir ?: return
+        val file = File(dir, "segment_${currentSegmentSequence.toString().padStart(4, '0')}.wav")
+        if (file.exists()) file.delete()
+        segmentWriter = WavWriter(file).also { it.open() }
+    }
+
+    private fun finishSegmentLocked(): Boolean {
+        val writer = segmentWriter ?: return false
+        segmentWriter = null
+        writer.close()
+        if (writer.dataBytes <= 0L) {
+            writer.file.delete()
+            return false
+        }
+        segments += RecordedSegment(
+            sequence = currentSegmentSequence,
+            file = writer.file,
+            startMs = pcmBytesToMs(currentSegmentStartPcmBytes),
+            endMs = pcmBytesToMs(currentSegmentStartPcmBytes + writer.dataBytes)
+        )
+        return true
+    }
+
+    private fun writeSegmentManifestLocked() {
+        if (segments.isEmpty()) return
+        val final = currentFile ?: return
+        runCatching {
+            RecordingSegmentManifest.write(
+                finalFile = final,
+                sampleRateHz = SAMPLE_RATE_HZ,
+                bitsPerSample = BITS_PER_SAMPLE,
+                segmentTargetMs = ROLLING_SEGMENT_MS,
+                segments = segments.map {
+                    RecordingSegmentManifest.Segment(
+                        sequence = it.sequence,
+                        file = it.file,
+                        startMs = it.startMs,
+                        endMs = it.endMs
+                    )
+                }
+            )
+        }.onFailure { e ->
+            logger.w("Rec", "failed to write rolling segment manifest: ${e.message}")
+        }
+    }
+
+    private fun clearStateLocked() {
+        audioRecord = null
+        recordingThread = null
+        currentFile = null
+        segmentDir = null
+        finalWriter = null
+        segmentWriter = null
+        segments.clear()
+        totalPcmBytes = 0L
+        currentSegmentSequence = 0
+        currentSegmentStartPcmBytes = 0L
+        lastAmplitude = 0
+    }
+
+    private fun cleanupAfterFailedStart(record: AudioRecord, target: File, segmentsDirectory: File) {
+        runCatching { record.release() }
+        synchronized(lock) {
+            runCatching { segmentWriter?.close() }
+            runCatching { finalWriter?.close() }
+            clearStateLocked()
+        }
+        target.delete()
+        segmentsDirectory.deleteRecursively()
+    }
+
+    private fun updateAmplitude(buffer: ByteArray, read: Int) {
+        var peak = 0
+        var i = 0
+        while (i + 1 < read) {
+            val sample = ((buffer[i + 1].toInt() shl 8) or (buffer[i].toInt() and 0xff)).toShort()
+            val abs = kotlin.math.abs(sample.toInt())
+            if (abs > peak) peak = abs
+            i += 2
+        }
+        lastAmplitude = if (peak <= 0) 0 else (20 * log10(peak.toDouble())).toInt().coerceIn(0, 100)
+    }
+
+    private fun pcmBytesToMs(bytes: Long): Long = (bytes * 1000L) / BYTE_RATE
+
+    private class WavWriter(val file: File) {
+        private var raf: RandomAccessFile? = null
+        var dataBytes: Long = 0L
+            private set
+
+        fun open() {
+            file.parentFile?.mkdirs()
+            raf = RandomAccessFile(file, "rw").also {
+                it.setLength(0L)
+                it.write(ByteArray(WAV_HEADER_BYTES))
+            }
+        }
+
+        fun write(buffer: ByteArray, length: Int) {
+            raf?.write(buffer, 0, length)
+            dataBytes += length
+        }
+
+        fun close() {
+            val handle = raf ?: return
+            raf = null
+            writeHeader(handle, dataBytes)
+            handle.close()
+        }
+
+        private fun writeHeader(handle: RandomAccessFile, dataSize: Long) {
+            handle.seek(0L)
+            handle.writeBytes("RIFF")
+            handle.writeIntLe((36L + dataSize).coerceAtMost(MAX_UINT32).toInt())
+            handle.writeBytes("WAVE")
+            handle.writeBytes("fmt ")
+            handle.writeIntLe(16)
+            handle.writeShortLe(1)
+            handle.writeShortLe(CHANNEL_COUNT)
+            handle.writeIntLe(SAMPLE_RATE_HZ)
+            handle.writeIntLe(BYTE_RATE)
+            handle.writeShortLe(CHANNEL_COUNT * BYTES_PER_SAMPLE)
+            handle.writeShortLe(BITS_PER_SAMPLE)
+            handle.writeBytes("data")
+            handle.writeIntLe(dataSize.coerceAtMost(MAX_UINT32).toInt())
+        }
+
+        private fun RandomAccessFile.writeIntLe(value: Int) {
+            write(value and 0xff)
+            write((value shr 8) and 0xff)
+            write((value shr 16) and 0xff)
+            write((value shr 24) and 0xff)
+        }
+
+        private fun RandomAccessFile.writeShortLe(value: Int) {
+            write(value and 0xff)
+            write((value shr 8) and 0xff)
+        }
     }
 }

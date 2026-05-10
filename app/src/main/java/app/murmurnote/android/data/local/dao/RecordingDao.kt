@@ -7,6 +7,7 @@ import androidx.room.Query
 import androidx.room.Update
 import app.murmurnote.android.data.local.entity.ProcessingStatus
 import app.murmurnote.android.data.local.entity.Recording
+import app.murmurnote.android.data.local.entity.RecordingSegment
 import app.murmurnote.android.data.local.entity.TranscriptSegment
 import kotlinx.coroutines.flow.Flow
 
@@ -55,6 +56,22 @@ interface RecordingDao {
 
     @Query("DELETE FROM transcript_segments WHERE recordingId = :recordingId")
     suspend fun deleteSegmentsForRecording(recordingId: String)
+
+    // Rolling recording segments
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertRecordingSegments(segments: List<RecordingSegment>)
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertRecordingSegment(segment: RecordingSegment)
+
+    @Query("SELECT * FROM recording_segments WHERE recordingId = :recordingId ORDER BY sequence ASC")
+    fun observeRecordingSegments(recordingId: String): Flow<List<RecordingSegment>>
+
+    @Query("SELECT * FROM recording_segments WHERE recordingId = :recordingId ORDER BY sequence ASC")
+    suspend fun getRecordingSegments(recordingId: String): List<RecordingSegment>
+
+    @Query("DELETE FROM recording_segments WHERE recordingId = :recordingId")
+    suspend fun deleteRecordingSegmentsForRecording(recordingId: String)
 
     // 搜索改用 LIKE:FTS4 默认 simple tokenizer 不支持中文(把 CJK 视为分隔符,索引不到任何中文 token),
     // 个人语音备忘录数据量小(几百条上限),LIKE 在 title/summary/transcript 上扫一遍依然亚毫秒级,
