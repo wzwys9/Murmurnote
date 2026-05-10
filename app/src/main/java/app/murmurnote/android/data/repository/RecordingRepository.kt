@@ -28,6 +28,14 @@ class RecordingRepository @Inject constructor(
     suspend fun deleteSegments(recordingId: String) = recordingDao.deleteSegmentsForRecording(recordingId)
     suspend fun getSegments(recordingId: String): List<TranscriptSegment> = recordingDao.getSegments(recordingId)
     fun observeSegments(recordingId: String): Flow<List<TranscriptSegment>> = recordingDao.observeSegments(recordingId)
+    suspend fun updateTranscriptSegmentText(recordingId: String, segmentId: Long, text: String) {
+        val editedAt = System.currentTimeMillis()
+        recordingDao.updateTranscriptSegmentText(segmentId, text, editedAt)
+        val rawTranscript = recordingDao.getSegments(recordingId)
+            .sortedBy { it.sequence }
+            .joinToString("\n") { it.text }
+        recordingDao.markTranscriptEdited(recordingId, rawTranscript, editedAt)
+    }
 
     suspend fun insertRecordingSegments(segments: List<RecordingSegment>) =
         recordingDao.insertRecordingSegments(segments)

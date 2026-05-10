@@ -21,6 +21,8 @@ data class Recording(
     val summary: String? = null,
     val draftSummary: String? = null,
     val finalSummary: String? = null,
+    val transcriptDirty: Boolean = false,
+    val transcriptEditedAt: Long? = null,
     val rawTranscript: String? = null,
     val expirationDate: Long? = null
 )

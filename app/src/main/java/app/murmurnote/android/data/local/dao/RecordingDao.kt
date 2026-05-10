@@ -54,6 +54,24 @@ interface RecordingDao {
     @Query("SELECT * FROM transcript_segments WHERE recordingId = :recordingId ORDER BY sequence ASC")
     suspend fun getSegments(recordingId: String): List<TranscriptSegment>
 
+    @Query(
+        """
+        UPDATE transcript_segments
+        SET text = :text, isEdited = 1, editedAt = :editedAt
+        WHERE id = :id
+        """
+    )
+    suspend fun updateTranscriptSegmentText(id: Long, text: String, editedAt: Long)
+
+    @Query(
+        """
+        UPDATE recordings
+        SET rawTranscript = :rawTranscript, transcriptDirty = 1, transcriptEditedAt = :editedAt
+        WHERE id = :recordingId
+        """
+    )
+    suspend fun markTranscriptEdited(recordingId: String, rawTranscript: String, editedAt: Long)
+
     @Query("DELETE FROM transcript_segments WHERE recordingId = :recordingId")
     suspend fun deleteSegmentsForRecording(recordingId: String)
 

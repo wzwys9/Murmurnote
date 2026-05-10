@@ -258,6 +258,7 @@ class AudioPipeline @Inject constructor(
                 summary = extraction.summary,
                 finalSummary = extraction.summary,
                 rawTranscript = fullText,
+                transcriptDirty = false,
                 processingStatus = ProcessingStatus.COMPLETED
             )
             recordingRepository.update(recording)

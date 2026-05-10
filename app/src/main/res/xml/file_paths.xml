@@ -2,4 +2,5 @@
 <paths>
     <!-- LogExporter.exportAndShare 把诊断 zip 写到 cacheDir/log_share/，由这里向 FileProvider 暴露。 -->
     <cache-path name="log_share" path="log_share/" />
+    <cache-path name="result_share" path="result_share/" />
 </paths>

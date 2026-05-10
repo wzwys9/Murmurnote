@@ -28,7 +28,8 @@ object DatabaseModule {
             .fallbackToDestructiveMigration(false)
             .addMigrations(
                 MurmurnoteDatabase.MIGRATION_1_2,
-                MurmurnoteDatabase.MIGRATION_2_3
+                MurmurnoteDatabase.MIGRATION_2_3,
+                MurmurnoteDatabase.MIGRATION_3_4
             )
             .build()
     }

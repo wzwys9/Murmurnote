@@ -18,9 +18,12 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material.icons.filled.Save
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.Checkbox
@@ -29,9 +32,11 @@ import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Slider
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -48,6 +53,7 @@ import app.murmurnote.android.data.local.entity.ItemType
 import app.murmurnote.android.data.local.entity.ProcessingStatus
 import app.murmurnote.android.data.local.entity.RecordingSegment
 import app.murmurnote.android.data.local.entity.RecordingSegmentStatus
+import app.murmurnote.android.data.local.entity.TranscriptSegment
 import app.murmurnote.android.util.formatDurationMs
 import app.murmurnote.android.util.formatTimestampFull
 
@@ -202,7 +208,8 @@ fun DetailScreen(
                 item {
                     Card(modifier = Modifier.fillMaxWidth()) {
                         Box(modifier = Modifier.fillMaxWidth().padding(16.dp)) {
-                            state.recording?.let { rec ->
+                            val rec = state.recording
+                            rec?.let {
                                 Text(
                                     formatTimestampFull(rec.createdAt),
                                     style = MaterialTheme.typography.labelSmall,
@@ -212,15 +219,53 @@ fun DetailScreen(
                             }
                             Column(modifier = Modifier.fillMaxWidth().padding(top = 18.dp)) {
                                 Text("完整转写", style = MaterialTheme.typography.titleSmall)
+                                if (rec?.transcriptDirty == true) {
+                                    Spacer(Modifier.height(4.dp))
+                                    Text(
+                                        "转写已修改，重新生成总结会使用修正后的文本。",
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.primary
+                                    )
+                                    Spacer(Modifier.height(4.dp))
+                                    TextButton(
+                                        onClick = viewModel::regenerateSummary,
+                                        enabled = !state.regeneratingSummary
+                                    ) {
+                                        Icon(
+                                            Icons.Filled.Refresh,
+                                            contentDescription = null,
+                                            modifier = Modifier.size(18.dp)
+                                        )
+                                        Spacer(Modifier.size(6.dp))
+                                        Text(if (state.regeneratingSummary) "生成中…" else "重新生成总结")
+                                    }
+                                }
+                                state.segmentEditError?.let { error ->
+                                    Spacer(Modifier.height(4.dp))
+                                    Row(verticalAlignment = Alignment.CenterVertically) {
+                                        Text(
+                                            error,
+                                            style = MaterialTheme.typography.bodySmall,
+                                            color = MaterialTheme.colorScheme.error,
+                                            modifier = Modifier.weight(1f)
+                                        )
+                                        IconButton(onClick = viewModel::clearSegmentEditError) {
+                                            Icon(Icons.Filled.Close, contentDescription = "忽略")
+                                        }
+                                    }
+                                }
                                 Spacer(Modifier.height(8.dp))
                                 state.segments.forEach { seg ->
-                                    Text(
-                                        text = seg.text,
-                                        style = MaterialTheme.typography.bodyMedium,
-                                        modifier = Modifier
-                                            .fillMaxWidth()
-                                            .clickable { viewModel.seekTo(seg.startMs) }
-                                            .padding(vertical = 4.dp)
+                                    TranscriptSegmentRow(
+                                        segment = seg,
+                                        editing = state.editingSegmentId == seg.id,
+                                        draft = state.segmentDraft,
+                                        saving = state.savingSegment,
+                                        onSeek = { viewModel.seekTo(seg.startMs) },
+                                        onEdit = { viewModel.startEditingSegment(seg) },
+                                        onDraftChange = viewModel::updateSegmentDraft,
+                                        onSave = viewModel::saveSegmentEdit,
+                                        onCancel = viewModel::cancelSegmentEdit
                                     )
                                 }
                             }
@@ -228,6 +273,71 @@ fun DetailScreen(
                     }
                 }
             }
+        }
+    }
+}
+
+@Composable
+private fun TranscriptSegmentRow(
+    segment: TranscriptSegment,
+    editing: Boolean,
+    draft: String,
+    saving: Boolean,
+    onSeek: () -> Unit,
+    onEdit: () -> Unit,
+    onDraftChange: (String) -> Unit,
+    onSave: () -> Unit,
+    onCancel: () -> Unit
+) {
+    Column(modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp)) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text(
+                "${formatDurationMs(segment.startMs)}-${formatDurationMs(segment.endMs)}",
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.weight(1f)
+            )
+            if (segment.isEdited) {
+                Text(
+                    "已编辑",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.primary
+                )
+                Spacer(Modifier.size(4.dp))
+            }
+            if (editing) {
+                IconButton(onClick = onSave, enabled = !saving) {
+                    if (saving) {
+                        CircularProgressIndicator(modifier = Modifier.size(18.dp), strokeWidth = 2.dp)
+                    } else {
+                        Icon(Icons.Filled.Save, contentDescription = "保存")
+                    }
+                }
+                IconButton(onClick = onCancel, enabled = !saving) {
+                    Icon(Icons.Filled.Close, contentDescription = "取消")
+                }
+            } else {
+                IconButton(onClick = onEdit) {
+                    Icon(Icons.Filled.Edit, contentDescription = "编辑转写")
+                }
+            }
+        }
+        if (editing) {
+            OutlinedTextField(
+                value = draft,
+                onValueChange = onDraftChange,
+                modifier = Modifier.fillMaxWidth(),
+                minLines = 2
+            )
+        } else {
+            Text(
+                text = segment.text,
+                style = MaterialTheme.typography.bodyMedium,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clickable { onSeek() }
+                    .padding(vertical = 2.dp)
+            )
         }
     }
 }

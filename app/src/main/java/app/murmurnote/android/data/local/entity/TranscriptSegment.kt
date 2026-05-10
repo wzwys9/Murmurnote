@@ -23,5 +23,7 @@ data class TranscriptSegment(
     val text: String,
     val startMs: Long,
     val endMs: Long,
-    val sequence: Int
+    val sequence: Int,
+    val isEdited: Boolean = false,
+    val editedAt: Long? = null
 )
