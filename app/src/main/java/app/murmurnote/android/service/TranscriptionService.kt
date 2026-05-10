@@ -7,6 +7,7 @@ import android.content.Intent
 import android.content.pm.ServiceInfo
 import android.os.Build
 import android.os.IBinder
+import android.os.PowerManager
 import androidx.core.app.NotificationCompat
 import app.murmurnote.android.CHANNEL_PROCESSING
 import app.murmurnote.android.MainActivity
@@ -33,6 +34,7 @@ class TranscriptionService : Service() {
         const val EXTRA_FILE_PATH = "file_path"
         const val EXTRA_SOURCE = "source"
         const val EXTRA_RECORDING_ID = "recording_id"
+        private const val WAKE_LOCK_TIMEOUT_MS = 6L * 60 * 60 * 1000
 
         fun intent(ctx: android.content.Context, file: File, source: RecordingSource): Intent =
             Intent(ctx, TranscriptionService::class.java)
@@ -58,6 +60,7 @@ class TranscriptionService : Service() {
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     private var job: Job? = null
+    private var wakeLock: PowerManager.WakeLock? = null
 
     override fun onBind(intent: Intent?): IBinder? = null
 
@@ -86,6 +89,8 @@ class TranscriptionService : Service() {
         startForegroundCompat(buildNotification(if (existingRecordingId != null) "重新处理录音…" else "正在准备处理…"))
 
         job?.cancel()
+        releaseWakeLock()
+        acquireWakeLock()
         job = scope.launch {
             try {
                 processUseCase(File(path), source, existingRecordingId).collect { stage ->
@@ -95,6 +100,7 @@ class TranscriptionService : Service() {
                     logger.i("Service", "stage → $text")
                     if (stage is PipelineStage.Completed || stage is PipelineStage.Failed) {
                         logger.i("Service", "stopForeground (final stage reached)")
+                        releaseWakeLock()
                         stopForegroundSelf()
                         stopSelf(startId)
                     }
@@ -102,11 +108,32 @@ class TranscriptionService : Service() {
             } catch (t: Throwable) {
                 logger.e("Service", "pipeline crashed", t)
                 statusBus.update(PipelineStage.Failed("service", t.message ?: t.javaClass.simpleName))
+                releaseWakeLock()
                 stopForegroundSelf()
                 stopSelf(startId)
+            } finally {
+                releaseWakeLock()
             }
         }
         return START_NOT_STICKY
+    }
+
+    private fun acquireWakeLock() {
+        val pm = getSystemService(PowerManager::class.java)
+        val wl = pm.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "Murmurnote:Transcription")
+        wl.setReferenceCounted(false)
+        wl.acquire(WAKE_LOCK_TIMEOUT_MS)
+        wakeLock = wl
+        logger.i("Service", "partial wake lock acquired")
+    }
+
+    private fun releaseWakeLock() {
+        val wl = wakeLock ?: return
+        wakeLock = null
+        runCatching {
+            if (wl.isHeld) wl.release()
+        }.onFailure { logger.w("Service", "partial wake lock release failed: ${it.message}") }
+        logger.i("Service", "partial wake lock released")
     }
 
     private fun labelOf(s: PipelineStage): String = when (s) {
@@ -162,7 +189,9 @@ class TranscriptionService : Service() {
     override fun onDestroy() {
         logger.i("Service", "onDestroy")
         job?.cancel()
+        releaseWakeLock()
         scope.coroutineContext[Job]?.cancel()
         super.onDestroy()
     }
+
 }
