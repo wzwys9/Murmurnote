@@ -75,7 +75,7 @@ android {
         viewBinding = false
     }
 
-    // AGP 8.7.3 自带的 NonNullableMutableLiveDataDetector 跑到 Kotlin 2.0.21 K2 metadata 上会崩,
+    // AGP / Compose lint 的部分 detector 跑到 Kotlin 2.0.21 K2 metadata 上会崩,
     // 是 lint 的工具 bug,跟代码无关。release 走 lintVitalAnalyzeRelease 强制跑 lint,只能在这里把这一项关掉。
     // 同源问题：RememberInCompositionDetector 在 K2 上抛 IncompatibleClassChangeError，错误消息里
     // 也明确建议 disable，等 AGP/Compose 配上跟 Kotlin 2.0.21 K2 一致的 lint API 再开回来。
