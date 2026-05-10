@@ -185,6 +185,70 @@ class LlmClient @Inject constructor(
         }
     }
 
+    /**
+     * 录音中滚动总结：把新增转写合并进现有草稿摘要。
+     * 只产出 summary，不提取 items；最终 items 仍由停止录音后的完整 pipeline 统一生成。
+     */
+    suspend fun updateDraftSummary(
+        existingSummary: String?,
+        newTranscript: String
+    ): Result<String> = runCatching {
+        val config = currentConfig()
+        if (config.provider.requiresApiKey && config.apiKey.isBlank()) {
+            error("${config.provider.displayName} API Key 未配置")
+        }
+        val oldSummary = existingSummary?.takeIf { it.isNotBlank() }
+        val systemPrompt = """
+你正在维护一段录音的“临时滚动总结”。用户还在录音，输入只包含新增转写和已有草稿摘要。
+
+目标：
+- 保留已有摘要中仍然重要的信息
+- 把新增转写中的新事实、决策、待办、想法合并进去
+- 去重、合并相似内容，避免机械追加
+- 不生成结构化 JSON，不提取 items
+
+输出要求：
+- 直接输出 bullet 列表，每条以 "• " 开头
+- 第一条优先是 "• 主题：..."；如果主题还不明确，可以写 "• 主题：录音进行中"
+- 4–12 条为宜
+- 这是临时摘要，允许保留“待确认”“可能”等不确定措辞
+- 不要 markdown 围栏，不要解释
+""".trimIndent()
+        val userPrompt = buildString {
+            append("已有草稿摘要：\n")
+            append(oldSummary ?: "（暂无）")
+            append("\n\n新增转写：\n")
+            append(newTranscript)
+            append("\n\n请输出更新后的临时滚动总结。")
+        }
+        logger.i(
+            "LLM",
+            "updateDraftSummary begin provider=${config.provider.name} model=${config.model} oldChars=${oldSummary?.length ?: 0} newChars=${newTranscript.length}"
+        )
+        val started = SystemClock.elapsedRealtime()
+        val raw = completeText(
+            config = config,
+            systemPrompt = systemPrompt,
+            userPrompt = userPrompt,
+            jsonMode = false,
+            label = "updateDraftSummary"
+        )
+        val summary = ExtractionJsonParser.stripThink(raw)
+            .lineSequence()
+            .map { it.trim() }
+            .filter { it.isNotBlank() }
+            .joinToString("\n")
+            .takeIf { it.isNotBlank() }
+            ?: error("滚动总结响应为空")
+        logger.i(
+            "LLM",
+            "updateDraftSummary ok summaryChars=${summary.length} elapsed=${SystemClock.elapsedRealtime() - started}ms"
+        )
+        summary
+    }.onFailure { e ->
+        logger.e("LLM", "updateDraftSummary failed: ${e.message?.take(200)}", e)
+    }
+
     /** 按句末标点切句,贪心拼成 ~CHUNK_TARGET_CHARS 字的块,相邻块之间重叠 1–2 句以保持上下文连续。最多 MAX_CHUNKS 块,超出部分合并到末块。 */
     internal fun chunkTranscript(text: String): List<String> {
         val sentenceEnd = setOf('。', '！', '？', '.', '!', '?', '\n')

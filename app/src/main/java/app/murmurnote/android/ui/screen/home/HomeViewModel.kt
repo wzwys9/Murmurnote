@@ -14,6 +14,7 @@ import app.murmurnote.android.data.local.entity.Recording
 import app.murmurnote.android.data.local.entity.RecordingSegment
 import app.murmurnote.android.data.local.entity.RecordingSegmentStatus
 import app.murmurnote.android.data.local.entity.RecordingSource
+import app.murmurnote.android.data.remote.llm.LlmClient
 import app.murmurnote.android.data.repository.RecordingRepository
 import app.murmurnote.android.domain.pipeline.PipelineStage
 import app.murmurnote.android.domain.pipeline.PipelineStatusBus
@@ -39,12 +40,15 @@ class HomeViewModel @Inject constructor(
     private val recordingController: RecordingController,
     private val audioImporter: AudioImporter,
     private val asrEngineProvider: AsrEngineProvider,
+    private val llmClient: LlmClient,
     private val statusBus: PipelineStatusBus,
     private val logger: Logger
 ) : ViewModel() {
 
     companion object {
         private const val LIVE_SEGMENT_AUTO_RETRIES = 1
+        private const val DRAFT_SUMMARY_MIN_NEW_CHARS = 600
+        private const val DRAFT_SUMMARY_MIN_INTERVAL_MS = 2L * 60 * 1000
     }
 
     enum class LiveTranscriptStatus { WAITING, TRANSCRIBING, TRANSCRIBED, FAILED }
@@ -78,7 +82,10 @@ class HomeViewModel @Inject constructor(
 
     private var tickerJob: Job? = null
     private var liveTranscriptionJob: Job? = null
+    private var draftSummaryJob: Job? = null
     private var activeRecordingId: String? = null
+    private val pendingDraftTranscript = StringBuilder()
+    private var lastDraftSummaryAtMs: Long = 0L
 
     init {
         viewModelScope.launch {
@@ -142,6 +149,8 @@ class HomeViewModel @Inject constructor(
                         return@onSuccess
                     }
                     activeRecordingId = active.id
+                    pendingDraftTranscript.clear()
+                    lastDraftSummaryAtMs = 0L
                     _uiState.update {
                         it.copy(
                             isRecording = true,
@@ -208,6 +217,9 @@ class HomeViewModel @Inject constructor(
             viewModelScope.launch { recordingRepository.delete(id) }
         }
         activeRecordingId = null
+        pendingDraftTranscript.clear()
+        draftSummaryJob?.cancel()
+        draftSummaryJob = null
         _uiState.update {
             it.copy(
                 isRecording = false,
@@ -391,6 +403,7 @@ class HomeViewModel @Inject constructor(
                     it.copy(liveTranscriptionMessage = "已实时转写 ${it.liveTranscriptSegments.count { seg -> seg.status == LiveTranscriptStatus.TRANSCRIBED }} 段")
                 }
                 logger.i("Home", "live segment ${segment.sequence} transcribed chars=${asr.text.length}")
+                maybeUpdateDraftSummary(asr.text)
             }
             .onFailure { e ->
                 if (attempt < LIVE_SEGMENT_AUTO_RETRIES) {
@@ -455,6 +468,43 @@ class HomeViewModel @Inject constructor(
         }
     }
 
+    private fun maybeUpdateDraftSummary(newTranscript: String) {
+        val cleaned = newTranscript.trim()
+        if (cleaned.isBlank()) return
+        pendingDraftTranscript.appendLine(cleaned)
+
+        val now = System.currentTimeMillis()
+        val shouldUpdate =
+            lastDraftSummaryAtMs == 0L ||
+                pendingDraftTranscript.length >= DRAFT_SUMMARY_MIN_NEW_CHARS ||
+                now - lastDraftSummaryAtMs >= DRAFT_SUMMARY_MIN_INTERVAL_MS
+        if (!shouldUpdate || draftSummaryJob?.isActive == true) return
+
+        draftSummaryJob = viewModelScope.launch {
+            val recordingId = activeRecordingId ?: return@launch
+            val snapshotLength = pendingDraftTranscript.length
+            val newText = pendingDraftTranscript.toString().trim()
+            if (newText.isBlank()) return@launch
+            val rec = recordingRepository.get(recordingId) ?: return@launch
+            llmClient.updateDraftSummary(rec.draftSummary, newText)
+                .onSuccess { summary ->
+                    val latest = recordingRepository.get(recordingId) ?: return@onSuccess
+                    recordingRepository.update(
+                        latest.copy(
+                            draftSummary = summary,
+                            summary = if (latest.finalSummary == null) summary else latest.summary
+                        )
+                    )
+                    pendingDraftTranscript.delete(0, minOf(snapshotLength, pendingDraftTranscript.length))
+                    lastDraftSummaryAtMs = System.currentTimeMillis()
+                    logger.i("Home", "draft summary updated chars=${summary.length}")
+                }
+                .onFailure { e ->
+                    logger.w("Home", "draft summary update failed: ${e.message}")
+                }
+        }
+    }
+
     private fun stopLiveTranscription() {
         liveTranscriptionJob?.cancel()
         liveTranscriptionJob = null
@@ -463,5 +513,6 @@ class HomeViewModel @Inject constructor(
     override fun onCleared() {
         tickerJob?.cancel()
         stopLiveTranscription()
+        draftSummaryJob?.cancel()
     }
 }
