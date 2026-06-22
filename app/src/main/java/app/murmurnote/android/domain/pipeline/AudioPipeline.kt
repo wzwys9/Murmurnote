@@ -463,6 +463,7 @@ class AudioPipeline @Inject constructor(
         val expected = normalized.indices.toList()
         if (sequences != expected) return null
         if (normalized.any { it.status != RecordingSegmentStatus.TRANSCRIBED }) return null
+        if (normalized.zipWithNext().any { (current, next) -> next.startMs < current.endMs }) return null
         return normalized.map { segment ->
             TranscriptOf(
                 index = segment.sequence,

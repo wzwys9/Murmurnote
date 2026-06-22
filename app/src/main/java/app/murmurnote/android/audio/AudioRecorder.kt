@@ -18,11 +18,12 @@ class AudioRecorder @Inject constructor(
 ) {
     companion object {
         const val SAMPLE_RATE_HZ = 16_000
-        const val ROLLING_SEGMENT_MS = 60_000L
-        private const val LIVE_PAUSE_SEGMENT_MS = 1_000L
-        private const val MIN_LIVE_SEGMENT_MS = 1_500L
-        private const val MIN_LIVE_SPEECH_MS = 400L
-        private const val SPEECH_RMS_DBFS_THRESHOLD = -48.0
+        const val ROLLING_SEGMENT_MS = 15_000L
+        private const val LIVE_PAUSE_SEGMENT_MS = 1_800L
+        private const val LIVE_HARD_CUT_OVERLAP_MS = 600L
+        private const val MIN_LIVE_SEGMENT_MS = 4_000L
+        private const val MIN_LIVE_SPEECH_MS = 1_000L
+        private const val SPEECH_RMS_DBFS_THRESHOLD = -55.0
         private const val CHANNEL_COUNT = 1
         private const val BITS_PER_SAMPLE = 16
         private const val BYTES_PER_SAMPLE = BITS_PER_SAMPLE / 8
@@ -30,6 +31,7 @@ class AudioRecorder @Inject constructor(
         private const val WAV_HEADER_BYTES = 44
         private const val MAX_UINT32 = 0xffff_ffffL
         private val SEGMENT_PCM_BYTES = msToPcmBytes(ROLLING_SEGMENT_MS)
+        private val HARD_CUT_OVERLAP_BYTES = msToPcmBytes(LIVE_HARD_CUT_OVERLAP_MS).toInt()
         private val PAUSE_PCM_BYTES = msToPcmBytes(LIVE_PAUSE_SEGMENT_MS)
         private val MIN_SEGMENT_PCM_BYTES = msToPcmBytes(MIN_LIVE_SEGMENT_MS)
         private val MIN_SPEECH_PCM_BYTES = msToPcmBytes(MIN_LIVE_SPEECH_MS)
@@ -61,6 +63,7 @@ class AudioRecorder @Inject constructor(
     private var currentSegmentSpeechPcmBytes: Long = 0L
     private var currentSegmentTrailingSilencePcmBytes: Long = 0L
     private var totalPcmBytes: Long = 0L
+    private val hardCutOverlapBuffer = PcmOverlapBuffer(HARD_CUT_OVERLAP_BYTES)
     @Volatile private var lastAmplitude: Int = 0
 
     @Volatile var isRecording: Boolean = false
@@ -103,6 +106,7 @@ class AudioRecorder @Inject constructor(
             segmentDir = segmentsDirectory
             finalWriter = WavWriter(target).also { it.open() }
             segments.clear()
+            hardCutOverlapBuffer.clear()
             totalPcmBytes = 0L
             currentSegmentSequence = 0
             currentSegmentStartPcmBytes = 0L
@@ -131,7 +135,8 @@ class AudioRecorder @Inject constructor(
         ).also { it.start() }
         logger.i(
             "Rec",
-            "start wav → ${target.absolutePath}; rolling=${ROLLING_SEGMENT_MS}ms pauseCut=${LIVE_PAUSE_SEGMENT_MS}ms"
+            "start wav → ${target.absolutePath}; rolling=${ROLLING_SEGMENT_MS}ms " +
+                "pauseCut=${LIVE_PAUSE_SEGMENT_MS}ms overlap=${LIVE_HARD_CUT_OVERLAP_MS}ms"
         )
         return target
     }
@@ -222,6 +227,7 @@ class AudioRecorder @Inject constructor(
                         finalWriter?.write(buffer, evenRead)
                         segmentWriter?.write(buffer, evenRead)
                         totalPcmBytes += evenRead
+                        hardCutOverlapBuffer.write(buffer, evenRead)
                         updateSegmentSpeechStateLocked(buffer, evenRead)
                         val segmentBytes = totalPcmBytes - currentSegmentStartPcmBytes
                         val reachedMaxSegment = segmentBytes >= SEGMENT_PCM_BYTES
@@ -230,11 +236,13 @@ class AudioRecorder @Inject constructor(
                                 segmentBytes >= MIN_SEGMENT_PCM_BYTES &&
                                 currentSegmentTrailingSilencePcmBytes >= PAUSE_PCM_BYTES
                         if (reachedMaxSegment || reachedNaturalPause) {
+                            val forcedHardCut = reachedMaxSegment && !reachedNaturalPause
                             if (finishSegmentLocked(discardIfNoSpeech = true)) {
                                 currentSegmentSequence += 1
                             }
-                            currentSegmentStartPcmBytes = totalPcmBytes
-                            openSegmentLocked()
+                            val overlap = if (forcedHardCut) hardCutOverlapBuffer.snapshot() else ByteArray(0)
+                            currentSegmentStartPcmBytes = totalPcmBytes - overlap.size.toLong()
+                            openSegmentLocked(overlap)
                         }
                     }
                 }
@@ -244,13 +252,17 @@ class AudioRecorder @Inject constructor(
         }
     }
 
-    private fun openSegmentLocked() {
+    private fun openSegmentLocked(initialPcm: ByteArray = ByteArray(0)) {
         val dir = segmentDir ?: return
         val file = File(dir, "segment_${currentSegmentSequence.toString().padStart(4, '0')}.wav")
         if (file.exists()) file.delete()
         segmentWriter = WavWriter(file).also { it.open() }
         currentSegmentSpeechPcmBytes = 0L
         currentSegmentTrailingSilencePcmBytes = 0L
+        if (initialPcm.isNotEmpty()) {
+            segmentWriter?.write(initialPcm, initialPcm.size)
+            updateSegmentSpeechStateLocked(initialPcm, initialPcm.size)
+        }
     }
 
     private fun finishSegmentLocked(discardIfNoSpeech: Boolean): Boolean {
@@ -303,6 +315,7 @@ class AudioRecorder @Inject constructor(
         finalWriter = null
         segmentWriter = null
         segments.clear()
+        hardCutOverlapBuffer.clear()
         totalPcmBytes = 0L
         currentSegmentSequence = 0
         currentSegmentStartPcmBytes = 0L
@@ -361,6 +374,48 @@ class AudioRecorder @Inject constructor(
     }
 
     private fun pcmBytesToMs(bytes: Long): Long = (bytes * 1000L) / BYTE_RATE
+
+    private class PcmOverlapBuffer(private val capacity: Int) {
+        private val data = ByteArray(capacity)
+        private var nextWrite = 0
+        private var size = 0
+
+        fun write(buffer: ByteArray, length: Int) {
+            if (capacity <= 0 || length <= 0) return
+            val copyLength = minOf(length, buffer.size)
+            if (copyLength >= capacity) {
+                System.arraycopy(buffer, copyLength - capacity, data, 0, capacity)
+                nextWrite = 0
+                size = capacity
+                return
+            }
+            var copied = 0
+            while (copied < copyLength) {
+                val chunk = minOf(copyLength - copied, capacity - nextWrite)
+                System.arraycopy(buffer, copied, data, nextWrite, chunk)
+                nextWrite = (nextWrite + chunk) % capacity
+                copied += chunk
+            }
+            size = minOf(capacity, size + copyLength)
+        }
+
+        fun snapshot(): ByteArray {
+            if (size <= 0) return ByteArray(0)
+            val result = ByteArray(size)
+            val start = (nextWrite - size + capacity) % capacity
+            val first = minOf(size, capacity - start)
+            System.arraycopy(data, start, result, 0, first)
+            if (first < size) {
+                System.arraycopy(data, 0, result, first, size - first)
+            }
+            return result
+        }
+
+        fun clear() {
+            nextWrite = 0
+            size = 0
+        }
+    }
 
     private class WavWriter(val file: File) {
         private var raf: RandomAccessFile? = null
