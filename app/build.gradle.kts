@@ -200,9 +200,8 @@ dependencies {
     // 本地 ASR：tar.bz2 解压（解 sherpa-onnx 模型包）。
     implementation(libs.commons.compress)
 
-    // 本地 ASR JNI 库：sherpa-onnx Android AAR。官方未发到 Maven Central，开发者把
-    // sherpa-onnx-v1.12.39-android.tar.bz2 解压出来的 .aar 放到 app/libs/ 即可被自动拾取。
-    // 缺失也能正常编译 —— LocalAsrEngine 走反射，运行时检测不到会显式报错让用户去设置页提示。
+    // 本地 ASR 运行库当前以 Kotlin 绑定源码 + app/src/main/jniLibs/<abi>/*.so 形式提交。
+    // 这里保留 AAR fileTree 入口，方便以后整体替换为官方 sherpa-onnx Android AAR。
     implementation(fileTree(mapOf("dir" to "libs", "include" to listOf("*.aar"))))
 
     testImplementation(libs.junit)

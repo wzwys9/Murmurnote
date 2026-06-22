@@ -100,6 +100,8 @@ class SettingsViewModel @Inject constructor(
         viewModelScope.launch { appPreferences.lowBatteryProtection.collect { v -> _uiState.update { it.copy(lowBatteryProtection = v) } } }
         // 进设置页主动算一次"模型在不在"，触发状态广播；同时探测一次原生库是否在 classpath。
         viewModelScope.launch {
+            runCatching { asrModelManager.installBundledModelIfNeeded() }
+                .onFailure { e -> logger.w("Settings", "bundled ASR model install skipped/failed: ${e.message}") }
             asrModelManager.refreshStatus()
             _uiState.update { it.copy(asrNativeLibReady = localAsrEngine.nativeLibReady()) }
         }
@@ -226,6 +228,9 @@ class SettingsViewModel @Inject constructor(
     fun setAsrLocalModel(id: String) = viewModelScope.launch {
         localAsrEngine.release()
         asrModelManager.selectModel(id)
+        runCatching { asrModelManager.installBundledModelIfNeeded() }
+            .onFailure { e -> logger.w("Settings", "bundled ASR model install skipped/failed: ${e.message}") }
+        asrModelManager.refreshStatus()
         _uiState.update { it.copy(asrLocalModelId = AsrModelUrls.modelById(id).id) }
         logger.i("Settings", "local asr model switched → ${AsrModelUrls.modelById(id).id}")
     }

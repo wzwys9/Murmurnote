@@ -36,10 +36,12 @@ enum class AsrEngineType {
     LOCAL_SENSE_VOICE,
     LOCAL_QWEN3_ASR;
 
+    fun isLocal(): Boolean =
+        this == LOCAL_SENSE_VOICE || this == LOCAL_QWEN3_ASR
+
     companion object {
         fun parse(s: String?): AsrEngineType = when (s) {
-            "LOCAL_FIRE_RED_ASR",
-            "LOCAL_QWEN3_ASR" -> LOCAL_SENSE_VOICE
+            "LOCAL_FIRE_RED_ASR" -> LOCAL_SENSE_VOICE
             else -> entries.firstOrNull { it.name == s } ?: CLOUD_GLM
         }
     }

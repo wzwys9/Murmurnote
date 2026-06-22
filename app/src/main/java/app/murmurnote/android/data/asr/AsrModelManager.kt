@@ -135,6 +135,7 @@ class AsrModelManager @Inject constructor(
 
     /** 重新计算并广播状态。UI 进入设置页或下载完成后调一次。 */
     suspend fun refreshStatus() {
+        syncSelectedModelFromPreferences()
         val s = computeStatus()
         _status.value = s
     }
@@ -153,6 +154,7 @@ class AsrModelManager @Inject constructor(
     suspend fun downloadAndInstall(): Result<Unit> = withContext(Dispatchers.IO) {
         cancelRequested = false
         runCatching {
+            syncSelectedModelFromPreferences()
             val model = selectedModel()
             val mirrorIndex = appPreferences.asrDownloadMirrorIndex.first()
                 .coerceIn(0, AsrModelUrls.MIRROR_PREFIXES.lastIndex)
@@ -192,6 +194,7 @@ class AsrModelManager @Inject constructor(
     suspend fun installDownloadedWithoutHashCheck(): Result<Unit> = withContext(Dispatchers.IO) {
         cancelRequested = false
         runCatching {
+            syncSelectedModelFromPreferences()
             val model = selectedModel()
             val tarball = tarballFile(model)
             if (!tarball.exists() || tarball.length() <= 0L) {
@@ -227,6 +230,7 @@ class AsrModelManager @Inject constructor(
 
     /** 用户点删除：只清掉当前选中的模型。释放资源，重置状态。 */
     suspend fun delete() = withContext(Dispatchers.IO) {
+        syncSelectedModelFromPreferences()
         val model = selectedModel()
         modelDir(model).deleteRecursively()
         tarballFile(model).delete()
@@ -245,6 +249,7 @@ class AsrModelManager @Inject constructor(
      * 拷贝完写 prefs 标志，下次启动直接跳过；用户点"删除模型"时把标志清掉，下次再装回来。
      */
     suspend fun installBundledModelIfNeeded(): Boolean = withContext(Dispatchers.IO) {
+        syncSelectedModelFromPreferences()
         if (isModelReady()) return@withContext true
         val model = selectedModel()
         val am = context.assets
@@ -308,6 +313,10 @@ class AsrModelManager @Inject constructor(
     fun hasBundledAssets(): Boolean = runCatching {
         context.assets.list(selectedModel().assetRoot)?.isNotEmpty() == true
     }.getOrDefault(false)
+
+    private suspend fun syncSelectedModelFromPreferences() {
+        selectedModelId = AsrModelUrls.modelById(appPreferences.asrLocalModelId.first()).id
+    }
 
     // -------------------- 下载实现 --------------------
 

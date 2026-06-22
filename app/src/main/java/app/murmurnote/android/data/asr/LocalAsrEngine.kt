@@ -28,7 +28,12 @@ class LocalAsrEngine @Inject constructor(
     private val logger: Logger
 ) : AsrEngine {
 
-    override val engineType: AsrEngineType = AsrEngineType.LOCAL_SENSE_VOICE
+    override val engineType: AsrEngineType
+        get() = if (modelManager.selectedModel().id == AsrModelUrls.QWEN3_ASR_ID) {
+            AsrEngineType.LOCAL_QWEN3_ASR
+        } else {
+            AsrEngineType.LOCAL_SENSE_VOICE
+        }
 
     private val bridges = mutableListOf<SherpaBridge>()
     private val bridgeLock = Any()

@@ -647,7 +647,7 @@ fun AsrEngineSection(
     onDeleteModel: () -> Unit
 ) {
     val ctx = LocalContext.current
-    val isLocal = AsrEngineType.parse(engineType) == AsrEngineType.LOCAL_SENSE_VOICE
+    val isLocal = AsrEngineType.parse(engineType).isLocal()
 
     Card(modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp)) {
         Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -696,7 +696,7 @@ fun AsrEngineSection(
 private fun NativeLibStatusRow(ready: Boolean) {
     val color = if (ready) Color(0xFF4CAF50) else MaterialTheme.colorScheme.error
     val text = if (ready) "✓ sherpa-onnx 原生库已集成"
-        else "✗ sherpa-onnx 原生库未集成（开发者需在 app/libs/ 放 AAR 后重新构建；模型文件即使下完也无法运行）"
+        else "✗ sherpa-onnx 原生库未集成（开发者需集成 Kotlin 绑定和 JNI 库后重新构建；模型文件即使下完也无法运行）"
     Text(
         text,
         style = MaterialTheme.typography.bodySmall,
