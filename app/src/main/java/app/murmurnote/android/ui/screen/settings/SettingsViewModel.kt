@@ -18,6 +18,8 @@ import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import javax.inject.Inject
 
@@ -38,6 +40,9 @@ class SettingsViewModel @Inject constructor(
     private val logExporter: LogExporter,
     private val logger: Logger
 ) : ViewModel() {
+    companion object {
+        private const val API_KEY_SAVE_DEBOUNCE_MS = 300L
+    }
 
     data class UiState(
         val glmApiKey: String = "",
@@ -75,6 +80,8 @@ class SettingsViewModel @Inject constructor(
 
     private val _uiState = MutableStateFlow(UiState())
     val uiState = _uiState.asStateFlow()
+    private var glmApiKeySaveJob: Job? = null
+    private var llmApiKeySaveJob: Job? = null
 
     init {
         viewModelScope.launch { appPreferences.glmApiKey.collect { v -> _uiState.update { it.copy(glmApiKey = v) } } }
@@ -121,16 +128,29 @@ class SettingsViewModel @Inject constructor(
         }
     }
 
-    fun updateGlmApiKey(key: String) = viewModelScope.launch {
-        appPreferences.setGlmApiKey(key)
-        _uiState.update { it.copy(glmTestStatus = TestStatus.Idle) }
+    fun updateGlmApiKey(key: String) {
+        _uiState.update { it.copy(glmApiKey = key, glmTestStatus = TestStatus.Idle) }
+        glmApiKeySaveJob?.cancel()
+        glmApiKeySaveJob = viewModelScope.launch {
+            delay(API_KEY_SAVE_DEBOUNCE_MS)
+            appPreferences.setGlmApiKey(key)
+        }
     }
-    fun updateLlmApiKey(key: String) = viewModelScope.launch {
-        appPreferences.setLlmApiKey(key)
-        _uiState.update { it.copy(llmTestStatus = TestStatus.Idle) }
+    fun updateLlmApiKey(key: String) {
+        val provider = LlmProvider.parse(_uiState.value.llmProvider)
+        _uiState.update { it.copy(llmApiKey = key, llmTestStatus = TestStatus.Idle) }
+        llmApiKeySaveJob?.cancel()
+        llmApiKeySaveJob = viewModelScope.launch {
+            delay(API_KEY_SAVE_DEBOUNCE_MS)
+            appPreferences.setLlmApiKey(provider, key)
+        }
     }
     fun updateLlmProvider(providerName: String) = viewModelScope.launch {
         val provider = LlmProvider.parse(providerName)
+        val previousProvider = LlmProvider.parse(_uiState.value.llmProvider)
+        val previousApiKey = _uiState.value.llmApiKey
+        llmApiKeySaveJob?.cancel()
+        appPreferences.setLlmApiKey(previousProvider, previousApiKey)
         appPreferences.setLlmProvider(provider)
         _uiState.update {
             it.copy(

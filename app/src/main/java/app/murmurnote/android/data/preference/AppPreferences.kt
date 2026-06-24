@@ -146,6 +146,9 @@ class AppPreferences @Inject constructor(
     suspend fun setGlmApiKey(key: String) = context.dataStore.edit { it[Keys.GLM_API_KEY] = key.trim() }
     suspend fun setLlmApiKey(key: String) {
         val provider = LlmProvider.parse(context.dataStore.data.first()[Keys.LLM_PROVIDER])
+        setLlmApiKey(provider, key)
+    }
+    suspend fun setLlmApiKey(provider: LlmProvider, key: String) {
         context.dataStore.edit { it[llmApiKeyFor(provider)] = key.trim() }
     }
     suspend fun setLlmProvider(provider: LlmProvider) = context.dataStore.edit {
