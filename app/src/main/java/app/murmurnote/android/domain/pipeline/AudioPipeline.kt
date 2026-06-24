@@ -182,8 +182,8 @@ class AudioPipeline @Inject constructor(
                     }
                     logger.i("Pipe", "asr engine = ${engine.engineType}, missingSegments=$missingCount")
                     try {
-                        transcribeAll(recordingId, slices, cachedBySequence, engine) { idx, total, partial ->
-                            send(PipelineStage.Transcribing(idx, total, partial))
+                        transcribeAll(recordingId, slices, cachedBySequence, engine) { idx, total, partial, recognizedChars ->
+                            send(PipelineStage.Transcribing(idx, total, partial, recognizedChars))
                         }
                     } finally {
                         // 本地引擎释放 OfflineRecognizer 的模型内存；云端是 no-op。
@@ -278,7 +278,7 @@ class AudioPipeline @Inject constructor(
         slices: List<AudioSplitter.Slice>,
         cachedBySequence: Map<Int, TranscriptOf>,
         engine: AsrEngine,
-        onProgress: suspend (Int, Int, String) -> Unit
+        onProgress: suspend (Int, Int, String, Int) -> Unit
     ): List<TranscriptOf> = coroutineScope {
         // 本地小模型可按设置并行处理 1-3 个切片；大模型由 LocalAsrEngine 强制降到单路。
         val concurrency = when (engine.engineType) {
@@ -294,15 +294,27 @@ class AudioPipeline @Inject constructor(
         val total = slices.size
         val batchStart = System.currentTimeMillis()
         val cachedResults = cachedBySequence.values.toList()
+        val charCountsBySequence = IntArray(total) { index ->
+            cachedBySequence[index]?.text?.length ?: 0
+        }
+        val charCountLock = Any()
+
+        suspend fun emitProgress(index: Int, text: String? = null) {
+            val recognizedChars = synchronized(charCountLock) {
+                if (text != null) charCountsBySequence[index] = text.length
+                charCountsBySequence.sum()
+            }
+            onProgress(index, total, text.orEmpty(), recognizedChars)
+        }
+
         val deferreds = slices.mapIndexedNotNull { index, slice ->
             if (cachedBySequence[index] != null) return@mapIndexedNotNull null
             async(Dispatchers.IO) {
                 sem.withPermit {
                     val segStart = System.currentTimeMillis()
                     val result = engine.transcribe(slice.file) { _ ->
-                        // 段内细粒度进度只对单段实时 UI 有用，Pipeline 这层按段汇总即可，
-                        // 段中间继续 emit 一次 partial="" 让 PipelineStage.Transcribing 的"已识别 N 段"刷新。
-                        onProgress(index, total, "")
+                        // 段内细粒度进度只对单段实时 UI 有用，Pipeline 这层只刷新当前段和累计字数。
+                        emitProgress(index)
                     }
                     val text = result.getOrElse { e ->
                         error("ASR 段 ${index + 1}/$total 失败：${e.message?.take(160) ?: e.javaClass.simpleName}")
@@ -314,7 +326,7 @@ class AudioPipeline @Inject constructor(
                         endMs = slice.endMs
                     )
                     recordingRepository.insertSegment(transcript.toEntity(recordingId))
-                    onProgress(index, total, text)
+                    emitProgress(index, text)
                     logger.i(
                         "Pipe",
                         "seg ${index + 1}/$total transcribed chars=${text.length} " +

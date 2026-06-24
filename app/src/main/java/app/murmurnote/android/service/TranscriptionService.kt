@@ -218,7 +218,7 @@ class TranscriptionService : Service() {
         is PipelineStage.Converting -> "转码为 mono WAV…"
         is PipelineStage.Splitting -> if (s.segmentCount == 0) "按静音切片中…"
             else "切片完成（${s.segmentCount} 段）"
-        is PipelineStage.Transcribing -> "转写第 ${s.segmentIndex + 1}/${s.totalSegments} 段（已识别 ${s.partialText.length} 字）"
+        is PipelineStage.Transcribing -> "转写第 ${s.segmentIndex + 1}/${s.totalSegments} 段（已识别 ${s.recognizedChars} 字）"
         is PipelineStage.Extracting -> "AI 提取中（${s.transcriptLength} 字）…"
         is PipelineStage.Saving -> "入库中…"
         is PipelineStage.Completed -> "处理完成"

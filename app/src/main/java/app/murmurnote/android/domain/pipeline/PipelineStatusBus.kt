@@ -51,7 +51,7 @@ class PipelineStatusBus @Inject constructor(
         is PipelineStage.Recording -> "Recording(${s.durationMs}ms)"
         is PipelineStage.Converting -> "Converting(${(s.progress * 100).toInt()}%)"
         is PipelineStage.Splitting -> "Splitting(count=${s.segmentCount})"
-        is PipelineStage.Transcribing -> "Transcribing(${s.segmentIndex + 1}/${s.totalSegments}, partial=${s.partialText.take(30)})"
+        is PipelineStage.Transcribing -> "Transcribing(${s.segmentIndex + 1}/${s.totalSegments}, chars=${s.recognizedChars})"
         is PipelineStage.Extracting -> "Extracting(textLen=${s.transcriptLength})"
         is PipelineStage.Saving -> "Saving(${s.recordingId.take(8)})"
         is PipelineStage.Completed -> "Completed(${s.recordingId.take(8)})"

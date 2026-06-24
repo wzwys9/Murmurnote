@@ -463,7 +463,7 @@ private fun describe(s: PipelineStage): StageDescription = when (s) {
     )
     is PipelineStage.Transcribing -> StageDescription(
         "3/4 转写中",
-        "第 ${s.segmentIndex + 1}/${s.totalSegments} 段 · 已识别 ${s.partialText.length} 字\n正在流式转写，处理结果会保存到列表。",
+        "第 ${s.segmentIndex + 1}/${s.totalSegments} 段 · 已识别 ${s.recognizedChars} 字\n正在流式转写，处理结果会保存到列表。",
         if (s.totalSegments > 0) (s.segmentIndex + 1).toFloat() / s.totalSegments else null,
         false, false
     )
