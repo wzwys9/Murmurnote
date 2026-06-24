@@ -198,6 +198,9 @@ class AudioPipeline @Inject constructor(
                 stageName = "reuse_rolling_transcript"
                 logger.i("Pipe", "reuse rolling transcript segments=${transcripts.size}")
             }
+            if (transcripts.isNotEmpty()) {
+                recordingRepository.markRecordingSegmentsTranscribed(recordingId)
+            }
             val fullText = transcripts.joinToString("\n") { it.text }
 
             stageName = "extract"
@@ -474,7 +477,7 @@ class AudioPipeline @Inject constructor(
         val sequences = normalized.map { it.sequence }
         val expected = normalized.indices.toList()
         if (sequences != expected) return null
-        if (normalized.any { it.status != RecordingSegmentStatus.TRANSCRIBED }) return null
+        if (normalized.any { it.status != RecordingSegmentStatus.TRANSCRIBED || it.transcriptText == null }) return null
         if (normalized.zipWithNext().any { (current, next) -> next.startMs < current.endMs }) return null
         return normalized.map { segment ->
             TranscriptOf(

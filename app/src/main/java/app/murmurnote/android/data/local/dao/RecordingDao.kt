@@ -94,6 +94,16 @@ interface RecordingDao {
     @Query("SELECT * FROM recording_segments WHERE recordingId = :recordingId ORDER BY sequence ASC")
     suspend fun getRecordingSegments(recordingId: String): List<RecordingSegment>
 
+    @Query(
+        """
+        UPDATE recording_segments
+        SET status = 'TRANSCRIBED', errorMessage = NULL
+        WHERE recordingId = :recordingId
+          AND status IN ('READY', 'TRANSCRIBING')
+        """
+    )
+    suspend fun markRecordingSegmentsTranscribed(recordingId: String)
+
     @Query("DELETE FROM recording_segments WHERE recordingId = :recordingId")
     suspend fun deleteRecordingSegmentsForRecording(recordingId: String)
 

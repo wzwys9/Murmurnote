@@ -51,6 +51,8 @@ class RecordingRepository @Inject constructor(
         recordingDao.getRecordingSegments(recordingId)
     fun observeRecordingSegments(recordingId: String): Flow<List<RecordingSegment>> =
         recordingDao.observeRecordingSegments(recordingId)
+    suspend fun markRecordingSegmentsTranscribed(recordingId: String) =
+        recordingDao.markRecordingSegmentsTranscribed(recordingId)
 
     fun search(query: String): Flow<List<Recording>> = recordingDao.searchRecordings(query)
     fun searchFiltered(

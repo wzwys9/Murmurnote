@@ -12,6 +12,7 @@ import app.murmurnote.android.data.local.entity.ItemType
 import app.murmurnote.android.data.local.entity.ProcessingStatus
 import app.murmurnote.android.data.local.entity.Recording
 import app.murmurnote.android.data.local.entity.RecordingSegment
+import app.murmurnote.android.data.local.entity.RecordingSegmentStatus
 import app.murmurnote.android.data.local.entity.TranscriptSegment
 import app.murmurnote.android.data.remote.llm.LlmClient
 import app.murmurnote.android.data.repository.ItemRepository
@@ -89,6 +90,7 @@ class DetailViewModel @Inject constructor(
     private var loadedPath: String? = null
     private var loadedId: String? = null
     private var positionTicker: Job? = null
+    private var repairingRecordingSegmentsFor: String? = null
 
     fun load(id: String) {
         if (loadedId == id) return
@@ -97,6 +99,7 @@ class DetailViewModel @Inject constructor(
         viewModelScope.launch {
             recordingRepo.observe(id).collect { rec ->
                 _state.update { it.copy(recording = rec) }
+                maybeRepairCompletedRecordingSegments()
                 val path = rec?.originalFilePath
                 if (path != null && path != loadedPath) {
                     val f = File(path)
@@ -117,16 +120,43 @@ class DetailViewModel @Inject constructor(
         viewModelScope.launch {
             recordingRepo.observeSegments(id).collect { segs ->
                 _state.update { it.copy(segments = segs) }
+                maybeRepairCompletedRecordingSegments()
             }
         }
         viewModelScope.launch {
             recordingRepo.observeRecordingSegments(id).collect { segs ->
                 _state.update { it.copy(recordingSegments = segs) }
+                maybeRepairCompletedRecordingSegments()
             }
         }
         viewModelScope.launch {
             itemRepo.observeForRecording(id).collect { items ->
                 _state.update { it.copy(items = items) }
+            }
+        }
+    }
+
+    private fun maybeRepairCompletedRecordingSegments() {
+        val snapshot = _state.value
+        val rec = snapshot.recording ?: return
+        if (rec.processingStatus != ProcessingStatus.COMPLETED) return
+        if (snapshot.segments.isEmpty() && rec.rawTranscript.isNullOrBlank()) return
+        val hasPendingSegment = snapshot.recordingSegments.any {
+            it.status == RecordingSegmentStatus.READY ||
+                it.status == RecordingSegmentStatus.TRANSCRIBING
+        }
+        if (!hasPendingSegment || repairingRecordingSegmentsFor == rec.id) return
+        repairingRecordingSegmentsFor = rec.id
+        viewModelScope.launch {
+            runCatching {
+                recordingRepo.markRecordingSegmentsTranscribed(rec.id)
+            }.onSuccess {
+                logger.i("Detail", "repaired recording segment statuses id=${rec.id}")
+            }.onFailure { e ->
+                logger.w("Detail", "failed to repair recording segment statuses: ${e.message}")
+            }
+            if (repairingRecordingSegmentsFor == rec.id) {
+                repairingRecordingSegmentsFor = null
             }
         }
     }
