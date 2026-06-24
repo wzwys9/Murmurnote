@@ -56,9 +56,7 @@ fun MurmurnoteApp(viewModel: MainViewModel = hiltViewModel()) {
         }
         composable(Routes.SEARCH) {
             SearchScreen(
-                onOpenDetail = { id ->
-                    navController.navigate(Routes.detail(id)) { popUpTo(Routes.MAIN) }
-                },
+                onOpenDetail = { id -> navController.navigate(Routes.detail(id)) },
                 onBack = { navController.popBackStack() }
             )
         }
