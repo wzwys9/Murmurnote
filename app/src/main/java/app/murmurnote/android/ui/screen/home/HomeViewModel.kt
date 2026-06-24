@@ -105,6 +105,7 @@ class HomeViewModel @Inject constructor(
     private var lastDraftSummaryAtMs: Long = 0L
     private var realtimePerformanceMode: String = "BALANCED"
     private var lowBatteryProtection: Boolean = true
+    private var aiExtractionEnabled: Boolean = true
 
     init {
         viewModelScope.launch {
@@ -137,6 +138,9 @@ class HomeViewModel @Inject constructor(
         }
         viewModelScope.launch {
             appPreferences.lowBatteryProtection.collect { lowBatteryProtection = it }
+        }
+        viewModelScope.launch {
+            appPreferences.aiExtractionEnabled.collect { aiExtractionEnabled = it }
         }
     }
 
@@ -513,6 +517,7 @@ class HomeViewModel @Inject constructor(
     }
 
     private fun maybeUpdateDraftSummary(newTranscript: String) {
+        if (!aiExtractionEnabled) return
         val cleaned = newTranscript.trim()
         if (cleaned.isBlank()) return
         pendingDraftTranscript.appendLine(cleaned)

@@ -202,54 +202,63 @@ class AudioPipeline @Inject constructor(
                 recordingRepository.markRecordingSegmentsTranscribed(recordingId)
             }
             val fullText = transcripts.joinToString("\n") { it.text }
+            val aiExtractionEnabled = appPreferences.aiExtractionEnabled.first()
 
-            stageName = "extract"
-            send(PipelineStage.Extracting(fullText.length))
-            // 先保存 rawTranscript。这样 ASR 已完成但 AI 提取失败时，下次重跑可以直接复用完整转写。
-            recording = recording.copy(
-                rawTranscript = fullText,
-                processingStatus = ProcessingStatus.EXTRACTING,
-                errorMessage = null
-            )
-            recordingRepository.update(recording)
-            val extraction: ExtractionResult = if (fullText.isBlank()) {
-                ExtractionResult("（识别为空）", emptyList())
+            val extraction: ExtractionResult? = if (!aiExtractionEnabled) {
+                recording = recording.copy(rawTranscript = fullText, errorMessage = null)
+                recordingRepository.update(recording)
+                logger.i("Pipe", "AI extraction disabled id=$recordingId")
+                null
             } else {
-                // 长转写自动走 map-reduce 分块抽取并合并摘要;短文本透传到单次 extractItems。
-                llmClient.extractItemsAuto(fullText).getOrElse { e ->
-                    // 提取失败不致命：保留转写
-                    ExtractionResult("（提取失败：${e.message?.take(40)}）", emptyList())
+                stageName = "extract"
+                send(PipelineStage.Extracting(fullText.length))
+                // 先保存 rawTranscript。这样 ASR 已完成但 AI 提取失败时，下次重跑可以直接复用完整转写。
+                recording = recording.copy(
+                    rawTranscript = fullText,
+                    processingStatus = ProcessingStatus.EXTRACTING,
+                    errorMessage = null
+                )
+                recordingRepository.update(recording)
+                if (fullText.isBlank()) {
+                    ExtractionResult("（识别为空）", emptyList())
+                } else {
+                    // 长转写自动走 map-reduce 分块抽取并合并摘要;短文本透传到单次 extractItems。
+                    llmClient.extractItemsAuto(fullText).getOrElse { e ->
+                        // 提取失败不致命：保留转写
+                        ExtractionResult("（提取失败：${e.message?.take(40)}）", emptyList())
+                    }
                 }
             }
 
             stageName = "save"
             send(PipelineStage.Saving(recordingId))
-            val items = extraction.items.map { dto ->
-                ExtractedItem(
-                    recordingId = recordingId,
-                    type = dto.toItemType(),
-                    // 内容里不再嵌时间——UI 用 ExtractedItem.createdAt 在右上角小字渲染。
-                    content = dto.content,
-                    deadline = dto.deadline?.let { parseDeadline(it) },
-                    sourceTimestampMs = dto.sourceTimestampMs,
-                    // 沿用 recording.createdAt：重跑时仍指向"录音时刻"而非"重新提取时刻"，
-                    // 这样列表 / 待办页右上角的小字始终是录音那一刻的时间点。
-                    createdAt = recording.createdAt
-                )
-            }
-            itemRepository.insertAll(items)
+            val items = extraction?.items?.map { dto ->
+                    ExtractedItem(
+                        recordingId = recordingId,
+                        type = dto.toItemType(),
+                        // 内容里不再嵌时间——UI 用 ExtractedItem.createdAt 在右上角小字渲染。
+                        content = dto.content,
+                        deadline = dto.deadline?.let { parseDeadline(it) },
+                        sourceTimestampMs = dto.sourceTimestampMs,
+                        // 沿用 recording.createdAt：重跑时仍指向"录音时刻"而非"重新提取时刻"，
+                        // 这样列表 / 待办页右上角的小字始终是录音那一刻的时间点。
+                        createdAt = recording.createdAt
+                    )
+                }
+                .orEmpty()
+            if (items.isNotEmpty()) itemRepository.insertAll(items)
 
             // summary 现在是多条 bullet（"• 主题：...\n• 背景：..."），第一条就是录音主题。
             // 取第一条作为标题：去掉 "• " 前缀，再去掉 "主题：" 标签（中英文冒号都可），截断到 30 字。
-            val titleFromSummary = extraction.summary
-                .lineSequence()
-                .map { it.trim().removePrefix("•").trim() }
-                .map {
+            val titleFromSummary = extraction?.summary
+                ?.lineSequence()
+                ?.map { it.trim().removePrefix("•").trim() }
+                ?.map {
                     it.removePrefix("主题：")
                         .removePrefix("主题:")
                         .trim()
                 }
-                .firstOrNull { it.isNotBlank() }
+                ?.firstOrNull { it.isNotBlank() }
                 ?.take(30)
             val finalTitle = if (titleFromSummary != null) {
                 "$titleFromSummary · $createdAtPretty"
@@ -258,8 +267,9 @@ class AudioPipeline @Inject constructor(
             }
             recording = recording.copy(
                 title = finalTitle,
-                summary = extraction.summary,
-                finalSummary = extraction.summary,
+                summary = extraction?.summary,
+                draftSummary = if (extraction == null) null else recording.draftSummary,
+                finalSummary = extraction?.summary,
                 rawTranscript = fullText,
                 transcriptDirty = false,
                 processingStatus = ProcessingStatus.COMPLETED

@@ -75,7 +75,8 @@ class SettingsViewModel @Inject constructor(
         val asrNativeLibReady: Boolean = false,
         val asrLocalConcurrency: Int = 1,
         val realtimePerformanceMode: String = "BALANCED",
-        val lowBatteryProtection: Boolean = true
+        val lowBatteryProtection: Boolean = true,
+        val aiExtractionEnabled: Boolean = true
     )
 
     private val _uiState = MutableStateFlow(UiState())
@@ -119,6 +120,7 @@ class SettingsViewModel @Inject constructor(
         viewModelScope.launch { appPreferences.asrLocalConcurrency.collect { v -> _uiState.update { it.copy(asrLocalConcurrency = v) } } }
         viewModelScope.launch { appPreferences.realtimePerformanceMode.collect { v -> _uiState.update { it.copy(realtimePerformanceMode = v) } } }
         viewModelScope.launch { appPreferences.lowBatteryProtection.collect { v -> _uiState.update { it.copy(lowBatteryProtection = v) } } }
+        viewModelScope.launch { appPreferences.aiExtractionEnabled.collect { v -> _uiState.update { it.copy(aiExtractionEnabled = v) } } }
         // 进设置页主动算一次"模型在不在"，触发状态广播；同时探测一次原生库是否在 classpath。
         viewModelScope.launch {
             runCatching { asrModelManager.installBundledModelIfNeeded() }
@@ -166,6 +168,13 @@ class SettingsViewModel @Inject constructor(
     fun updateReasoningEffort(e: String) = viewModelScope.launch { appPreferences.setReasoningEffort(e) }
     fun updateGlmBaseUrl(u: String) = viewModelScope.launch { appPreferences.setGlmBaseUrl(u) }
     fun updateLlmBaseUrl(u: String) = viewModelScope.launch { appPreferences.setLlmBaseUrl(u) }
+    fun setAiExtractionEnabled(enabled: Boolean) = viewModelScope.launch {
+        appPreferences.setAiExtractionEnabled(enabled)
+        _uiState.update { it.copy(aiExtractionEnabled = enabled) }
+        if (enabled && _uiState.value.availableLlmModels.isEmpty()) {
+            refreshLlmModels()
+        }
+    }
 
     fun refreshLlmModels() = viewModelScope.launch {
         _uiState.update { it.copy(isLoadingModels = true, modelLoadError = null) }

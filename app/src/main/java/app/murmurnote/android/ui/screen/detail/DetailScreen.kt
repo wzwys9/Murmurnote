@@ -146,11 +146,16 @@ fun DetailScreen(
                 }
             }
 
-            // AI 总结（无论有没有内容都渲染，让用户能随时手动重跑提取）
+            // AI 总结：只有存在总结/草稿或提取失败文案时展示。纯转写模式下保持详情页干净。
             state.recording?.let { rec ->
                 // 处理中（还没到 EXTRACTING 完成）的录音不显示这张卡，避免和 ReprocessCard 同时存在让人困惑
-                val showSummaryCard = rec.processingStatus == ProcessingStatus.COMPLETED ||
-                    rec.processingStatus == ProcessingStatus.FAILED
+                val hasSummary = !rec.finalSummary.isNullOrBlank() ||
+                    !rec.summary.isNullOrBlank() ||
+                    !rec.draftSummary.isNullOrBlank()
+                val showSummaryCard = hasSummary && (
+                    rec.processingStatus == ProcessingStatus.COMPLETED ||
+                        rec.processingStatus == ProcessingStatus.FAILED
+                    )
                 if (showSummaryCard) {
                     item {
                         SummaryCard(

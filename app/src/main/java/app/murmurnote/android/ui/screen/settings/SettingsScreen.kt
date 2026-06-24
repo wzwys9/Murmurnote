@@ -79,7 +79,9 @@ fun SettingsScreen(
 ) {
     val state by viewModel.uiState.collectAsStateWithLifecycle()
     val llmProvider = LlmProvider.parse(state.llmProvider)
-    LaunchedEffect(Unit) { viewModel.refreshLlmModels() }
+    LaunchedEffect(state.aiExtractionEnabled) {
+        if (state.aiExtractionEnabled) viewModel.refreshLlmModels()
+    }
 
     var versionClickCount by remember { mutableIntStateOf(0) }
     var lastClickTime by remember { mutableLongStateOf(0L) }
@@ -102,20 +104,6 @@ fun SettingsScreen(
                 helpUrl = "https://bigmodel.cn/usercenter/apikeys"
             )
         }
-        item {
-            ApiKeySettingItem(
-                title = "${llmProvider.displayName} API Key",
-                description = "用于 AI 文本提取与总结",
-                placeholder = "请输入您的 ${llmProvider.displayName} API Key",
-                value = state.llmApiKey,
-                isConfigured = state.llmApiKey.isNotBlank(),
-                onValueChange = viewModel::updateLlmApiKey,
-                onTest = viewModel::testLlmConnection,
-                testStatus = state.llmTestStatus,
-                helpUrl = llmProvider.apiKeyHelpUrl
-            )
-        }
-
         item {
             ExpandableSection("高级设置") {
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -196,12 +184,31 @@ fun SettingsScreen(
 
         item { SettingSectionHeader("AI模型") }
         item {
+            AiExtractionSwitch(
+                enabled = state.aiExtractionEnabled,
+                onEnabledChange = viewModel::setAiExtractionEnabled
+            )
+        }
+        if (state.aiExtractionEnabled) item {
+            ApiKeySettingItem(
+                title = "${llmProvider.displayName} API Key",
+                description = "用于 AI 文本提取与总结",
+                placeholder = "请输入您的 ${llmProvider.displayName} API Key",
+                value = state.llmApiKey,
+                isConfigured = state.llmApiKey.isNotBlank(),
+                onValueChange = viewModel::updateLlmApiKey,
+                onTest = viewModel::testLlmConnection,
+                testStatus = state.llmTestStatus,
+                helpUrl = llmProvider.apiKeyHelpUrl
+            )
+        }
+        if (state.aiExtractionEnabled) item {
             LlmProviderSelector(
                 currentProvider = state.llmProvider,
                 onProviderSelected = viewModel::updateLlmProvider
             )
         }
-        item {
+        if (state.aiExtractionEnabled) item {
             LlmModelSelector(
                 provider = llmProvider,
                 currentModel = state.llmModel,
@@ -212,7 +219,7 @@ fun SettingsScreen(
                 error = state.modelLoadError
             )
         }
-        item {
+        if (state.aiExtractionEnabled) item {
             ReasoningEffortSelector(
                 current = state.reasoningEffort,
                 onSelected = viewModel::updateReasoningEffort
@@ -457,6 +464,33 @@ private fun StatusBadge(configured: Boolean) {
             .clickable {}
     ) {
         Text(text, style = MaterialTheme.typography.labelMedium, color = color)
+    }
+}
+
+@Composable
+fun AiExtractionSwitch(
+    enabled: Boolean,
+    onEnabledChange: (Boolean) -> Unit
+) {
+    Card(modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp)) {
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(16.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Column(modifier = Modifier.weight(1f)) {
+                Text("AI 总结和事项提取", style = MaterialTheme.typography.titleMedium)
+                Text(
+                    if (enabled) "录音完成后生成总结、待办、想法和决策。"
+                    else "关闭后只做语音转文字，不调用 AI 文本模型。",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+            Switch(
+                checked = enabled,
+                onCheckedChange = onEnabledChange
+            )
+        }
     }
 }
 

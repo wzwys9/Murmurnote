@@ -45,6 +45,7 @@ class AppPreferences @Inject constructor(
         val ASR_LOCAL_CONCURRENCY = intPreferencesKey("asr_local_concurrency")
         val REALTIME_PERFORMANCE_MODE = stringPreferencesKey("realtime_performance_mode")
         val LOW_BATTERY_PROTECTION = booleanPreferencesKey("low_battery_protection")
+        val AI_EXTRACTION_ENABLED = booleanPreferencesKey("ai_extraction_enabled")
     }
 
     private fun llmApiKeyFor(provider: LlmProvider) =
@@ -143,6 +144,10 @@ class AppPreferences @Inject constructor(
         it[Keys.LOW_BATTERY_PROTECTION] ?: true
     }
 
+    val aiExtractionEnabled: Flow<Boolean> = context.dataStore.data.map {
+        it[Keys.AI_EXTRACTION_ENABLED] ?: true
+    }
+
     suspend fun setGlmApiKey(key: String) = context.dataStore.edit { it[Keys.GLM_API_KEY] = key.trim() }
     suspend fun setLlmApiKey(key: String) {
         val provider = LlmProvider.parse(context.dataStore.data.first()[Keys.LLM_PROVIDER])
@@ -187,6 +192,7 @@ class AppPreferences @Inject constructor(
     suspend fun setAsrLocalConcurrency(v: Int) = context.dataStore.edit { it[Keys.ASR_LOCAL_CONCURRENCY] = v.coerceIn(1, 3) }
     suspend fun setRealtimePerformanceMode(v: String) = context.dataStore.edit { it[Keys.REALTIME_PERFORMANCE_MODE] = v }
     suspend fun setLowBatteryProtection(v: Boolean) = context.dataStore.edit { it[Keys.LOW_BATTERY_PROTECTION] = v }
+    suspend fun setAiExtractionEnabled(v: Boolean) = context.dataStore.edit { it[Keys.AI_EXTRACTION_ENABLED] = v }
 
     suspend fun hasAllApiKeys(): Boolean = glmApiKey.first().isNotBlank() && llmApiKey.first().isNotBlank()
 }
