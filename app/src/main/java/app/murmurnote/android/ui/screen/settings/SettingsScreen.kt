@@ -467,6 +467,7 @@ fun LlmProviderSelector(
 ) {
     val current = LlmProvider.parse(currentProvider)
     val providers = LlmProvider.entries
+    var expanded by remember { mutableStateOf(false) }
 
     Card(modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp)) {
         Column(modifier = Modifier.padding(16.dp)) {
@@ -476,28 +477,44 @@ fun LlmProviderSelector(
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
-            Spacer(Modifier.height(8.dp))
-            providers.forEach { provider ->
-                Row(
+            Spacer(Modifier.height(12.dp))
+            ExposedDropdownMenuBox(
+                expanded = expanded,
+                onExpandedChange = { expanded = it }
+            ) {
+                OutlinedTextField(
+                    value = current.providerLabel(),
+                    onValueChange = {},
+                    readOnly = true,
+                    label = { Text("当前官方模式") },
+                    trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded) },
                     modifier = Modifier
                         .fillMaxWidth()
-                        .clickable { onProviderSelected(provider.name) }
-                        .padding(vertical = 6.dp),
-                    verticalAlignment = Alignment.CenterVertically
+                        .menuAnchor(ExposedDropdownMenuAnchorType.PrimaryNotEditable, true)
+                )
+                ExposedDropdownMenu(
+                    expanded = expanded,
+                    onDismissRequest = { expanded = false }
                 ) {
-                    RadioButton(
-                        selected = current == provider,
-                        onClick = { onProviderSelected(provider.name) }
-                    )
-                    Column(modifier = Modifier.padding(start = 8.dp)) {
-                        Text(
-                            if (provider == LlmProvider.OLLAMA) "Ollama Cloud" else provider.displayName,
-                            style = MaterialTheme.typography.bodyLarge
-                        )
-                        Text(
-                            provider.defaultBaseUrl,
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                    providers.forEach { provider ->
+                        DropdownMenuItem(
+                            text = {
+                                Column {
+                                    Text(provider.providerLabel(), fontWeight = FontWeight.Medium)
+                                    Text(
+                                        provider.defaultBaseUrl,
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                }
+                            },
+                            onClick = {
+                                expanded = false
+                                onProviderSelected(provider.name)
+                            },
+                            trailingIcon = if (provider == current) {
+                                { Icon(Icons.Filled.Check, null) }
+                            } else null
                         )
                     }
                 }
@@ -505,6 +522,9 @@ fun LlmProviderSelector(
         }
     }
 }
+
+private fun LlmProvider.providerLabel(): String =
+    if (this == LlmProvider.OLLAMA) "Ollama Cloud" else displayName
 
 @Composable
 fun LlmModelSelector(
