@@ -18,9 +18,11 @@ import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import javax.inject.Inject
 
 sealed class TestStatus {
@@ -68,6 +70,7 @@ class SettingsViewModel @Inject constructor(
         val asrModelStatus: AsrModelManager.ModelStatus = AsrModelManager.ModelStatus.NotDownloaded,
         val asrModelUpdateCheck: AsrModelManager.ModelUpdateCheck? = null,
         val asrModelUpdateChecking: Boolean = false,
+        val asrBundledAssetsAvailable: Boolean = false,
         val showAsrDownloadConfirm: Boolean = false,
         val showAsrHashMismatchConfirm: Boolean = false,
         // sherpa-onnx Kotlin/JNI 类是否能加载（即 app/libs/ 下的 AAR 是否打进了 APK）。
@@ -95,9 +98,14 @@ class SettingsViewModel @Inject constructor(
         viewModelScope.launch { appPreferences.asrEngineType.collect { v -> _uiState.update { it.copy(asrEngineType = v) } } }
         viewModelScope.launch {
             appPreferences.asrLocalModelId.collect { v ->
+                val model = AsrModelUrls.modelById(v)
+                val bundledAssetsAvailable = withContext(Dispatchers.IO) {
+                    asrModelManager.hasBundledAssets(model)
+                }
                 _uiState.update {
                     it.copy(
-                        asrLocalModelId = v,
+                        asrLocalModelId = model.id,
+                        asrBundledAssetsAvailable = bundledAssetsAvailable,
                         asrModelUpdateCheck = null,
                         asrModelUpdateChecking = false
                     )
@@ -121,10 +129,8 @@ class SettingsViewModel @Inject constructor(
         viewModelScope.launch { appPreferences.realtimePerformanceMode.collect { v -> _uiState.update { it.copy(realtimePerformanceMode = v) } } }
         viewModelScope.launch { appPreferences.lowBatteryProtection.collect { v -> _uiState.update { it.copy(lowBatteryProtection = v) } } }
         viewModelScope.launch { appPreferences.aiExtractionEnabled.collect { v -> _uiState.update { it.copy(aiExtractionEnabled = v) } } }
-        // 进设置页主动算一次"模型在不在"，触发状态广播；同时探测一次原生库是否在 classpath。
+        // 进设置页只算一次"模型在不在"，不自动拷贝 assets 内置模型；大模型安装只响应用户点击。
         viewModelScope.launch {
-            runCatching { asrModelManager.installBundledModelIfNeeded() }
-                .onFailure { e -> logger.w("Settings", "bundled ASR model install skipped/failed: ${e.message}") }
             asrModelManager.refreshStatus()
             _uiState.update { it.copy(asrNativeLibReady = localAsrEngine.nativeLibReady()) }
         }
@@ -271,11 +277,24 @@ class SettingsViewModel @Inject constructor(
     fun setAsrLocalModel(id: String) = viewModelScope.launch {
         localAsrEngine.release()
         asrModelManager.selectModel(id)
+        val model = AsrModelUrls.modelById(id)
+        val bundledAssetsAvailable = withContext(Dispatchers.IO) {
+            asrModelManager.hasBundledAssets(model)
+        }
+        _uiState.update {
+            it.copy(
+                asrLocalModelId = model.id,
+                asrBundledAssetsAvailable = bundledAssetsAvailable
+            )
+        }
+        logger.i("Settings", "local asr model switched → ${model.id}")
+    }
+
+    fun installBundledAsrModel() = viewModelScope.launch {
+        logger.i("Settings", "bundled ASR model install requested")
+        _uiState.update { it.copy(asrModelUpdateCheck = null, asrModelUpdateChecking = false) }
         runCatching { asrModelManager.installBundledModelIfNeeded() }
-            .onFailure { e -> logger.w("Settings", "bundled ASR model install skipped/failed: ${e.message}") }
-        asrModelManager.refreshStatus()
-        _uiState.update { it.copy(asrLocalModelId = AsrModelUrls.modelById(id).id) }
-        logger.i("Settings", "local asr model switched → ${AsrModelUrls.modelById(id).id}")
+            .onFailure { e -> logger.w("Settings", "bundled ASR model install failed: ${e.message}") }
     }
 
     fun requestAsrDownloadConfirm() {

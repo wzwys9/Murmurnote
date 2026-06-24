@@ -43,7 +43,6 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.Switch
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableLongStateOf
@@ -79,9 +78,7 @@ fun SettingsScreen(
 ) {
     val state by viewModel.uiState.collectAsStateWithLifecycle()
     val llmProvider = LlmProvider.parse(state.llmProvider)
-    LaunchedEffect(state.aiExtractionEnabled) {
-        if (state.aiExtractionEnabled) viewModel.refreshLlmModels()
-    }
+    val isLocalAsr = AsrEngineType.parse(state.asrEngineType).isLocal()
 
     var versionClickCount by remember { mutableIntStateOf(0) }
     var lastClickTime by remember { mutableLongStateOf(0L) }
@@ -140,25 +137,38 @@ fun SettingsScreen(
             )
         }
         item {
-            AsrEngineSection(
+            AsrEngineSelectorCard(
                 engineType = state.asrEngineType,
-                modelStatus = state.asrModelStatus,
-                selectedModelId = state.asrLocalModelId,
+                onEngineSelected = viewModel::setAsrEngineType
+            )
+        }
+        if (isLocalAsr) item {
+            LocalAsrModelCard(
+                nativeLibReady = state.asrNativeLibReady,
                 localModels = state.asrLocalModels,
-                modelUpdateCheck = state.asrModelUpdateCheck,
-                modelUpdateChecking = state.asrModelUpdateChecking,
+                selectedModelId = state.asrLocalModelId,
+                onModelSelected = viewModel::setAsrLocalModel
+            )
+        }
+        if (isLocalAsr) item {
+            val ctx = LocalContext.current
+            LocalModelStatusBlock(
+                modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp),
+                status = state.asrModelStatus,
+                model = AsrModelUrls.modelById(state.asrLocalModelId),
+                updateCheck = state.asrModelUpdateCheck,
+                updateChecking = state.asrModelUpdateChecking,
+                bundledAssetsAvailable = state.asrBundledAssetsAvailable,
                 mirrorIndex = state.asrMirrorIndex,
                 mirrorOptions = state.asrMirrorOptions,
-                nativeLibReady = state.asrNativeLibReady,
                 localConcurrency = state.asrLocalConcurrency,
-                onEngineSelected = viewModel::setAsrEngineType,
-                onModelSelected = viewModel::setAsrLocalModel,
                 onMirrorSelected = viewModel::setAsrMirrorIndex,
                 onConcurrencyChanged = viewModel::setAsrLocalConcurrency,
+                onInstallBundledModel = viewModel::installBundledAsrModel,
                 onRequestDownload = viewModel::requestAsrDownloadConfirm,
                 onRequestInstallHashMismatch = viewModel::requestInstallHashMismatchModel,
                 onCheckModelUpdate = viewModel::checkAsrModelUpdate,
-                onCancelDownload = { viewModel.cancelAsrDownload(it) },
+                onCancelDownload = { viewModel.cancelAsrDownload(ctx) },
                 onDeleteModel = viewModel::deleteAsrModel
             )
         }
@@ -302,34 +312,65 @@ private fun RealtimePerformanceSection(
     onModeSelected: (String) -> Unit,
     onLowBatteryProtectionChanged: (Boolean) -> Unit
 ) {
-    val options = listOf(
-        "OFF" to ("关闭" to "录音中不做实时转写和滚动总结，停止后完整处理"),
-        "POWER_SAVE" to ("省电" to "保留实时转写，降低滚动总结频率"),
-        "BALANCED" to ("平衡" to "默认实时转写和滚动总结频率"),
-        "FAST" to ("快速" to "更频繁更新滚动总结，耗电更高")
-    )
+    val options = remember {
+        listOf(
+            "OFF" to ("关闭" to "录音中不做实时转写和滚动总结，停止后完整处理"),
+            "POWER_SAVE" to ("省电" to "保留实时转写，降低滚动总结频率"),
+            "BALANCED" to ("平衡" to "默认实时转写和滚动总结频率"),
+            "FAST" to ("快速" to "更频繁更新滚动总结，耗电更高")
+        )
+    }
+    val selected = options.firstOrNull { it.first == mode } ?: options.first { it.first == "BALANCED" }
+    var expanded by remember { mutableStateOf(false) }
     Card(modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp)) {
-        Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
             Text("实时处理性能", style = MaterialTheme.typography.titleMedium)
-            options.forEach { (value, label) ->
-                Row(
+            ExposedDropdownMenuBox(
+                expanded = expanded,
+                onExpandedChange = { expanded = it }
+            ) {
+                OutlinedTextField(
+                    value = selected.second.first,
+                    onValueChange = {},
+                    readOnly = true,
+                    label = { Text("处理模式") },
+                    trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded) },
                     modifier = Modifier
                         .fillMaxWidth()
-                        .clickable { onModeSelected(value) }
-                        .padding(vertical = 2.dp),
-                    verticalAlignment = Alignment.CenterVertically
+                        .menuAnchor(ExposedDropdownMenuAnchorType.PrimaryNotEditable, true)
+                )
+                ExposedDropdownMenu(
+                    expanded = expanded,
+                    onDismissRequest = { expanded = false }
                 ) {
-                    RadioButton(selected = mode == value, onClick = { onModeSelected(value) })
-                    Column(modifier = Modifier.padding(start = 8.dp)) {
-                        Text(label.first, style = MaterialTheme.typography.bodyMedium)
-                        Text(
-                            label.second,
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                    options.forEach { (value, label) ->
+                        DropdownMenuItem(
+                            text = {
+                                Column {
+                                    Text(label.first, fontWeight = FontWeight.Medium)
+                                    Text(
+                                        label.second,
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                }
+                            },
+                            onClick = {
+                                expanded = false
+                                onModeSelected(value)
+                            },
+                            trailingIcon = if (mode == value) {
+                                { Icon(Icons.Filled.Check, null) }
+                            } else null
                         )
                     }
                 }
             }
+            Text(
+                selected.second.second,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Column(modifier = Modifier.weight(1f)) {
                     Text("低电量保护", style = MaterialTheme.typography.bodyMedium)
@@ -685,28 +726,10 @@ fun ReasoningEffortSelector(current: String, onSelected: (String) -> Unit) {
 }
 
 @Composable
-fun AsrEngineSection(
+fun AsrEngineSelectorCard(
     engineType: String,
-    modelStatus: AsrModelManager.ModelStatus,
-    selectedModelId: String,
-    localModels: List<LocalAsrModelSpec>,
-    modelUpdateCheck: AsrModelManager.ModelUpdateCheck?,
-    modelUpdateChecking: Boolean,
-    mirrorIndex: Int,
-    mirrorOptions: List<String>,
-    nativeLibReady: Boolean,
-    localConcurrency: Int,
-    onEngineSelected: (String) -> Unit,
-    onModelSelected: (String) -> Unit,
-    onMirrorSelected: (Int) -> Unit,
-    onConcurrencyChanged: (Int) -> Unit,
-    onRequestDownload: () -> Unit,
-    onRequestInstallHashMismatch: () -> Unit,
-    onCheckModelUpdate: () -> Unit,
-    onCancelDownload: (android.content.Context) -> Unit,
-    onDeleteModel: () -> Unit
+    onEngineSelected: (String) -> Unit
 ) {
-    val ctx = LocalContext.current
     val isLocal = AsrEngineType.parse(engineType).isLocal()
 
     Card(modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp)) {
@@ -725,32 +748,25 @@ fun AsrEngineSection(
                 selected = isLocal,
                 onSelected = { onEngineSelected(AsrEngineType.LOCAL_SENSE_VOICE.name) }
             )
+        }
+    }
+}
 
-            if (isLocal) {
-                Spacer(Modifier.height(4.dp))
-                NativeLibStatusRow(nativeLibReady)
-                LocalModelPicker(
-                    models = localModels,
-                    selectedModelId = selectedModelId,
-                    onSelected = onModelSelected
-                )
-                LocalModelStatusBlock(
-                    status = modelStatus,
-                    model = AsrModelUrls.modelById(selectedModelId),
-                    updateCheck = modelUpdateCheck,
-                    updateChecking = modelUpdateChecking,
-                    mirrorIndex = mirrorIndex,
-                    mirrorOptions = mirrorOptions,
-                    localConcurrency = localConcurrency,
-                    onMirrorSelected = onMirrorSelected,
-                    onConcurrencyChanged = onConcurrencyChanged,
-                    onRequestDownload = onRequestDownload,
-                    onRequestInstallHashMismatch = onRequestInstallHashMismatch,
-                    onCheckModelUpdate = onCheckModelUpdate,
-                    onCancelDownload = { onCancelDownload(ctx) },
-                    onDeleteModel = onDeleteModel
-                )
-            }
+@Composable
+fun LocalAsrModelCard(
+    nativeLibReady: Boolean,
+    localModels: List<LocalAsrModelSpec>,
+    selectedModelId: String,
+    onModelSelected: (String) -> Unit
+) {
+    Card(modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp)) {
+        Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            NativeLibStatusRow(nativeLibReady)
+            LocalModelPicker(
+                models = localModels,
+                selectedModelId = selectedModelId,
+                onSelected = onModelSelected
+            )
         }
     }
 }
@@ -829,15 +845,18 @@ private fun LocalModelPicker(
 
 @Composable
 private fun LocalModelStatusBlock(
+    modifier: Modifier = Modifier,
     status: AsrModelManager.ModelStatus,
     model: LocalAsrModelSpec,
     updateCheck: AsrModelManager.ModelUpdateCheck?,
     updateChecking: Boolean,
+    bundledAssetsAvailable: Boolean,
     mirrorIndex: Int,
     mirrorOptions: List<String>,
     localConcurrency: Int,
     onMirrorSelected: (Int) -> Unit,
     onConcurrencyChanged: (Int) -> Unit,
+    onInstallBundledModel: () -> Unit,
     onRequestDownload: () -> Unit,
     onRequestInstallHashMismatch: () -> Unit,
     onCheckModelUpdate: () -> Unit,
@@ -845,7 +864,7 @@ private fun LocalModelStatusBlock(
     onDeleteModel: () -> Unit
 ) {
     Card(
-        modifier = Modifier.fillMaxWidth(),
+        modifier = modifier.fillMaxWidth(),
         colors = androidx.compose.material3.CardDefaults.cardColors(
             containerColor = MaterialTheme.colorScheme.surfaceVariant
         )
@@ -855,12 +874,24 @@ private fun LocalModelStatusBlock(
                 AsrModelManager.ModelStatus.NotDownloaded -> {
                     Text("模型未下载", style = MaterialTheme.typography.bodyMedium)
                     Text(
-                        "首次启用 ${model.displayName} 前需要下载约 ${model.sizeLabel} 的压缩包。",
+                        "首次启用 ${model.displayName} 前需要安装模型文件。",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
-                    MirrorPicker(mirrorIndex, mirrorOptions, onMirrorSelected)
-                    Button(onClick = onRequestDownload) { Text("下载模型（约 ${model.sizeLabel}）") }
+                    if (bundledAssetsAvailable) {
+                        Text(
+                            "当前 APK 已内置该模型，安装会复制约 ${model.sizeLabel} 到本机存储；复制期间可能占用较多 I/O，建议空闲时操作。",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Button(onClick = onInstallBundledModel) { Text("安装内置模型") }
+                            OutlinedButton(onClick = onRequestDownload) { Text("从网络下载") }
+                        }
+                    } else {
+                        MirrorPicker(mirrorIndex, mirrorOptions, onMirrorSelected)
+                        Button(onClick = onRequestDownload) { Text("下载模型（约 ${model.sizeLabel}）") }
+                    }
                 }
                 is AsrModelManager.ModelStatus.Downloading -> {
                     Text("下载中：${(status.progress * 100).toInt()}%", style = MaterialTheme.typography.bodyMedium)

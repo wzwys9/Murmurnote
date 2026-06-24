@@ -14,6 +14,8 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.yield
 import okhttp3.OkHttpClient
@@ -77,6 +79,7 @@ class AsrModelManager @Inject constructor(
     private val _status = MutableStateFlow<ModelStatus>(ModelStatus.NotDownloaded)
     val status: Flow<ModelStatus> = _status.asStateFlow()
 
+    private val bundledInstallMutex = Mutex()
     @Volatile private var cancelRequested = false
     @Volatile private var selectedModelId: String = AsrModelUrls.DEFAULT_MODEL_ID
 
@@ -144,7 +147,7 @@ class AsrModelManager @Inject constructor(
     }
 
     /** 重新计算并广播状态。UI 进入设置页或下载完成后调一次。 */
-    suspend fun refreshStatus() {
+    suspend fun refreshStatus() = withContext(Dispatchers.IO) {
         syncSelectedModelFromPreferences()
         val s = computeStatus()
         _status.value = s
@@ -291,76 +294,78 @@ class AsrModelManager @Inject constructor(
 
     /**
      * 如果 assets 里预置了模型且 filesDir 里还没有，从 assets 拷过来。
-     * 调用方：MurmurnoteApplication.onCreate（启动后台任务）+ SettingsViewModel.init（进设置页时主动拷）。
+     * 这个过程可能写入数百 MB 到 1GB，不在启动或进入设置页时自动触发，只响应用户显式安装。
      *
      * sherpa-onnx 加载模型只接受文件路径，不直接读 assets，所以必须有这一步一次性物理化。
      * 拷贝完写 prefs 标志，下次启动直接跳过；用户点"删除模型"时把标志清掉，下次再装回来。
      */
-    suspend fun installBundledModelIfNeeded(): Boolean = withContext(Dispatchers.IO) {
-        syncSelectedModelFromPreferences()
-        if (isModelReady()) return@withContext true
-        val model = selectedModel()
-        val am = context.assets
-        val assetRoot = model.assetRoot
-        val assetEntries = runCatching { listAssetFiles(assetRoot) }
-            .getOrElse { emptyList() }
-        if (assetEntries.isEmpty()) {
-            logger.d("ModelMgr", "no bundled model in assets/$assetRoot")
-            return@withContext false
-        }
-        logger.i("ModelMgr", "installing bundled model from assets, ${assetEntries.size} files")
-        val outDir = modelDir(model).apply {
-            deleteRecursively()
-            mkdirs()
-        }
-        // 估总大小做进度条；assets 拷不出 totalBytes，逐文件拷 + 用文件序号当 rough 进度。
-        var done = 0
-        val total = assetEntries.size
-        for (relativePath in assetEntries) {
-            if (cancelRequested) throw CancellationException("安装已取消")
-            val target = File(outDir, relativePath)
-            target.parentFile?.mkdirs()
-            if (target.exists()) target.delete()
-            am.open("$assetRoot/$relativePath").use { input ->
-                FileOutputStream(target).use { out ->
-                    val buf = ByteArray(256 * 1024)
-                    var written = 0L
-                    while (true) {
-                        val n = input.read(buf)
-                        if (n <= 0) break
-                        out.write(buf, 0, n)
-                        written += n
-                        // 节流上报：每 2MB 一次
-                        if ((written and ((1L shl 21) - 1)) == 0L) {
-                            val rough = (done + 0.5f) / total
-                            _status.value = ModelStatus.Extracting(0.85f + rough * 0.15f)
-                            yield()
+    suspend fun installBundledModelIfNeeded(): Boolean = bundledInstallMutex.withLock {
+        withContext(Dispatchers.IO) {
+            syncSelectedModelFromPreferences()
+            if (isModelReady()) return@withContext true
+            val model = selectedModel()
+            val am = context.assets
+            val assetRoot = model.assetRoot
+            val assetEntries = runCatching { listAssetFiles(assetRoot) }
+                .getOrElse { emptyList() }
+            if (assetEntries.isEmpty()) {
+                logger.d("ModelMgr", "no bundled model in assets/$assetRoot")
+                return@withContext false
+            }
+            logger.i("ModelMgr", "installing bundled model from assets, ${assetEntries.size} files")
+            val outDir = modelDir(model).apply {
+                deleteRecursively()
+                mkdirs()
+            }
+            // 估总大小做进度条；assets 拷不出 totalBytes，逐文件拷 + 用文件序号当 rough 进度。
+            var done = 0
+            val total = assetEntries.size
+            for (relativePath in assetEntries) {
+                if (cancelRequested) throw CancellationException("安装已取消")
+                val target = File(outDir, relativePath)
+                target.parentFile?.mkdirs()
+                if (target.exists()) target.delete()
+                am.open("$assetRoot/$relativePath").use { input ->
+                    FileOutputStream(target).use { out ->
+                        val buf = ByteArray(256 * 1024)
+                        var written = 0L
+                        while (true) {
+                            val n = input.read(buf)
+                            if (n <= 0) break
+                            out.write(buf, 0, n)
+                            written += n
+                            // 节流上报：每 2MB 一次
+                            if ((written and ((1L shl 21) - 1)) == 0L) {
+                                val rough = (done + 0.5f) / total
+                                _status.value = ModelStatus.Extracting(0.85f + rough * 0.15f)
+                                yield()
+                            }
                         }
                     }
                 }
+                done++
+                val rough = done.toFloat() / total
+                _status.value = ModelStatus.Extracting(0.85f + rough * 0.15f)
+                logger.i("ModelMgr", "asset → ${target.relativeTo(outDir).path} size=${target.length()}")
             }
-            done++
-            val rough = done.toFloat() / total
-            _status.value = ModelStatus.Extracting(0.85f + rough * 0.15f)
-            logger.i("ModelMgr", "asset → ${target.relativeTo(outDir).path} size=${target.length()}")
+            deleteNonRuntimeModelFiles(outDir)
+            if (!isModelReady()) {
+                val msg = "assets 拷贝完成但文件大小异常"
+                _status.value = ModelStatus.Corrupted(msg)
+                logger.e("ModelMgr", msg, null)
+                return@withContext false
+            }
+            writeInstallInfo(model, source = "bundled")
+            appPreferences.setAsrBundledInstalled(true)
+            refreshStatus()
+            logger.i("ModelMgr", "bundled model install done")
+            true
         }
-        deleteNonRuntimeModelFiles(outDir)
-        if (!isModelReady()) {
-            val msg = "assets 拷贝完成但文件大小异常"
-            _status.value = ModelStatus.Corrupted(msg)
-            logger.e("ModelMgr", msg, null)
-            return@withContext false
-        }
-        writeInstallInfo(model, source = "bundled")
-        appPreferences.setAsrBundledInstalled(true)
-        refreshStatus()
-        logger.i("ModelMgr", "bundled model install done")
-        true
     }
 
     /** 是否在 assets 里塞了内置模型；UI 用来决定要不要显示"下载模型"按钮。 */
-    fun hasBundledAssets(): Boolean = runCatching {
-        context.assets.list(selectedModel().assetRoot)?.isNotEmpty() == true
+    fun hasBundledAssets(model: LocalAsrModelSpec = selectedModel()): Boolean = runCatching {
+        context.assets.list(model.assetRoot)?.isNotEmpty() == true
     }.getOrDefault(false)
 
     private suspend fun syncSelectedModelFromPreferences() {
