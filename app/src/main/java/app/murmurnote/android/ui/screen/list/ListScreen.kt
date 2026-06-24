@@ -10,15 +10,24 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material3.Card
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.FilterChip
+import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -28,6 +37,8 @@ import app.murmurnote.android.data.local.entity.ProcessingStatus
 import app.murmurnote.android.data.local.entity.Recording
 import app.murmurnote.android.util.formatDurationMs
 import app.murmurnote.android.util.formatTimestampFull
+
+private const val MAX_VISIBLE_FILTER_TAGS = 4
 
 @Composable
 fun ListScreen(
@@ -98,18 +109,58 @@ private fun RecordingFilterBar(
     onToggleArchived: () -> Unit
 ) {
     Column(modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp)) {
+        val visibleTags = allTags.take(MAX_VISIBLE_FILTER_TAGS)
+        val overflowTags = allTags.drop(MAX_VISIBLE_FILTER_TAGS)
+        val selectedOverflowTag = selectedTag?.takeIf { it in overflowTags }
+        var tagMenuExpanded by remember(allTags) { mutableStateOf(false) }
         FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             FilterChip(
                 selected = selectedTag == null,
                 onClick = { onSelectTag(null) },
                 label = { Text("全部标签") }
             )
-            allTags.forEach { tag ->
+            visibleTags.forEach { tag ->
                 FilterChip(
                     selected = selectedTag == tag,
                     onClick = { onSelectTag(tag) },
                     label = { Text(tag) }
                 )
+            }
+            if (overflowTags.isNotEmpty()) {
+                Box {
+                    FilterChip(
+                        selected = selectedOverflowTag != null,
+                        onClick = { tagMenuExpanded = true },
+                        label = {
+                            Text(
+                                selectedOverflowTag ?: "更多 ${overflowTags.size}",
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                        },
+                        trailingIcon = {
+                            Icon(
+                                Icons.Filled.ExpandMore,
+                                contentDescription = null,
+                                modifier = Modifier.size(18.dp)
+                            )
+                        }
+                    )
+                    DropdownMenu(
+                        expanded = tagMenuExpanded,
+                        onDismissRequest = { tagMenuExpanded = false }
+                    ) {
+                        overflowTags.forEach { tag ->
+                            DropdownMenuItem(
+                                text = { Text(tag) },
+                                onClick = {
+                                    tagMenuExpanded = false
+                                    onSelectTag(tag)
+                                }
+                            )
+                        }
+                    }
+                }
             }
         }
         TextButton(onClick = onToggleArchived) {
