@@ -36,6 +36,10 @@ android {
             "String", "OLLAMA_API_KEY",
             "\"${localProperties.getProperty("OLLAMA_API_KEY", "")}\""
         )
+        buildConfigField(
+            "String", "LLM_API_KEY",
+            "\"${localProperties.getProperty("LLM_API_KEY", localProperties.getProperty("OLLAMA_API_KEY", ""))}\""
+        )
     }
 
     buildTypes {

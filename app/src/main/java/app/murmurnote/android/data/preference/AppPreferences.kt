@@ -12,6 +12,7 @@ import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
+import java.util.Locale
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -23,8 +24,8 @@ class AppPreferences @Inject constructor(
 ) {
     private object Keys {
         val GLM_API_KEY = stringPreferencesKey("glm_api_key")
-        // Legacy key names are kept so existing installs retain their saved LLM settings.
-        val OLLAMA_API_KEY = stringPreferencesKey("ollama_api_key")
+        // Legacy DataStore key kept so existing installs retain their saved LLM settings.
+        val LEGACY_LLM_API_KEY = stringPreferencesKey("ollama_api_key")
         val LLM_PROVIDER = stringPreferencesKey("llm_provider")
         val OLLAMA_MODEL = stringPreferencesKey("ollama_model")
         val REASONING_EFFORT = stringPreferencesKey("reasoning_effort")
@@ -46,6 +47,9 @@ class AppPreferences @Inject constructor(
         val LOW_BATTERY_PROTECTION = booleanPreferencesKey("low_battery_protection")
     }
 
+    private fun llmApiKeyFor(provider: LlmProvider) =
+        stringPreferencesKey("llm_api_key_${provider.name.lowercase(Locale.US)}")
+
     // 关键：用 contains 判断"用户是否显式设置过"，而不是用 isNotBlank。
     // 否则用户删空保存的空串会被当作"未设置"，立刻被 BuildConfig 兜底值覆盖。
     val glmApiKey: Flow<String> = context.dataStore.data.map { prefs ->
@@ -54,8 +58,13 @@ class AppPreferences @Inject constructor(
     }
 
     val llmApiKey: Flow<String> = context.dataStore.data.map { prefs ->
-        if (prefs.contains(Keys.OLLAMA_API_KEY)) prefs[Keys.OLLAMA_API_KEY].orEmpty()
-        else BuildConfig.OLLAMA_API_KEY.orEmpty()
+        val provider = LlmProvider.parse(prefs[Keys.LLM_PROVIDER])
+        val providerKey = llmApiKeyFor(provider)
+        when {
+            prefs.contains(providerKey) -> prefs[providerKey].orEmpty()
+            prefs.contains(Keys.LEGACY_LLM_API_KEY) -> prefs[Keys.LEGACY_LLM_API_KEY].orEmpty()
+            else -> BuildConfig.LLM_API_KEY.orEmpty()
+        }
     }
 
     val llmProvider: Flow<String> = context.dataStore.data.map {
@@ -135,8 +144,19 @@ class AppPreferences @Inject constructor(
     }
 
     suspend fun setGlmApiKey(key: String) = context.dataStore.edit { it[Keys.GLM_API_KEY] = key.trim() }
-    suspend fun setLlmApiKey(key: String) = context.dataStore.edit { it[Keys.OLLAMA_API_KEY] = key.trim() }
+    suspend fun setLlmApiKey(key: String) {
+        val provider = LlmProvider.parse(context.dataStore.data.first()[Keys.LLM_PROVIDER])
+        context.dataStore.edit { it[llmApiKeyFor(provider)] = key.trim() }
+    }
     suspend fun setLlmProvider(provider: LlmProvider) = context.dataStore.edit {
+        if (it.contains(Keys.LEGACY_LLM_API_KEY)) {
+            val previousProvider = LlmProvider.parse(it[Keys.LLM_PROVIDER])
+            val previousProviderKey = llmApiKeyFor(previousProvider)
+            if (!it.contains(previousProviderKey)) {
+                it[previousProviderKey] = it[Keys.LEGACY_LLM_API_KEY].orEmpty()
+            }
+            it.remove(Keys.LEGACY_LLM_API_KEY)
+        }
         it[Keys.LLM_PROVIDER] = provider.name
         it[Keys.OLLAMA_BASE_URL] = provider.defaultBaseUrl
         it.remove(Keys.OLLAMA_MODEL)
