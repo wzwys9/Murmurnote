@@ -19,6 +19,7 @@ import kotlinx.coroutines.yield
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.Response
+import org.json.JSONObject
 import org.apache.commons.compress.archivers.tar.TarArchiveInputStream
 import org.apache.commons.compress.compressors.bzip2.BZip2CompressorInputStream
 import java.io.File
@@ -66,6 +67,13 @@ class AsrModelManager @Inject constructor(
         data class Failed(val message: String) : ModelStatus()
     }
 
+    sealed class ModelUpdateCheck {
+        data object NotInstalled : ModelUpdateCheck()
+        data class UpToDate(val message: String) : ModelUpdateCheck()
+        data class UpdateAvailable(val message: String) : ModelUpdateCheck()
+        data class UnableToCheck(val message: String) : ModelUpdateCheck()
+    }
+
     private val _status = MutableStateFlow<ModelStatus>(ModelStatus.NotDownloaded)
     val status: Flow<ModelStatus> = _status.asStateFlow()
 
@@ -97,6 +105,8 @@ class AsrModelManager @Inject constructor(
     private fun modelDir(model: LocalAsrModelSpec): File = File(context.filesDir, "asr_models/${model.id}").apply { mkdirs() }
     private fun rootDir(): File = File(context.filesDir, "asr_models").apply { mkdirs() }
     private fun tarballFile(model: LocalAsrModelSpec = selectedModel()): File = File(rootDir(), model.partialFileName)
+    private fun installInfoFile(model: LocalAsrModelSpec = selectedModel()): File =
+        File(modelDir(model), "murmurnote_model_info.json")
 
     /**
      * 同步算一次"当前模型在不在"。AsrEngineProvider / LocalAsrEngine 调用，不写状态流。
@@ -148,6 +158,43 @@ class AsrModelManager @Inject constructor(
         }
         // 已部分下载到 tarball 但还没解压成功 → 视为 NotDownloaded（用户继续点下载会断点续）
         return ModelStatus.NotDownloaded
+    }
+
+    suspend fun checkForUpdate(): ModelUpdateCheck = withContext(Dispatchers.IO) {
+        syncSelectedModelFromPreferences()
+        val model = selectedModel()
+        if (!isModelReady(model)) return@withContext ModelUpdateCheck.NotInstalled
+
+        val installInfo = readInstallInfo(model)
+        val adoptedExistingModel = installInfo == null
+        if (installInfo != null && !installInfoMatches(model, installInfo)) {
+            return@withContext ModelUpdateCheck.UpdateAvailable(
+                "当前 App 内置的 ${model.displayName} 下载配置已更新，可下载更新。"
+            )
+        }
+        if (adoptedExistingModel) {
+            writeInstallInfo(model, source = "adopted")
+        }
+
+        val remoteInfo = runCatching { fetchRemoteTarballInfo(model) }
+        remoteInfo
+            .onSuccess { info ->
+                val remoteBytes = info.contentLength
+                if (remoteBytes != null && remoteBytes > 0L && remoteBytes != model.tarballBytes) {
+                    return@withContext ModelUpdateCheck.UnableToCheck(
+                        "远端模型包大小与当前内置校验信息不一致，建议先更新 App 后再下载。"
+                    )
+                }
+            }
+            .onFailure { e ->
+                logger.w("ModelMgr", "check update remote probe failed: ${e.message}")
+                return@withContext ModelUpdateCheck.UnableToCheck(
+                    "本地模型可用；联网检查失败：${e.message ?: e.javaClass.simpleName}"
+                )
+            }
+
+        val prefix = if (adoptedExistingModel) "模型已就绪，并已记录当前版本。" else "已是当前 App 内置的最新模型。"
+        ModelUpdateCheck.UpToDate(prefix)
     }
 
     /** 用户点下载触发。挂起完成后再观察 status 拿最终结果。 */
@@ -220,6 +267,7 @@ class AsrModelManager @Inject constructor(
             _status.value = ModelStatus.Corrupted(msg)
             error(msg)
         }
+        writeInstallInfo(model, source = "download")
         tarball.delete()
     }
 
@@ -303,6 +351,7 @@ class AsrModelManager @Inject constructor(
             logger.e("ModelMgr", msg, null)
             return@withContext false
         }
+        writeInstallInfo(model, source = "bundled")
         appPreferences.setAsrBundledInstalled(true)
         refreshStatus()
         logger.i("ModelMgr", "bundled model install done")
@@ -317,6 +366,61 @@ class AsrModelManager @Inject constructor(
     private suspend fun syncSelectedModelFromPreferences() {
         selectedModelId = AsrModelUrls.modelById(appPreferences.asrLocalModelId.first()).id
     }
+
+    private data class RemoteTarballInfo(
+        val contentLength: Long?,
+        val etag: String?,
+        val lastModified: String?
+    )
+
+    private fun fetchRemoteTarballInfo(model: LocalAsrModelSpec): RemoteTarballInfo {
+        val request = Request.Builder()
+            .url(model.tarballUrl)
+            .head()
+            .build()
+        okHttpClient.newCall(request).execute().use { resp ->
+            if (!resp.isSuccessful) throw IOException("HTTP ${resp.code}")
+            return RemoteTarballInfo(
+                contentLength = resp.header("Content-Length")?.toLongOrNull()
+                    ?: resp.body?.contentLength()?.takeIf { it > 0L },
+                etag = resp.header("ETag"),
+                lastModified = resp.header("Last-Modified")
+            )
+        }
+    }
+
+    private fun writeInstallInfo(model: LocalAsrModelSpec, source: String) {
+        runCatching {
+            val json = JSONObject()
+                .put("schema", 1)
+                .put("modelId", model.id)
+                .put("displayName", model.displayName)
+                .put("tarballUrl", model.tarballUrl)
+                .put("tarballTopDir", model.tarballTopDir)
+                .put("tarballBytes", model.tarballBytes)
+                .put("tarballSha256", model.tarballSha256)
+                .put("source", source)
+                .put("installedAt", System.currentTimeMillis())
+            installInfoFile(model).writeText(json.toString(2))
+        }.onFailure { e ->
+            logger.w("ModelMgr", "failed to write model install info: ${e.message}")
+        }
+    }
+
+    private fun readInstallInfo(model: LocalAsrModelSpec): JSONObject? =
+        runCatching {
+            val f = installInfoFile(model)
+            if (!f.exists()) null else JSONObject(f.readText())
+        }.onFailure { e ->
+            logger.w("ModelMgr", "failed to read model install info: ${e.message}")
+        }.getOrNull()
+
+    private fun installInfoMatches(model: LocalAsrModelSpec, info: JSONObject): Boolean =
+        info.optString("modelId") == model.id &&
+            info.optString("tarballUrl") == model.tarballUrl &&
+            info.optString("tarballTopDir") == model.tarballTopDir &&
+            info.optLong("tarballBytes") == model.tarballBytes &&
+            info.optString("tarballSha256").equals(model.tarballSha256, ignoreCase = true)
 
     // -------------------- 下载实现 --------------------
 

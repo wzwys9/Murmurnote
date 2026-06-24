@@ -64,6 +64,9 @@ fun HomeScreen(
 ) {
     val state by viewModel.uiState.collectAsStateWithLifecycle()
     val context = LocalContext.current
+    val hasActiveProcessingQueue = state.processingQueue.any {
+        it.status == ProcessingQueueStatus.WAITING || it.status == ProcessingQueueStatus.RUNNING
+    }
 
     val recordPermLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.RequestPermission()
@@ -202,7 +205,7 @@ fun HomeScreen(
                 )
             }
 
-            if (state.processingQueue.isNotEmpty()) {
+            if (hasActiveProcessingQueue) {
                 Spacer(Modifier.height(12.dp))
                 ProcessingQueueCard(
                     entries = state.processingQueue,
@@ -414,7 +417,13 @@ private fun PipelineProgressCard(stage: PipelineStage, onDismiss: () -> Unit) {
             }
             if (detail.isNotBlank()) {
                 Spacer(Modifier.height(4.dp))
-                Text(detail, style = MaterialTheme.typography.bodySmall, color = onColor)
+                Text(
+                    detail,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = onColor,
+                    maxLines = 3,
+                    overflow = TextOverflow.Ellipsis
+                )
             }
             if (fraction != null) {
                 Spacer(Modifier.height(8.dp))
@@ -454,8 +463,7 @@ private fun describe(s: PipelineStage): StageDescription = when (s) {
     )
     is PipelineStage.Transcribing -> StageDescription(
         "3/4 转写中",
-        "第 ${s.segmentIndex + 1}/${s.totalSegments} 段 · 已识别 ${s.partialText.length} 字\n" +
-            (s.partialText.takeLast(60).ifBlank { "(等待 GLM-ASR 流式返回…)" }),
+        "第 ${s.segmentIndex + 1}/${s.totalSegments} 段 · 已识别 ${s.partialText.length} 字\n正在流式转写，处理结果会保存到列表。",
         if (s.totalSegments > 0) (s.segmentIndex + 1).toFloat() / s.totalSegments else null,
         false, false
     )

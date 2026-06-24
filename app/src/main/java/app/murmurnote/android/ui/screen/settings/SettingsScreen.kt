@@ -157,6 +157,8 @@ fun SettingsScreen(
                 modelStatus = state.asrModelStatus,
                 selectedModelId = state.asrLocalModelId,
                 localModels = state.asrLocalModels,
+                modelUpdateCheck = state.asrModelUpdateCheck,
+                modelUpdateChecking = state.asrModelUpdateChecking,
                 mirrorIndex = state.asrMirrorIndex,
                 mirrorOptions = state.asrMirrorOptions,
                 nativeLibReady = state.asrNativeLibReady,
@@ -167,6 +169,7 @@ fun SettingsScreen(
                 onConcurrencyChanged = viewModel::setAsrLocalConcurrency,
                 onRequestDownload = viewModel::requestAsrDownloadConfirm,
                 onRequestInstallHashMismatch = viewModel::requestInstallHashMismatchModel,
+                onCheckModelUpdate = viewModel::checkAsrModelUpdate,
                 onCancelDownload = { viewModel.cancelAsrDownload(it) },
                 onDeleteModel = viewModel::deleteAsrModel
             )
@@ -633,6 +636,8 @@ fun AsrEngineSection(
     modelStatus: AsrModelManager.ModelStatus,
     selectedModelId: String,
     localModels: List<LocalAsrModelSpec>,
+    modelUpdateCheck: AsrModelManager.ModelUpdateCheck?,
+    modelUpdateChecking: Boolean,
     mirrorIndex: Int,
     mirrorOptions: List<String>,
     nativeLibReady: Boolean,
@@ -643,6 +648,7 @@ fun AsrEngineSection(
     onConcurrencyChanged: (Int) -> Unit,
     onRequestDownload: () -> Unit,
     onRequestInstallHashMismatch: () -> Unit,
+    onCheckModelUpdate: () -> Unit,
     onCancelDownload: (android.content.Context) -> Unit,
     onDeleteModel: () -> Unit
 ) {
@@ -677,6 +683,8 @@ fun AsrEngineSection(
                 LocalModelStatusBlock(
                     status = modelStatus,
                     model = AsrModelUrls.modelById(selectedModelId),
+                    updateCheck = modelUpdateCheck,
+                    updateChecking = modelUpdateChecking,
                     mirrorIndex = mirrorIndex,
                     mirrorOptions = mirrorOptions,
                     localConcurrency = localConcurrency,
@@ -684,6 +692,7 @@ fun AsrEngineSection(
                     onConcurrencyChanged = onConcurrencyChanged,
                     onRequestDownload = onRequestDownload,
                     onRequestInstallHashMismatch = onRequestInstallHashMismatch,
+                    onCheckModelUpdate = onCheckModelUpdate,
                     onCancelDownload = { onCancelDownload(ctx) },
                     onDeleteModel = onDeleteModel
                 )
@@ -768,6 +777,8 @@ private fun LocalModelPicker(
 private fun LocalModelStatusBlock(
     status: AsrModelManager.ModelStatus,
     model: LocalAsrModelSpec,
+    updateCheck: AsrModelManager.ModelUpdateCheck?,
+    updateChecking: Boolean,
     mirrorIndex: Int,
     mirrorOptions: List<String>,
     localConcurrency: Int,
@@ -775,6 +786,7 @@ private fun LocalModelStatusBlock(
     onConcurrencyChanged: (Int) -> Unit,
     onRequestDownload: () -> Unit,
     onRequestInstallHashMismatch: () -> Unit,
+    onCheckModelUpdate: () -> Unit,
     onCancelDownload: () -> Unit,
     onDeleteModel: () -> Unit
 ) {
@@ -840,7 +852,25 @@ private fun LocalModelStatusBlock(
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                     }
-                    OutlinedButton(onClick = onDeleteModel) { Text("删除模型") }
+                    ModelUpdateCheckResult(updateCheck)
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        OutlinedButton(
+                            onClick = onCheckModelUpdate,
+                            enabled = !updateChecking
+                        ) {
+                            if (updateChecking) {
+                                CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp)
+                            } else {
+                                Icon(Icons.Filled.Refresh, contentDescription = null, modifier = Modifier.size(18.dp))
+                            }
+                            Spacer(Modifier.width(6.dp))
+                            Text(if (updateChecking) "检测中…" else "检测更新")
+                        }
+                        OutlinedButton(onClick = onDeleteModel) { Text("删除模型") }
+                    }
+                    if (updateCheck is AsrModelManager.ModelUpdateCheck.UpdateAvailable) {
+                        Button(onClick = onRequestDownload) { Text("下载更新") }
+                    }
                 }
                 is AsrModelManager.ModelStatus.HashMismatch -> {
                     Text("✗ 模型校验不匹配", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.error)
@@ -879,6 +909,26 @@ private fun LocalModelStatusBlock(
             }
         }
     }
+}
+
+@Composable
+private fun ModelUpdateCheckResult(result: AsrModelManager.ModelUpdateCheck?) {
+    if (result == null) return
+    val (text, color) = when (result) {
+        AsrModelManager.ModelUpdateCheck.NotInstalled ->
+            "模型尚未安装，下载后再检测更新。" to MaterialTheme.colorScheme.onSurfaceVariant
+        is AsrModelManager.ModelUpdateCheck.UpToDate ->
+            result.message to Color(0xFF4CAF50)
+        is AsrModelManager.ModelUpdateCheck.UpdateAvailable ->
+            result.message to MaterialTheme.colorScheme.primary
+        is AsrModelManager.ModelUpdateCheck.UnableToCheck ->
+            result.message to MaterialTheme.colorScheme.error
+    }
+    Text(
+        text,
+        style = MaterialTheme.typography.bodySmall,
+        color = color
+    )
 }
 
 @Composable

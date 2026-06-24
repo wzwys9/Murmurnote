@@ -61,6 +61,8 @@ class SettingsViewModel @Inject constructor(
         val asrLocalModelId: String = AsrModelUrls.DEFAULT_MODEL_ID,
         val asrLocalModels: List<LocalAsrModelSpec> = AsrModelUrls.MODELS,
         val asrModelStatus: AsrModelManager.ModelStatus = AsrModelManager.ModelStatus.NotDownloaded,
+        val asrModelUpdateCheck: AsrModelManager.ModelUpdateCheck? = null,
+        val asrModelUpdateChecking: Boolean = false,
         val showAsrDownloadConfirm: Boolean = false,
         val showAsrHashMismatchConfirm: Boolean = false,
         // sherpa-onnx Kotlin/JNI 类是否能加载（即 app/libs/ 下的 AAR 是否打进了 APK）。
@@ -83,13 +85,25 @@ class SettingsViewModel @Inject constructor(
         viewModelScope.launch { appPreferences.llmModel.collect { v -> _uiState.update { it.copy(llmModel = v) } } }
         viewModelScope.launch { appPreferences.reasoningEffort.collect { v -> _uiState.update { it.copy(reasoningEffort = v) } } }
         viewModelScope.launch { appPreferences.asrEngineType.collect { v -> _uiState.update { it.copy(asrEngineType = v) } } }
-        viewModelScope.launch { appPreferences.asrLocalModelId.collect { v -> _uiState.update { it.copy(asrLocalModelId = v) } } }
+        viewModelScope.launch {
+            appPreferences.asrLocalModelId.collect { v ->
+                _uiState.update {
+                    it.copy(
+                        asrLocalModelId = v,
+                        asrModelUpdateCheck = null,
+                        asrModelUpdateChecking = false
+                    )
+                }
+            }
+        }
         viewModelScope.launch { appPreferences.asrDownloadMirrorIndex.collect { v -> _uiState.update { it.copy(asrMirrorIndex = v) } } }
         viewModelScope.launch {
             asrModelManager.status.collect { v ->
                 _uiState.update {
                     it.copy(
                         asrModelStatus = v,
+                        asrModelUpdateCheck = if (v is AsrModelManager.ModelStatus.Ready) it.asrModelUpdateCheck else null,
+                        asrModelUpdateChecking = if (v is AsrModelManager.ModelStatus.Ready) it.asrModelUpdateChecking else false,
                         showAsrHashMismatchConfirm = v is AsrModelManager.ModelStatus.HashMismatch
                     )
                 }
@@ -252,7 +266,7 @@ class SettingsViewModel @Inject constructor(
     }
 
     fun startAsrDownload(activityContext: Context) {
-        _uiState.update { it.copy(showAsrDownloadConfirm = false) }
+        _uiState.update { it.copy(showAsrDownloadConfirm = false, asrModelUpdateCheck = null) }
         logger.i("Settings", "asr download start requested")
         AsrModelDownloadService.start(activityContext)
     }
@@ -282,6 +296,19 @@ class SettingsViewModel @Inject constructor(
 
     fun deleteAsrModel() = viewModelScope.launch {
         logger.i("Settings", "asr model delete requested")
+        _uiState.update { it.copy(asrModelUpdateCheck = null, asrModelUpdateChecking = false) }
         asrModelManager.delete()
+    }
+
+    fun checkAsrModelUpdate() = viewModelScope.launch {
+        if (_uiState.value.asrModelUpdateChecking) return@launch
+        logger.i("Settings", "asr model update check requested")
+        _uiState.update { it.copy(asrModelUpdateChecking = true, asrModelUpdateCheck = null) }
+        val result = runCatching { asrModelManager.checkForUpdate() }
+            .getOrElse { e ->
+                logger.w("Settings", "asr model update check failed: ${e.message}")
+                AsrModelManager.ModelUpdateCheck.UnableToCheck(e.message ?: e.javaClass.simpleName)
+            }
+        _uiState.update { it.copy(asrModelUpdateChecking = false, asrModelUpdateCheck = result) }
     }
 }
