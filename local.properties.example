@@ -1,7 +1,6 @@
-## 复制到 local.properties 后填入真实值
+## 复制到 local.properties 后配置本机 Android SDK 路径
 ## Android SDK 路径（Linux/macOS）
 sdk.dir=/home/USER/Android/Sdk
 
-## API Keys（开发期兜底；运行时优先用设置页里的值）
-GLM_API_KEY=YOUR_ZHIPU_BIGMODEL_KEY
-LLM_API_KEY=YOUR_LLM_PROVIDER_KEY
+## API Keys 不要写在 local.properties 或源码里。
+## 请在 App 的设置页里填写，运行时会保存在本机 DataStore。

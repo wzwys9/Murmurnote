@@ -6,7 +6,6 @@ import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.intPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
-import app.murmurnote.android.BuildConfig
 import app.murmurnote.android.data.remote.llm.LlmProvider
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.flow.Flow
@@ -51,11 +50,8 @@ class AppPreferences @Inject constructor(
     private fun llmApiKeyFor(provider: LlmProvider) =
         stringPreferencesKey("llm_api_key_${provider.name.lowercase(Locale.US)}")
 
-    // 关键：用 contains 判断"用户是否显式设置过"，而不是用 isNotBlank。
-    // 否则用户删空保存的空串会被当作"未设置"，立刻被 BuildConfig 兜底值覆盖。
     val glmApiKey: Flow<String> = context.dataStore.data.map { prefs ->
-        if (prefs.contains(Keys.GLM_API_KEY)) prefs[Keys.GLM_API_KEY].orEmpty()
-        else BuildConfig.GLM_API_KEY.orEmpty()
+        prefs[Keys.GLM_API_KEY].orEmpty()
     }
 
     val llmApiKey: Flow<String> = context.dataStore.data.map { prefs ->
@@ -64,7 +60,7 @@ class AppPreferences @Inject constructor(
         when {
             prefs.contains(providerKey) -> prefs[providerKey].orEmpty()
             prefs.contains(Keys.LEGACY_LLM_API_KEY) -> prefs[Keys.LEGACY_LLM_API_KEY].orEmpty()
-            else -> BuildConfig.LLM_API_KEY.orEmpty()
+            else -> ""
         }
     }
 

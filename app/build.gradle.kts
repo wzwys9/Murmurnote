@@ -1,5 +1,3 @@
-import java.util.Properties
-
 plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.android)
@@ -7,11 +5,6 @@ plugins {
     alias(libs.plugins.kotlin.serialization)
     alias(libs.plugins.ksp)
     alias(libs.plugins.hilt)
-}
-
-val localProperties = Properties().apply {
-    val f = rootProject.file("local.properties")
-    if (f.exists()) load(f.inputStream())
 }
 
 android {
@@ -27,19 +20,6 @@ android {
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables { useSupportLibrary = true }
-
-        buildConfigField(
-            "String", "GLM_API_KEY",
-            "\"${localProperties.getProperty("GLM_API_KEY", "")}\""
-        )
-        buildConfigField(
-            "String", "OLLAMA_API_KEY",
-            "\"${localProperties.getProperty("OLLAMA_API_KEY", "")}\""
-        )
-        buildConfigField(
-            "String", "LLM_API_KEY",
-            "\"${localProperties.getProperty("LLM_API_KEY", localProperties.getProperty("OLLAMA_API_KEY", ""))}\""
-        )
     }
 
     buildTypes {
