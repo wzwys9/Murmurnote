@@ -10,6 +10,7 @@
 local.properties
 /app/build
 /app/release
+/app/src/main/assets/asr_models/
 *.apk
 *.aab
 *.keystore
