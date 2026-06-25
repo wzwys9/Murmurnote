@@ -11,6 +11,11 @@ local.properties
 /app/build
 /app/release
 /app/src/main/assets/asr_models/
+/AGENTS.md
+/CLAUDE.md
+/Murmur_1.zip
+/Murmur_1_extracted/
+/Murmurnote_ClaudeCode_Prompt_v2.md
 *.apk
 *.aab
 *.keystore
