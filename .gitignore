@@ -11,10 +11,12 @@ local.properties
 /app/build
 /app/release
 /app/src/main/assets/asr_models/
+/NOTES.md
 /AGENTS.md
 /CLAUDE.md
 /Murmur_1.zip
 /Murmur_1_extracted/
+/ui-design-reference/
 /Murmurnote_ClaudeCode_Prompt_v2.md
 *.apk
 *.aab
