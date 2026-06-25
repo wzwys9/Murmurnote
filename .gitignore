@@ -22,3 +22,5 @@ local.properties
 *.apk
 *.aab
 *.keystore
+*.jks
+/release-signing.env
