@@ -10,6 +10,8 @@ import app.murmurnote.android.data.asr.AsrModelUrls
 import app.murmurnote.android.data.preference.AppPreferences
 import app.murmurnote.android.data.remote.llm.LlmProvider
 import app.murmurnote.android.data.remote.glm.GlmAsrClient
+import app.murmurnote.android.data.remote.update.AppUpdateChecker
+import app.murmurnote.android.data.remote.update.AppUpdateResult
 import app.murmurnote.android.data.remote.llm.LlmClient
 import app.murmurnote.android.service.AsrModelDownloadService
 import app.murmurnote.android.util.LogExporter
@@ -39,6 +41,7 @@ class SettingsViewModel @Inject constructor(
     private val glmAsrClient: GlmAsrClient,
     private val asrModelManager: AsrModelManager,
     private val localAsrEngine: app.murmurnote.android.data.asr.LocalAsrEngine,
+    private val appUpdateChecker: AppUpdateChecker,
     private val logExporter: LogExporter,
     private val logger: Logger
 ) : ViewModel() {
@@ -79,7 +82,8 @@ class SettingsViewModel @Inject constructor(
         val asrLocalConcurrency: Int = 1,
         val realtimePerformanceMode: String = "BALANCED",
         val lowBatteryProtection: Boolean = true,
-        val aiExtractionEnabled: Boolean = true
+        val aiExtractionEnabled: Boolean = true,
+        val appUpdateStatus: AppUpdateStatus = AppUpdateStatus.Idle
     )
 
     private val _uiState = MutableStateFlow(UiState())
@@ -359,4 +363,34 @@ class SettingsViewModel @Inject constructor(
             }
         _uiState.update { it.copy(asrModelUpdateChecking = false, asrModelUpdateCheck = result) }
     }
+
+    fun checkAppUpdate(currentVersionName: String) = viewModelScope.launch {
+        if (_uiState.value.appUpdateStatus is AppUpdateStatus.Checking) return@launch
+        logger.i("Settings", "app update check requested")
+        _uiState.update { it.copy(appUpdateStatus = AppUpdateStatus.Checking) }
+        val status = runCatching { appUpdateChecker.check(currentVersionName) }
+            .fold(
+                onSuccess = { result ->
+                    when (result) {
+                        is AppUpdateResult.UpToDate ->
+                            AppUpdateStatus.UpToDate(result.latestVersion)
+                        is AppUpdateResult.UpdateAvailable ->
+                            AppUpdateStatus.UpdateAvailable(result.latestVersion, result.releaseUrl)
+                    }
+                },
+                onFailure = { e ->
+                    logger.w("Settings", "app update check failed: ${e.message}")
+                    AppUpdateStatus.Failed(describe(e))
+                }
+            )
+        _uiState.update { it.copy(appUpdateStatus = status) }
+    }
+}
+
+sealed class AppUpdateStatus {
+    data object Idle : AppUpdateStatus()
+    data object Checking : AppUpdateStatus()
+    data class UpToDate(val latestVersion: String) : AppUpdateStatus()
+    data class UpdateAvailable(val latestVersion: String, val releaseUrl: String) : AppUpdateStatus()
+    data class Failed(val message: String) : AppUpdateStatus()
 }

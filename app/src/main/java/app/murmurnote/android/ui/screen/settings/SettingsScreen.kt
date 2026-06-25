@@ -17,6 +17,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.OpenInNew
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.ExpandLess
 import androidx.compose.material.icons.filled.ExpandMore
@@ -254,6 +255,12 @@ fun SettingsScreen(
                 }
             )
         }
+        item {
+            AppUpdateCheckCard(
+                status = state.appUpdateStatus,
+                onCheck = { viewModel.checkAppUpdate(BuildConfig.VERSION_NAME) }
+            )
+        }
 
         item { SettingSectionHeader("日志") }
         item {
@@ -300,6 +307,79 @@ fun SettingsScreen(
                         )
                     }
                 }
+            }
+        }
+    }
+}
+
+@Composable
+private fun AppUpdateCheckCard(
+    status: AppUpdateStatus,
+    onCheck: () -> Unit
+) {
+    val context = LocalContext.current
+    Card(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 16.dp, vertical = 4.dp)
+    ) {
+        Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text("检查更新", style = MaterialTheme.typography.titleMedium)
+                    Text(
+                        "从 GitHub Releases 获取最新版本。",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+                OutlinedButton(
+                    onClick = onCheck,
+                    enabled = status !is AppUpdateStatus.Checking
+                ) {
+                    if (status is AppUpdateStatus.Checking) {
+                        CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp)
+                        Spacer(Modifier.width(6.dp))
+                        Text("检查中…")
+                    } else {
+                        Icon(Icons.Filled.Refresh, contentDescription = null, modifier = Modifier.size(18.dp))
+                        Spacer(Modifier.width(6.dp))
+                        Text("检查")
+                    }
+                }
+            }
+
+            when (status) {
+                AppUpdateStatus.Idle -> Unit
+                AppUpdateStatus.Checking -> Text(
+                    "正在检查最新版本…",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                is AppUpdateStatus.UpToDate -> Text(
+                    "已是最新版本：${status.latestVersion}",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = Color(0xFF4CAF50)
+                )
+                is AppUpdateStatus.UpdateAvailable -> {
+                    Text(
+                        "发现新版本：${status.latestVersion}",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.primary
+                    )
+                    Button(onClick = {
+                        context.startActivity(Intent(Intent.ACTION_VIEW, status.releaseUrl.toUri()))
+                    }) {
+                        Icon(Icons.AutoMirrored.Filled.OpenInNew, contentDescription = null, modifier = Modifier.size(18.dp))
+                        Spacer(Modifier.width(6.dp))
+                        Text("打开下载页")
+                    }
+                }
+                is AppUpdateStatus.Failed -> Text(
+                    "检查失败：${status.message}",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.error
+                )
             }
         }
     }
