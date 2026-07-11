@@ -9,10 +9,13 @@ import app.murmurnote.android.data.local.converter.Converters
 import app.murmurnote.android.data.local.dao.ApiLogDao
 import app.murmurnote.android.data.local.dao.CorrectionDao
 import app.murmurnote.android.data.local.dao.ItemDao
+import app.murmurnote.android.data.local.dao.PersonalCorrectionDao
 import app.murmurnote.android.data.local.dao.RecordingDao
 import app.murmurnote.android.data.local.dao.TranscriptDao
 import app.murmurnote.android.data.local.entity.ApiLog
 import app.murmurnote.android.data.local.entity.CorrectionRecordEntity
+import app.murmurnote.android.data.local.entity.CorrectionLearningEventEntity
+import app.murmurnote.android.data.local.entity.CorrectionLearningProfileEntity
 import app.murmurnote.android.data.local.entity.CorrectionRuleEntity
 import app.murmurnote.android.data.local.entity.ExtractedItem
 import app.murmurnote.android.data.local.entity.ItemFts
@@ -31,13 +34,15 @@ import app.murmurnote.android.data.local.entity.TranscriptSegment
         TranscriptRevisionEntity::class,
         CorrectionRuleEntity::class,
         CorrectionRecordEntity::class,
+        CorrectionLearningProfileEntity::class,
+        CorrectionLearningEventEntity::class,
         LegacyTranscriptSegmentConflict::class,
         ExtractedItem::class,
         ApiLog::class,
         RecordingFts::class,
         ItemFts::class
     ],
-    version = 7,
+    version = 8,
     exportSchema = true
 )
 @TypeConverters(Converters::class)
@@ -45,6 +50,7 @@ abstract class MurmurnoteDatabase : RoomDatabase() {
     abstract fun recordingDao(): RecordingDao
     abstract fun transcriptDao(): TranscriptDao
     abstract fun correctionDao(): CorrectionDao
+    abstract fun personalCorrectionDao(): PersonalCorrectionDao
     abstract fun itemDao(): ItemDao
     abstract fun apiLogDao(): ApiLogDao
 
@@ -139,6 +145,74 @@ abstract class MurmurnoteDatabase : RoomDatabase() {
                 db.execSQL(
                     "UPDATE `api_logs` SET `requestBody` = NULL, `responseBody` = NULL, " +
                         "`url` = '<redacted>', `errorMessage` = NULL"
+                )
+            }
+        }
+
+        val MIGRATION_7_8 = object : Migration(7, 8) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    """
+                    CREATE TABLE IF NOT EXISTS `correction_learning_profiles` (
+                        `ruleId` TEXT NOT NULL,
+                        `state` TEXT NOT NULL,
+                        `positiveEvidenceCount` INTEGER NOT NULL,
+                        `negativeEvidenceCount` INTEGER NOT NULL,
+                        `observedPinyin` TEXT,
+                        `replacementPinyin` TEXT,
+                        `pinyinRelation` TEXT NOT NULL,
+                        `lastVerdict` TEXT,
+                        `lastConfidence` TEXT,
+                        `lastReasonCode` TEXT,
+                        `lastReviewedAt` INTEGER,
+                        `createdAt` INTEGER NOT NULL,
+                        `updatedAt` INTEGER NOT NULL,
+                        PRIMARY KEY(`ruleId`),
+                        FOREIGN KEY(`ruleId`) REFERENCES `correction_rules`(`id`)
+                            ON UPDATE NO ACTION ON DELETE CASCADE
+                    )
+                    """.trimIndent(),
+                )
+                db.execSQL(
+                    "CREATE INDEX IF NOT EXISTS `index_correction_learning_profiles_state` " +
+                        "ON `correction_learning_profiles` (`state`)",
+                )
+                db.execSQL(
+                    """
+                    CREATE TABLE IF NOT EXISTS `correction_learning_events` (
+                        `id` TEXT NOT NULL,
+                        `ruleId` TEXT NOT NULL,
+                        `recordingId` TEXT NOT NULL,
+                        `segmentId` INTEGER NOT NULL,
+                        `revision` INTEGER NOT NULL,
+                        `leftContext` TEXT NOT NULL,
+                        `rightContext` TEXT NOT NULL,
+                        `status` TEXT NOT NULL,
+                        `pinyinRelation` TEXT NOT NULL,
+                        `llmVerdict` TEXT,
+                        `llmConfidence` TEXT,
+                        `llmReasonCode` TEXT,
+                        `createdAt` INTEGER NOT NULL,
+                        `reviewedAt` INTEGER,
+                        PRIMARY KEY(`id`),
+                        FOREIGN KEY(`ruleId`) REFERENCES `correction_rules`(`id`)
+                            ON UPDATE NO ACTION ON DELETE CASCADE,
+                        FOREIGN KEY(`recordingId`) REFERENCES `recordings`(`id`)
+                            ON UPDATE NO ACTION ON DELETE CASCADE
+                    )
+                    """.trimIndent(),
+                )
+                db.execSQL(
+                    "CREATE INDEX IF NOT EXISTS `index_correction_learning_events_ruleId` " +
+                        "ON `correction_learning_events` (`ruleId`)",
+                )
+                db.execSQL(
+                    "CREATE INDEX IF NOT EXISTS `index_correction_learning_events_recordingId` " +
+                        "ON `correction_learning_events` (`recordingId`)",
+                )
+                db.execSQL(
+                    "CREATE INDEX IF NOT EXISTS `index_correction_learning_events_status` " +
+                        "ON `correction_learning_events` (`status`)",
                 )
             }
         }

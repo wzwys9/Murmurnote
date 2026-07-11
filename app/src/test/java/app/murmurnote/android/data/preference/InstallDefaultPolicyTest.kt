@@ -167,4 +167,40 @@ class InstallDefaultPolicyTest {
             ),
         )
     }
+
+    @Test
+    fun personalCorrectionRequiresApiDisclosureAndExplicitEnable() {
+        assertEquals(
+            false,
+            PersonalCorrectionInstallDefaultPolicy.resolve(
+                explicitEnabled = null,
+                llmApiConfigured = true,
+                disclosureAccepted = true,
+            ),
+        )
+        assertEquals(
+            false,
+            PersonalCorrectionInstallDefaultPolicy.resolve(
+                explicitEnabled = true,
+                llmApiConfigured = false,
+                disclosureAccepted = true,
+            ),
+        )
+        assertEquals(
+            false,
+            PersonalCorrectionInstallDefaultPolicy.resolve(
+                explicitEnabled = true,
+                llmApiConfigured = true,
+                disclosureAccepted = false,
+            ),
+        )
+        assertEquals(
+            true,
+            PersonalCorrectionInstallDefaultPolicy.resolve(
+                explicitEnabled = true,
+                llmApiConfigured = true,
+                disclosureAccepted = true,
+            ),
+        )
+    }
 }

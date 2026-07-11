@@ -46,6 +46,25 @@ object SafeLexiconInstallDefaultPolicy {
     ): Boolean = isConfigured && wasConfigured && (explicitEnabled ?: false)
 }
 
+object PersonalCorrectionInstallDefaultPolicy {
+    fun resolve(
+        explicitEnabled: Boolean?,
+        llmApiConfigured: Boolean,
+        disclosureAccepted: Boolean,
+    ): Boolean = llmApiConfigured && disclosureAccepted && (explicitEnabled ?: false)
+
+    fun resolveAfterApiKeyUpdate(
+        explicitEnabled: Boolean?,
+        wasConfigured: Boolean,
+        isConfigured: Boolean,
+        disclosureAccepted: Boolean,
+    ): Boolean =
+        isConfigured &&
+            wasConfigured &&
+            disclosureAccepted &&
+            (explicitEnabled ?: false)
+}
+
 class AsrRuntimePreferenceSnapshot(
     val engineType: AsrEngineType,
     val localModelId: String,
@@ -98,6 +117,9 @@ class AppPreferences internal constructor(
         val LOW_BATTERY_PROTECTION = booleanPreferencesKey("low_battery_protection")
         val AI_EXTRACTION_ENABLED = booleanPreferencesKey("ai_extraction_enabled")
         val SAFE_LEXICON_ENABLED = booleanPreferencesKey("safe_lexicon_enabled")
+        val PERSONAL_CORRECTION_ENABLED = booleanPreferencesKey("personal_correction_enabled")
+        val PERSONAL_CORRECTION_DISCLOSURE_ACCEPTED =
+            booleanPreferencesKey("personal_correction_disclosure_accepted")
     }
 
     private fun llmApiKeyFor(provider: LlmProvider) =
@@ -222,6 +244,18 @@ class AppPreferences internal constructor(
         )
     }
 
+    val personalCorrectionDisclosureAccepted: Flow<Boolean> = dataStore.data.map { prefs ->
+        prefs[Keys.PERSONAL_CORRECTION_DISCLOSURE_ACCEPTED] ?: false
+    }
+
+    val personalCorrectionEnabled: Flow<Boolean> = dataStore.data.map { prefs ->
+        PersonalCorrectionInstallDefaultPolicy.resolve(
+            explicitEnabled = prefs[Keys.PERSONAL_CORRECTION_ENABLED],
+            llmApiConfigured = activeLlmApiKey(prefs).isNotBlank(),
+            disclosureAccepted = prefs[Keys.PERSONAL_CORRECTION_DISCLOSURE_ACCEPTED] ?: false,
+        )
+    }
+
     /** Reads every ASR-affecting preference from one DataStore generation. */
     suspend fun snapshotAsrRuntimePreferences(): AsrRuntimePreferenceSnapshot {
         val prefs = dataStore.data.first()
@@ -262,6 +296,14 @@ class AppPreferences internal constructor(
                         wasConfigured = activeKeyWasConfigured,
                         isConfigured = normalizedKey.isNotBlank(),
                     )
+                prefs[Keys.PERSONAL_CORRECTION_ENABLED] =
+                    PersonalCorrectionInstallDefaultPolicy.resolveAfterApiKeyUpdate(
+                        explicitEnabled = prefs[Keys.PERSONAL_CORRECTION_ENABLED],
+                        wasConfigured = activeKeyWasConfigured,
+                        isConfigured = normalizedKey.isNotBlank(),
+                        disclosureAccepted =
+                            prefs[Keys.PERSONAL_CORRECTION_DISCLOSURE_ACCEPTED] ?: false,
+                    )
             }
         }
     }
@@ -279,6 +321,7 @@ class AppPreferences internal constructor(
         it.remove(Keys.OLLAMA_MODEL)
         if (activeLlmApiKey(it).isBlank()) {
             it[Keys.SAFE_LEXICON_ENABLED] = false
+            it[Keys.PERSONAL_CORRECTION_ENABLED] = false
         }
     }
     suspend fun setLlmModel(model: String) = dataStore.edit { it[Keys.OLLAMA_MODEL] = model }
@@ -339,6 +382,24 @@ class AppPreferences internal constructor(
                 llmApiConfigured = activeLlmApiKey(prefs).isNotBlank(),
             )
             prefs[Keys.SAFE_LEXICON_ENABLED] = applied
+        }
+        return applied
+    }
+
+    suspend fun acceptPersonalCorrectionDisclosure() = dataStore.edit {
+        it[Keys.PERSONAL_CORRECTION_DISCLOSURE_ACCEPTED] = true
+    }
+
+    suspend fun setPersonalCorrectionEnabled(v: Boolean): Boolean {
+        var applied = false
+        dataStore.edit { prefs ->
+            applied = PersonalCorrectionInstallDefaultPolicy.resolve(
+                explicitEnabled = v,
+                llmApiConfigured = activeLlmApiKey(prefs).isNotBlank(),
+                disclosureAccepted =
+                    prefs[Keys.PERSONAL_CORRECTION_DISCLOSURE_ACCEPTED] ?: false,
+            )
+            prefs[Keys.PERSONAL_CORRECTION_ENABLED] = applied
         }
         return applied
     }

@@ -58,4 +58,39 @@ class AppPreferencesDataStoreTest {
                 file.delete()
             }
         }
+
+    @Test
+    fun personalCorrectionCannotEnableBeforeDisclosureAndStaysOffAfterApiRestoration() =
+        runBlocking {
+            val context = ApplicationProvider.getApplicationContext<Context>()
+            val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+            val file = File(
+                context.cacheDir,
+                "personal-correction-datastore-${UUID.randomUUID()}.preferences_pb",
+            )
+            val store = PreferenceDataStoreFactory.create(scope = scope) { file }
+            val preferences = AppPreferences(store)
+
+            try {
+                preferences.setLlmProvider(LlmProvider.DEEPSEEK)
+                preferences.setLlmApiKey(LlmProvider.DEEPSEEK, "test-key")
+
+                assertFalse(preferences.setPersonalCorrectionEnabled(true))
+                assertFalse(preferences.personalCorrectionEnabled.first())
+
+                preferences.acceptPersonalCorrectionDisclosure()
+                assertTrue(preferences.personalCorrectionDisclosureAccepted.first())
+                assertTrue(preferences.setPersonalCorrectionEnabled(true))
+                assertTrue(preferences.personalCorrectionEnabled.first())
+
+                preferences.setLlmApiKey(LlmProvider.DEEPSEEK, "")
+                assertFalse(preferences.personalCorrectionEnabled.first())
+
+                preferences.setLlmApiKey(LlmProvider.DEEPSEEK, "restored-key")
+                assertFalse(preferences.personalCorrectionEnabled.first())
+            } finally {
+                scope.cancel()
+                file.delete()
+            }
+        }
 }

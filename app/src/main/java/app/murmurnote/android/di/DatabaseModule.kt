@@ -6,6 +6,7 @@ import app.murmurnote.android.data.local.MurmurnoteDatabase
 import app.murmurnote.android.data.local.dao.ApiLogDao
 import app.murmurnote.android.data.local.dao.CorrectionDao
 import app.murmurnote.android.data.local.dao.ItemDao
+import app.murmurnote.android.data.local.dao.PersonalCorrectionDao
 import app.murmurnote.android.data.local.dao.RecordingDao
 import app.murmurnote.android.data.local.dao.TranscriptDao
 import dagger.Module
@@ -33,7 +34,8 @@ object DatabaseModule {
                 MurmurnoteDatabase.MIGRATION_3_4,
                 MurmurnoteDatabase.MIGRATION_4_5,
                 MurmurnoteDatabase.MIGRATION_5_6,
-                MurmurnoteDatabase.MIGRATION_6_7
+                MurmurnoteDatabase.MIGRATION_6_7,
+                MurmurnoteDatabase.MIGRATION_7_8,
             )
             .build()
     }
@@ -41,6 +43,9 @@ object DatabaseModule {
     @Provides fun provideRecordingDao(db: MurmurnoteDatabase): RecordingDao = db.recordingDao()
     @Provides fun provideTranscriptDao(db: MurmurnoteDatabase): TranscriptDao = db.transcriptDao()
     @Provides fun provideCorrectionDao(db: MurmurnoteDatabase): CorrectionDao = db.correctionDao()
+    @Provides
+    fun providePersonalCorrectionDao(db: MurmurnoteDatabase): PersonalCorrectionDao =
+        db.personalCorrectionDao()
     @Provides fun provideItemDao(db: MurmurnoteDatabase): ItemDao = db.itemDao()
     @Provides fun provideApiLogDao(db: MurmurnoteDatabase): ApiLogDao = db.apiLogDao()
 }
