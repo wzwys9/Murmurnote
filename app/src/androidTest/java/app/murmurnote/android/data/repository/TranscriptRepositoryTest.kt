@@ -223,53 +223,101 @@ class TranscriptRepositoryTest {
             RECORDING_ID,
             modelSegment(rawText = "beta alpha", sequence = 1, startMs = 500, endMs = 1_000)
                 .copy(
-                    cutReason = ModelSegmentCutReason.HARD_LIMIT,
+                    cutReason = ModelSegmentCutReason.FALLBACK_HARD_LIMIT,
                     overlapBeforeMs = 500
                 ),
             PROVENANCE
         )
-        repository.rememberRule(
-            recordingId = RECORDING_ID,
-            diff = app.murmurnote.android.domain.correction.SingleReplacementDiff(
-                startCodePoint = 0,
-                endCodePointExclusive = 5,
-                observedText = "alpha",
-                replacementText = "A",
-                eligibleForRule = true
-            ),
-            scope = CorrectionScope.GLOBAL,
-            now = 10L
-        )
+        repository.createGlobalLexiconRule("alpha", "omega", now = 10L)
 
         repository.finalizeModelTranscript(
             recordingId = RECORDING_ID,
             provenance = PROVENANCE,
             expectedSequences = listOf(0, 1),
+            applyGlobalLexicon = true,
             now = 20L
         )
 
         val recording = database.recordingDao().getById(RECORDING_ID)!!
         assertEquals("alpha\nbeta alpha", recording.rawTranscript)
-        assertEquals("A\nbeta A", recording.correctedTranscript)
+        assertEquals("omega\nbeta omega", recording.correctedTranscript)
         assertEquals(0L, recording.correctionRevision)
         assertEquals(PROVENANCE.engineType.name, recording.asrEngineType)
         assertEquals(PROVENANCE.modelId, recording.asrModelId)
         assertEquals(PROVENANCE.configFingerprint, recording.asrConfigFingerprint)
         assertEquals(PROVENANCE.configSnapshotJson, recording.asrConfigSnapshotJson)
         assertEquals(PROVENANCE.vadPresetVersion, recording.vadPresetVersion)
-        assertEquals(listOf("A", "beta A"), repository.getSegments(RECORDING_ID).map { it.correctedText })
+        assertEquals(
+            listOf("omega", "beta omega"),
+            repository.getSegments(RECORDING_ID).map { it.correctedText },
+        )
         val hardCut = repository.getSegments(RECORDING_ID).last()
-        assertEquals(ModelSegmentCutReason.HARD_LIMIT.name, hardCut.cutReason)
+        assertEquals(ModelSegmentCutReason.FALLBACK_HARD_LIMIT.name, hardCut.cutReason)
         assertEquals(500L, hardCut.overlapBeforeMs)
         assertEquals(PROVENANCE.vadPresetVersion, hardCut.vadPresetVersion)
 
         val revisions = repository.getRevisions(RECORDING_ID)
         assertEquals(1, revisions.size)
         assertEquals(TranscriptRevisionSource.MODEL_FINAL, revisions.single().source)
-        assertEquals("A\nbeta A", revisions.single().text)
+        assertEquals("omega\nbeta omega", revisions.single().text)
         val audit = repository.getAuditRecords(RECORDING_ID)
         assertEquals(listOf(0, 11), audit.map { it.rawStartCodePoint })
         assertTrue(audit.all { it.sourceRuleId != null })
+    }
+
+    @Test
+    fun finalize_skipsGlobalLexiconWhenItsMasterSwitchIsOff() = runBlocking {
+        insertRecording()
+        repository.cacheModelSegment(
+            RECORDING_ID,
+            modelSegment(rawText = "alpha", sequence = 0),
+            PROVENANCE,
+        )
+        repository.createGlobalLexiconRule("alpha", "omega", now = 21L)
+
+        repository.finalizeModelTranscript(
+            recordingId = RECORDING_ID,
+            provenance = PROVENANCE,
+            expectedSequences = listOf(0),
+            applyGlobalLexicon = false,
+            now = 22L,
+        )
+
+        val stored = repository.getSegments(RECORDING_ID).single()
+        assertEquals("alpha", stored.rawText)
+        assertEquals("alpha", stored.correctedText)
+        assertTrue(repository.getAuditRecords(RECORDING_ID).isEmpty())
+    }
+
+    @Test
+    fun finalize_keepsExistingRecordingRulesWhenGlobalLexiconIsOff() = runBlocking {
+        insertRecording()
+        repository.cacheModelSegment(
+            RECORDING_ID,
+            modelSegment(rawText = "alpha", sequence = 0),
+            PROVENANCE,
+        )
+        repository.rememberRecordingRule(
+            recordingId = RECORDING_ID,
+            diff = app.murmurnote.android.domain.correction.SingleReplacementDiff(
+                startCodePoint = 0,
+                endCodePointExclusive = 5,
+                observedText = "alpha",
+                replacementText = "omega",
+                eligibleForRule = true,
+            ),
+            now = 23L,
+        )
+
+        repository.finalizeModelTranscript(
+            recordingId = RECORDING_ID,
+            provenance = PROVENANCE,
+            expectedSequences = listOf(0),
+            applyGlobalLexicon = false,
+            now = 24L,
+        )
+
+        assertEquals("omega", repository.getSegments(RECORDING_ID).single().correctedText)
     }
 
     @Test
@@ -295,7 +343,7 @@ class TranscriptRepositoryTest {
         assertEquals("alpha", recording.rawTranscript)
         assertEquals(newText, recording.correctedTranscript)
         assertEquals(1L, recording.correctionRevision)
-        assertTrue(recording.transcriptDirty)
+        assertFalse(recording.transcriptDirty)
         assertEquals(30L, recording.transcriptEditedAt)
 
         val revisions = repository.getRevisions(RECORDING_ID)
@@ -305,14 +353,14 @@ class TranscriptRepositoryTest {
             listOf(TranscriptRevisionSource.MODEL_FINAL, TranscriptRevisionSource.MANUAL_EDIT),
             revisions.map { it.source }
         )
-        assertTrue(repository.getRules(RECORDING_ID).isEmpty())
+        assertTrue(repository.getRecordingRules(RECORDING_ID).isEmpty())
         val manualAudit = repository.getAuditRecords(RECORDING_ID).last()
         assertNull(manualAudit.sourceRuleId)
         assertEquals(CorrectionAuditReason.MANUAL_EDIT, manualAudit.reason)
     }
 
     @Test
-    fun rememberRule_requiresExplicitCallAndDoesNotRewriteHistory() = runBlocking {
+    fun rememberRecordingRule_requiresExplicitCallAndDoesNotRewriteHistory() = runBlocking {
         val segmentId = insertFinalizedSingleSegment("alpha")
         val diff = repository.editSegment(
             recordingId = RECORDING_ID,
@@ -320,19 +368,18 @@ class TranscriptRepositoryTest {
             newText = "omega",
             now = 40L
         )!!
-        assertTrue(repository.getRules(RECORDING_ID).isEmpty())
+        assertTrue(repository.getRecordingRules(RECORDING_ID).isEmpty())
 
-        val rule = repository.rememberRule(
+        val rule = repository.rememberRecordingRule(
             recordingId = RECORDING_ID,
             diff = diff,
-            scope = CorrectionScope.RECORDING,
             now = 41L
         )
 
         assertEquals(CorrectionScope.RECORDING, rule.scope)
         assertEquals(RECORDING_ID, rule.scopeId)
         assertEquals("omega", repository.getSegments(RECORDING_ID).single().correctedText)
-        assertEquals(1, repository.getRules(RECORDING_ID).size)
+        assertEquals(1, repository.getRecordingRules(RECORDING_ID).size)
         assertEquals(2, repository.getRevisions(RECORDING_ID).size)
     }
 
@@ -352,7 +399,7 @@ class TranscriptRepositoryTest {
         assertEquals("alpha", recording.rawTranscript)
         assertEquals("alpha", recording.correctedTranscript)
         assertEquals(2L, recording.correctionRevision)
-        assertTrue(recording.transcriptDirty)
+        assertFalse(recording.transcriptDirty)
         assertEquals(
             TranscriptRevisionSource.REVERT_TO_RAW,
             repository.getRevisions(RECORDING_ID).last().source
@@ -367,16 +414,16 @@ class TranscriptRepositoryTest {
     fun observeQueries_emitCurrentSegmentsRulesRevisionsAndAudit() = runBlocking {
         val segmentId = insertFinalizedSingleSegment("alpha")
         val diff = repository.editSegment(RECORDING_ID, segmentId, "omega", now = 60L)!!
-        repository.rememberRule(RECORDING_ID, diff, CorrectionScope.RECORDING, now = 61L)
+        repository.rememberRecordingRule(RECORDING_ID, diff, now = 61L)
 
         assertEquals(1, repository.observeSegments(RECORDING_ID).first().size)
-        assertEquals(1, repository.observeRules(RECORDING_ID).first().size)
+        assertEquals(1, repository.observeRecordingRules(RECORDING_ID).first().size)
         assertEquals(2, repository.observeRevisions(RECORDING_ID).first().size)
         assertEquals(1, repository.observeAuditRecords(RECORDING_ID).first().size)
     }
 
     @Test
-    fun persistedUnknownEnumFailsClosed() = runBlocking {
+    fun persistedUnknownRuleTypeIsNotExposedThroughRecordingApi() = runBlocking {
         insertRecording()
         database.correctionDao().insertRule(
             CorrectionRuleEntity(
@@ -391,9 +438,7 @@ class TranscriptRepositoryTest {
             )
         )
 
-        assertThrows(IllegalArgumentException::class.java) {
-            runBlocking { repository.getRules(RECORDING_ID) }
-        }
+        assertTrue(repository.getRecordingRules(RECORDING_ID).isEmpty())
     }
 
     @Test
@@ -428,18 +473,18 @@ class TranscriptRepositoryTest {
     }
 
     @Test
-    fun rememberRule_isIdempotentAndRejectsConflictingOrReverseRules() = runBlocking {
+    fun rememberRecordingRule_isIdempotentAndRejectsConflictingOrReverseRules() = runBlocking {
         val segmentId = insertFinalizedSingleSegment("alpha")
         val diff = repository.editSegment(RECORDING_ID, segmentId, "omega", now = 82L)!!
 
-        val first = repository.rememberRule(RECORDING_ID, diff, now = 83L)
-        val duplicate = repository.rememberRule(RECORDING_ID, diff, now = 84L)
+        val first = repository.rememberRecordingRule(RECORDING_ID, diff, now = 83L)
+        val duplicate = repository.rememberRecordingRule(RECORDING_ID, diff, now = 84L)
 
         assertEquals(first.id, duplicate.id)
-        assertEquals(1, repository.getRules(RECORDING_ID).size)
+        assertEquals(1, repository.getRecordingRules(RECORDING_ID).size)
         assertThrows(CorrectionRuleConflictException::class.java) {
             runBlocking {
-                repository.rememberRule(
+                repository.rememberRecordingRule(
                     RECORDING_ID,
                     diff.copy(replacementText = "different"),
                     now = 85L
@@ -448,7 +493,7 @@ class TranscriptRepositoryTest {
         }
         assertThrows(CorrectionRuleConflictException::class.java) {
             runBlocking {
-                repository.rememberRule(
+                repository.rememberRecordingRule(
                     RECORDING_ID,
                     app.murmurnote.android.domain.correction.SingleReplacementDiff(
                         startCodePoint = 0,
@@ -461,8 +506,202 @@ class TranscriptRepositoryTest {
                 )
             }
         }
-        repository.setRuleEnabled(RECORDING_ID, first.id, enabled = false, now = 87L)
-        assertFalse(repository.getRules(RECORDING_ID).single().isEnabled)
+        repository.setRecordingRuleEnabled(RECORDING_ID, first.id, enabled = false, now = 87L)
+        assertFalse(repository.getRecordingRules(RECORDING_ID).single().isEnabled)
+    }
+
+    @Test
+    fun recordingRuleApiNeverReusesOrConflictsWithGlobalLexiconRows() = runBlocking {
+        insertRecording()
+        val global = repository.createGlobalLexiconRule("alpha", "omega", now = 90L)
+        val recording = repository.rememberRecordingRule(
+            recordingId = RECORDING_ID,
+            diff = app.murmurnote.android.domain.correction.SingleReplacementDiff(
+                startCodePoint = 0,
+                endCodePointExclusive = 5,
+                observedText = "alpha",
+                replacementText = "omega",
+                eligibleForRule = true,
+            ),
+            now = 91L,
+        )
+
+        assertEquals(CorrectionScope.GLOBAL, global.scope)
+        assertEquals(CorrectionScope.RECORDING, recording.scope)
+        assertFalse(global.id == recording.id)
+        assertEquals(listOf(recording.id), repository.getRecordingRules(RECORDING_ID).map { it.id })
+        assertEquals(listOf(global.id), repository.observeGlobalLexiconRules().first().map { it.id })
+    }
+
+    @Test
+    fun recordingRuleToggleCannotMutateAGlobalLexiconRow() = runBlocking {
+        insertRecording()
+        val global = repository.createGlobalLexiconRule("alpha", "omega", now = 92L)
+
+        assertThrows(IllegalStateException::class.java) {
+            runBlocking {
+                repository.setRecordingRuleEnabled(
+                    recordingId = RECORDING_ID,
+                    ruleId = global.id,
+                    enabled = false,
+                    now = 93L,
+                )
+            }
+        }
+
+        assertTrue(repository.observeGlobalLexiconRules().first().single().isEnabled)
+        assertTrue(repository.getRecordingRules(RECORDING_ID).isEmpty())
+    }
+
+    @Test
+    fun globalLexicon_createReactivateToggleAndDeleteAreScopedAndIdempotent() = runBlocking {
+        insertRecording()
+
+        val created = repository.createGlobalLexiconRule(
+            observedText = "  木木笔记  ",
+            replacementText = "  声记应用  ",
+            now = 100L,
+        )
+        val duplicate = repository.createGlobalLexiconRule(
+            observedText = "木木笔记",
+            replacementText = "声记应用",
+            now = 101L,
+        )
+
+        assertEquals(created.id, duplicate.id)
+        assertEquals("木木笔记", created.observedText)
+        assertEquals("声记应用", created.replacementText)
+        assertEquals(CorrectionScope.GLOBAL, created.scope)
+        assertEquals(1, repository.observeGlobalLexiconRules().first().size)
+
+        repository.setGlobalLexiconRuleEnabled(created.id, enabled = false, now = 102L)
+        assertFalse(repository.observeGlobalLexiconRules().first().single().isEnabled)
+
+        val reactivated = repository.createGlobalLexiconRule(
+            observedText = "木木笔记",
+            replacementText = "声记应用",
+            now = 103L,
+        )
+        assertEquals(created.id, reactivated.id)
+        assertTrue(reactivated.isEnabled)
+
+        repository.deleteGlobalLexiconRule(created.id)
+        assertTrue(repository.observeGlobalLexiconRules().first().isEmpty())
+    }
+
+    @Test
+    fun globalLexicon_rejectsConflictsAndCannotMutateRecordingRules() = runBlocking {
+        insertRecording()
+        repository.createGlobalLexiconRule("木木笔记", "声记应用", now = 110L)
+
+        assertThrows(IllegalArgumentException::class.java) {
+            runBlocking {
+                repository.createGlobalLexiconRule("木木笔记", "其他写法", now = 111L)
+            }
+        }
+        assertThrows(IllegalArgumentException::class.java) {
+            runBlocking {
+                repository.createGlobalLexiconRule("声记应用", "木木笔记", now = 112L)
+            }
+        }
+
+        val recordingRule = repository.rememberRecordingRule(
+            recordingId = RECORDING_ID,
+            diff = app.murmurnote.android.domain.correction.SingleReplacementDiff(
+                startCodePoint = 0,
+                endCodePointExclusive = 5,
+                observedText = "alpha",
+                replacementText = "omega",
+                eligibleForRule = true,
+            ),
+            now = 113L,
+        )
+        assertThrows(IllegalArgumentException::class.java) {
+            runBlocking {
+                repository.setGlobalLexiconRuleEnabled(
+                    recordingRule.id,
+                    enabled = false,
+                    now = 114L,
+                )
+            }
+        }
+        assertThrows(IllegalArgumentException::class.java) {
+            runBlocking { repository.deleteGlobalLexiconRule(recordingRule.id) }
+        }
+        assertTrue(
+            repository.getRecordingRules(RECORDING_ID)
+                .single { it.id == recordingRule.id }
+                .isEnabled,
+        )
+    }
+
+    @Test
+    fun globalLexicon_rejectsReenablingALegacyConflict() = runBlocking {
+        database.correctionDao().insertRule(
+            CorrectionRuleEntity(
+                id = "disabled-rule",
+                observedText = "木木笔记",
+                replacementText = "声记应用",
+                scope = CorrectionScope.GLOBAL.name,
+                scopeRecordingId = null,
+                isEnabled = false,
+                createdAt = 120L,
+                updatedAt = 120L,
+            ),
+        )
+        database.correctionDao().insertRule(
+            CorrectionRuleEntity(
+                id = "enabled-conflict",
+                observedText = "木木笔记",
+                replacementText = "其他写法",
+                scope = CorrectionScope.GLOBAL.name,
+                scopeRecordingId = null,
+                isEnabled = true,
+                createdAt = 121L,
+                updatedAt = 121L,
+            ),
+        )
+
+        assertThrows(IllegalArgumentException::class.java) {
+            runBlocking {
+                repository.setGlobalLexiconRuleEnabled(
+                    ruleId = "disabled-rule",
+                    enabled = true,
+                    now = 122L,
+                )
+            }
+        }
+
+        val target = repository.observeGlobalLexiconRules().first()
+            .single { it.id == "disabled-rule" }
+        assertFalse(target.isEnabled)
+    }
+
+    @Test
+    fun deletingAUsedGlobalLexiconRuleKeepsTheHistoricalTextSnapshots() = runBlocking {
+        insertRecording()
+        repository.cacheModelSegment(
+            RECORDING_ID,
+            modelSegment(rawText = "alpha", sequence = 0),
+            PROVENANCE,
+        )
+        val rule = repository.createGlobalLexiconRule("alpha", "omega", now = 130L)
+        repository.finalizeModelTranscript(
+            recordingId = RECORDING_ID,
+            provenance = PROVENANCE,
+            expectedSequences = listOf(0),
+            applyGlobalLexicon = true,
+            now = 131L,
+        )
+
+        repository.deleteGlobalLexiconRule(rule.id)
+
+        val audit = repository.getAuditRecords(RECORDING_ID).single()
+        assertNull(audit.sourceRuleId)
+        assertEquals("alpha", audit.originalText)
+        assertEquals("omega", audit.replacementText)
+        assertEquals("alpha", repository.getSegments(RECORDING_ID).single().rawText)
+        assertEquals("omega", repository.getSegments(RECORDING_ID).single().correctedText)
     }
 
     @Test

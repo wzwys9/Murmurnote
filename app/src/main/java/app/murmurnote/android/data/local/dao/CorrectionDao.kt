@@ -17,38 +17,120 @@ interface CorrectionDao {
         """
         SELECT * FROM correction_rules
         WHERE isEnabled = 1
-          AND (scopeRecordingId IS NULL OR scopeRecordingId = :recordingId)
+          AND matchMode = 'EXACT_TEXT'
+          AND (
+            (scope = 'GLOBAL' AND scopeRecordingId IS NULL)
+            OR (scope = 'RECORDING' AND scopeRecordingId = :recordingId)
+          )
         ORDER BY createdAt, id
         """
     )
     suspend fun getApplicableRuleCandidates(recordingId: String): List<CorrectionRuleEntity>
 
-    @Query("SELECT * FROM correction_rules WHERE isEnabled = 1 ORDER BY createdAt, id")
-    suspend fun getAllEnabledRules(): List<CorrectionRuleEntity>
+    @Query(
+        """
+        SELECT * FROM correction_rules
+        WHERE isEnabled = 1
+          AND scope = 'RECORDING'
+          AND scopeRecordingId = :recordingId
+          AND matchMode = 'EXACT_TEXT'
+        ORDER BY createdAt, id
+        """
+    )
+    suspend fun getEnabledRecordingRuleCandidates(
+        recordingId: String,
+    ): List<CorrectionRuleEntity>
 
     @Query("SELECT * FROM correction_rules WHERE id = :id")
     suspend fun getRule(id: String): CorrectionRuleEntity?
 
-    @Query("UPDATE correction_rules SET isEnabled = :enabled, updatedAt = :updatedAt WHERE id = :id")
-    suspend fun setRuleEnabled(id: String, enabled: Boolean, updatedAt: Long): Int
+    @Query(
+        """
+        UPDATE correction_rules
+        SET isEnabled = :enabled, updatedAt = :updatedAt
+        WHERE id = :id
+          AND scope = 'RECORDING'
+          AND scopeRecordingId = :recordingId
+          AND matchMode = 'EXACT_TEXT'
+        """
+    )
+    suspend fun setRecordingRuleEnabled(
+        recordingId: String,
+        id: String,
+        enabled: Boolean,
+        updatedAt: Long,
+    ): Int
 
     @Query(
         """
         SELECT * FROM correction_rules
-        WHERE scopeRecordingId IS NULL OR scopeRecordingId = :recordingId
+        WHERE scope = 'RECORDING'
+          AND scopeRecordingId = :recordingId
+          AND matchMode = 'EXACT_TEXT'
         ORDER BY createdAt, id
         """
     )
-    suspend fun getRules(recordingId: String): List<CorrectionRuleEntity>
+    suspend fun getRecordingRules(recordingId: String): List<CorrectionRuleEntity>
 
     @Query(
         """
         SELECT * FROM correction_rules
-        WHERE scopeRecordingId IS NULL OR scopeRecordingId = :recordingId
+        WHERE scope = 'RECORDING'
+          AND scopeRecordingId = :recordingId
+          AND matchMode = 'EXACT_TEXT'
         ORDER BY createdAt, id
         """
     )
-    fun observeRules(recordingId: String): Flow<List<CorrectionRuleEntity>>
+    fun observeRecordingRules(recordingId: String): Flow<List<CorrectionRuleEntity>>
+
+    @Query(
+        """
+        SELECT * FROM correction_rules
+        WHERE scope = 'GLOBAL'
+          AND scopeRecordingId IS NULL
+          AND matchMode = 'EXACT_TEXT'
+        ORDER BY createdAt, id
+        """
+    )
+    suspend fun getGlobalLexiconRules(): List<CorrectionRuleEntity>
+
+    @Query(
+        """
+        SELECT * FROM correction_rules
+        WHERE scope = 'GLOBAL'
+          AND scopeRecordingId IS NULL
+          AND matchMode = 'EXACT_TEXT'
+        ORDER BY createdAt, id
+        """
+    )
+    fun observeGlobalLexiconRules(): Flow<List<CorrectionRuleEntity>>
+
+    @Query(
+        """
+        UPDATE correction_rules
+        SET isEnabled = :enabled, updatedAt = :updatedAt
+        WHERE id = :id
+          AND scope = 'GLOBAL'
+          AND scopeRecordingId IS NULL
+          AND matchMode = 'EXACT_TEXT'
+        """
+    )
+    suspend fun setGlobalLexiconRuleEnabled(
+        id: String,
+        enabled: Boolean,
+        updatedAt: Long,
+    ): Int
+
+    @Query(
+        """
+        DELETE FROM correction_rules
+        WHERE id = :id
+          AND scope = 'GLOBAL'
+          AND scopeRecordingId IS NULL
+          AND matchMode = 'EXACT_TEXT'
+        """
+    )
+    suspend fun deleteGlobalLexiconRule(id: String): Int
 
     @Insert(onConflict = OnConflictStrategy.ABORT)
     suspend fun insertRecords(records: List<CorrectionRecordEntity>)

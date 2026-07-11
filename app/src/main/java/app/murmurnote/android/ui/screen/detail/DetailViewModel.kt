@@ -19,7 +19,6 @@ import app.murmurnote.android.data.repository.ItemRepository
 import app.murmurnote.android.data.repository.RecordingRepository
 import app.murmurnote.android.data.repository.SummaryRepository
 import app.murmurnote.android.data.repository.TranscriptRepository
-import app.murmurnote.android.domain.correction.CorrectionScope
 import app.murmurnote.android.domain.correction.SingleReplacementDiff
 import app.murmurnote.android.service.TranscriptionService
 import app.murmurnote.android.util.Logger
@@ -443,26 +442,44 @@ class DetailViewModel @Inject constructor(
         if (_state.value.savingRule) return
         viewModelScope.launch {
             _state.update { it.copy(savingRule = true) }
+            var safeLexiconEnabled = false
             runCatching {
-                transcriptRepo.rememberRule(
-                    recordingId = rec.id,
-                    diff = diff,
-                    scope = if (global) CorrectionScope.GLOBAL else CorrectionScope.RECORDING
-                )
+                if (global) {
+                    safeLexiconEnabled = appPreferences.safeLexiconEnabled.first()
+                    transcriptRepo.createGlobalLexiconRule(
+                        observedText = diff.observedText,
+                        replacementText = diff.replacementText,
+                    )
+                } else {
+                    transcriptRepo.rememberRecordingRule(
+                        recordingId = rec.id,
+                        diff = diff,
+                    )
+                }
             }.onSuccess { rule ->
                 _state.update {
                     it.copy(
                         pendingRuleDiff = null,
                         savingRule = false,
-                        lastCreatedRuleId = rule.id,
-                        correctionActionMessage = if (global) "已记为全局精确规则" else "已记为本次录音规则"
+                        lastCreatedRuleId = if (global) null else rule.id,
+                        correctionActionMessage = when {
+                            !global -> "已记为本次录音规则"
+                            safeLexiconEnabled -> "已加入实验室词本，将用于之后完成的转写"
+                            else -> "已加入实验室词本；总开关仍是关闭状态"
+                        },
                     )
                 }
             }.onFailure { e ->
                 _state.update {
                     it.copy(
                         savingRule = false,
-                        segmentEditError = e.message ?: e.javaClass.simpleName
+                        segmentEditError = if (global) {
+                            (e as? IllegalArgumentException)?.message
+                                ?.takeIf { message -> message.isNotBlank() }
+                                ?: "词本保存失败，请重试"
+                        } else {
+                            e.message ?: e.javaClass.simpleName
+                        },
                     )
                 }
             }
@@ -475,7 +492,9 @@ class DetailViewModel @Inject constructor(
         if (_state.value.savingRule) return
         viewModelScope.launch {
             _state.update { it.copy(savingRule = true) }
-            runCatching { transcriptRepo.setRuleEnabled(rec.id, ruleId, enabled = false) }
+            runCatching {
+                transcriptRepo.setRecordingRuleEnabled(rec.id, ruleId, enabled = false)
+            }
                 .onSuccess {
                     _state.update {
                         it.copy(

@@ -217,7 +217,8 @@ class AudioPipeline @Inject constructor(
                     transcriptRepository.finalizeModelTranscript(
                         recordingId = recordingId,
                         provenance = attempt.provenance,
-                        expectedSequences = slices.indices.toList()
+                        expectedSequences = slices.indices.toList(),
+                        applyGlobalLexicon = appPreferences.safeLexiconEnabled.first(),
                     )
                 } finally {
                     attempt.engine.release()

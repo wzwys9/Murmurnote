@@ -91,9 +91,38 @@ fun SettingsScreen(
     var asrSettingsDetail by rememberSaveable {
         mutableStateOf<AsrSettingsPanel?>(null)
     }
+    var showLaboratory by rememberSaveable { mutableStateOf(false) }
+    var showSafeLexicon by rememberSaveable { mutableStateOf(false) }
 
-    BackHandler(enabled = asrSettingsDetail != null) {
-        asrSettingsDetail = null
+    BackHandler(
+        enabled = showSafeLexicon || showLaboratory || asrSettingsDetail != null,
+    ) {
+        when {
+            showSafeLexicon -> showSafeLexicon = false
+            showLaboratory -> showLaboratory = false
+            else -> asrSettingsDetail = null
+        }
+    }
+    if (showSafeLexicon) {
+        SafeLexiconScreen(
+            modifier = modifier,
+            masterEnabled = state.safeLexiconEnabled && state.llmApiKey.isNotBlank(),
+            llmApiConfigured = state.llmApiKey.isNotBlank(),
+            onMasterEnabledChange = viewModel::setSafeLexiconEnabled,
+            onBack = { showSafeLexicon = false },
+        )
+        return
+    }
+    if (showLaboratory) {
+        LaboratoryScreen(
+            modifier = modifier,
+            safeLexiconEnabled = state.safeLexiconEnabled && state.llmApiKey.isNotBlank(),
+            llmApiConfigured = state.llmApiKey.isNotBlank(),
+            onSafeLexiconEnabledChange = viewModel::setSafeLexiconEnabled,
+            onManageSafeLexicon = { showSafeLexicon = true },
+            onBack = { showLaboratory = false },
+        )
+        return
     }
     asrSettingsDetail?.let { detail ->
         AsrSettingsDetailScreen(
@@ -219,6 +248,13 @@ fun SettingsScreen(
                     )
                 }
             }
+        }
+
+        item { SettingSectionHeader("更多") }
+        item {
+            LaboratoryDirectoryCard(
+                onOpen = { showLaboratory = true },
+            )
         }
 
         item { SettingSectionHeader("关于") }

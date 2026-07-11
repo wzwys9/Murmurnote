@@ -16,6 +16,8 @@ import app.murmurnote.android.domain.correction.CorrectionMatchMode
 import app.murmurnote.android.domain.correction.CorrectionRule
 import app.murmurnote.android.domain.correction.CorrectionScope
 import app.murmurnote.android.domain.correction.DeterministicCorrectionEngine
+import app.murmurnote.android.domain.correction.SafeLexiconCreateAction
+import app.murmurnote.android.domain.correction.SafeLexiconRulePolicy
 import app.murmurnote.android.domain.correction.SingleReplacementDiff
 import app.murmurnote.android.domain.transcript.CorrectionAuditReason
 import app.murmurnote.android.domain.transcript.CorrectionAuditRecord
@@ -135,6 +137,7 @@ class TranscriptRepository @Inject constructor(
         recordingId: String,
         provenance: AsrProvenance,
         expectedSequences: List<Int>,
+        applyGlobalLexicon: Boolean = false,
         now: Long = System.currentTimeMillis()
     ) = database.withTransaction {
         requireValidProvenance(provenance)
@@ -175,7 +178,12 @@ class TranscriptRepository @Inject constructor(
             }
         }
 
-        val rules = correctionDao.getApplicableRuleCandidates(recordingId).map { it.toDomainRule() }
+        val ruleCandidates = if (applyGlobalLexicon) {
+            correctionDao.getApplicableRuleCandidates(recordingId)
+        } else {
+            correctionDao.getEnabledRecordingRuleCandidates(recordingId)
+        }
+        val rules = ruleCandidates.map { it.toDomainRule() }
         val results = segments.map { segment ->
             correctionEngine.correct(segment.rawText, recordingId, rules)
         }
@@ -289,10 +297,9 @@ class TranscriptRepository @Inject constructor(
         candidate
     }
 
-    suspend fun rememberRule(
+    suspend fun rememberRecordingRule(
         recordingId: String,
         diff: SingleReplacementDiff,
-        scope: CorrectionScope = CorrectionScope.RECORDING,
         now: Long = System.currentTimeMillis()
     ): CorrectionRule = database.withTransaction {
         require(diff.eligibleForRule) { "This edit is not eligible for an exact correction rule" }
@@ -300,26 +307,15 @@ class TranscriptRepository @Inject constructor(
         require(diff.replacementText.isNotEmpty()) { "Rule replacement text must not be empty" }
         requireRecording(recordingId)
 
-        val existingRules = correctionDao.getAllEnabledRules()
-        val relevantRules = existingRules.filter { existing ->
-            scope == CorrectionScope.GLOBAL ||
-                existing.scopeRecordingId == null ||
-                existing.scopeRecordingId == recordingId
-        }
-        val exactDuplicate = relevantRules.firstOrNull { existing ->
+        val recordingRules = correctionDao.getEnabledRecordingRuleCandidates(recordingId)
+        val exactDuplicate = recordingRules.firstOrNull { existing ->
             existing.observedText == diff.observedText &&
                 existing.replacementText == diff.replacementText
         }
         if (exactDuplicate != null) {
-            val duplicateAlreadyCoversScope = exactDuplicate.scopeRecordingId == null ||
-                (scope == CorrectionScope.RECORDING &&
-                    exactDuplicate.scopeRecordingId == recordingId)
-            if (duplicateAlreadyCoversScope) return@withTransaction exactDuplicate.toDomainRule()
-            throw CorrectionRuleConflictException(
-                "An equivalent recording rule must be resolved before global promotion"
-            )
+            return@withTransaction exactDuplicate.toDomainRule()
         }
-        val conflict = relevantRules.firstOrNull { existing ->
+        val conflict = recordingRules.firstOrNull { existing ->
             existing.observedText == diff.observedText ||
                 (existing.observedText == diff.replacementText &&
                     existing.replacementText == diff.observedText)
@@ -334,11 +330,8 @@ class TranscriptRepository @Inject constructor(
             id = UUID.randomUUID().toString(),
             observedText = diff.observedText,
             replacementText = diff.replacementText,
-            scope = scope.name,
-            scopeRecordingId = when (scope) {
-                CorrectionScope.RECORDING -> recordingId
-                CorrectionScope.GLOBAL -> null
-            },
+            scope = CorrectionScope.RECORDING.name,
+            scopeRecordingId = recordingId,
             matchMode = CorrectionMatchMode.EXACT_TEXT.name,
             createdAt = now,
             updatedAt = now
@@ -404,7 +397,7 @@ class TranscriptRepository @Inject constructor(
         )
     }
 
-    suspend fun setRuleEnabled(
+    suspend fun setRecordingRuleEnabled(
         recordingId: String,
         ruleId: String,
         enabled: Boolean,
@@ -413,11 +406,105 @@ class TranscriptRepository @Inject constructor(
         requireRecording(recordingId)
         val rule = correctionDao.getRule(ruleId)
             ?: throw TranscriptPersistenceException("Correction rule does not exist")
-        check(rule.scopeRecordingId == null || rule.scopeRecordingId == recordingId) {
+        check(
+            rule.scope == CorrectionScope.RECORDING.name &&
+                rule.scopeRecordingId == recordingId &&
+                rule.matchMode == CorrectionMatchMode.EXACT_TEXT.name
+        ) {
             "Correction rule does not belong to this recording"
         }
-        check(correctionDao.setRuleEnabled(ruleId, enabled, now) == 1) {
+        check(
+            correctionDao.setRecordingRuleEnabled(
+                recordingId = recordingId,
+                id = ruleId,
+                enabled = enabled,
+                updatedAt = now,
+            ) == 1
+        ) {
             "Correction rule changed while updating its state"
+        }
+    }
+
+    fun observeGlobalLexiconRules(): Flow<List<CorrectionRule>> =
+        correctionDao.observeGlobalLexiconRules().map { rules ->
+            rules.map { it.toDomainRule() }
+        }
+
+    suspend fun createGlobalLexiconRule(
+        observedText: String,
+        replacementText: String,
+        now: Long = System.currentTimeMillis(),
+    ): CorrectionRule = database.withTransaction {
+        val input = SafeLexiconRulePolicy.normalize(observedText, replacementText)
+        val existingRules = correctionDao.getGlobalLexiconRules().map { it.toDomainRule() }
+        val decision = SafeLexiconRulePolicy.decideCreate(input, existingRules)
+
+        when (decision.action) {
+            SafeLexiconCreateAction.INSERT -> {
+                val entity = CorrectionRuleEntity(
+                    id = UUID.randomUUID().toString(),
+                    observedText = input.observedText,
+                    replacementText = input.replacementText,
+                    scope = CorrectionScope.GLOBAL.name,
+                    matchMode = CorrectionMatchMode.EXACT_TEXT.name,
+                    isEnabled = true,
+                    createdAt = now,
+                    updatedAt = now,
+                )
+                correctionDao.insertRule(entity)
+                entity.toDomainRule()
+            }
+
+            SafeLexiconCreateAction.REUSE_ENABLED -> existingRules.requireDecisionRule(
+                decision.existingRuleId,
+            )
+
+            SafeLexiconCreateAction.REACTIVATE -> {
+                val existing = existingRules.requireDecisionRule(decision.existingRuleId)
+                require(
+                    correctionDao.setGlobalLexiconRuleEnabled(
+                        id = existing.id,
+                        enabled = true,
+                        updatedAt = now,
+                    ) == 1,
+                ) { "词条状态已变化，请重试" }
+                existing.copy(isEnabled = true)
+            }
+        }
+    }
+
+    suspend fun setGlobalLexiconRuleEnabled(
+        ruleId: String,
+        enabled: Boolean,
+        now: Long = System.currentTimeMillis(),
+    ) = database.withTransaction {
+        val rules = correctionDao.getGlobalLexiconRules().map { it.toDomainRule() }
+        val target = rules.firstOrNull { it.id == ruleId }
+        requireNotNull(target) { "找不到这个全局词条" }
+
+        if (enabled) {
+            val hasConflict = rules.any { other ->
+                other.id != target.id &&
+                    other.isEnabled &&
+                    (other.observedText == target.observedText ||
+                        (other.observedText == target.replacementText &&
+                            other.replacementText == target.observedText))
+            }
+            require(!hasConflict) { "这个词条与另一个已启用词条冲突" }
+        }
+
+        require(
+            correctionDao.setGlobalLexiconRuleEnabled(
+                id = ruleId,
+                enabled = enabled,
+                updatedAt = now,
+            ) == 1,
+        ) { "词条状态已变化，请重试" }
+    }
+
+    suspend fun deleteGlobalLexiconRule(ruleId: String) = database.withTransaction {
+        require(correctionDao.deleteGlobalLexiconRule(ruleId) == 1) {
+            "找不到这个全局词条"
         }
     }
 
@@ -435,11 +522,13 @@ class TranscriptRepository @Inject constructor(
             revisions.map { it.toDomainRevision() }
         }
 
-    suspend fun getRules(recordingId: String): List<CorrectionRule> =
-        correctionDao.getRules(recordingId).map { it.toDomainRule() }
+    suspend fun getRecordingRules(recordingId: String): List<CorrectionRule> =
+        correctionDao.getRecordingRules(recordingId).map { it.toDomainRule() }
 
-    fun observeRules(recordingId: String): Flow<List<CorrectionRule>> =
-        correctionDao.observeRules(recordingId).map { rules -> rules.map { it.toDomainRule() } }
+    fun observeRecordingRules(recordingId: String): Flow<List<CorrectionRule>> =
+        correctionDao.observeRecordingRules(recordingId).map { rules ->
+            rules.map { it.toDomainRule() }
+        }
 
     suspend fun getAuditRecords(recordingId: String): List<CorrectionAuditRecord> =
         correctionDao.getRecords(recordingId).map { it.toDomainAuditRecord() }
@@ -558,6 +647,10 @@ private fun CorrectionRuleEntity.toDomainRule(): CorrectionRule = CorrectionRule
     scopeId = scopeRecordingId,
     isEnabled = isEnabled
 )
+
+private fun List<CorrectionRule>.requireDecisionRule(ruleId: String?): CorrectionRule =
+    firstOrNull { it.id == ruleId }
+        ?: throw IllegalStateException("词条状态已变化，请重试")
 
 private fun TranscriptRevisionEntity.toDomainRevision(): TranscriptRevision = TranscriptRevision(
     id = id,

@@ -103,4 +103,68 @@ class InstallDefaultPolicyTest {
             )
         )
     }
+
+    @Test
+    fun safeLexiconStartsDisabledEvenWhenAnLlmApiIsConfigured() {
+        assertEquals(
+            false,
+            SafeLexiconInstallDefaultPolicy.resolve(
+                explicitEnabled = null,
+                llmApiConfigured = true,
+            ),
+        )
+    }
+
+    @Test
+    fun safeLexiconCannotBeEnabledWithoutTheCurrentLlmApiKey() {
+        assertEquals(
+            false,
+            SafeLexiconInstallDefaultPolicy.resolve(
+                explicitEnabled = true,
+                llmApiConfigured = false,
+            ),
+        )
+        assertEquals(
+            true,
+            SafeLexiconInstallDefaultPolicy.resolve(
+                explicitEnabled = true,
+                llmApiConfigured = true,
+            ),
+        )
+        assertEquals(
+            false,
+            SafeLexiconInstallDefaultPolicy.resolve(
+                explicitEnabled = false,
+                llmApiConfigured = true,
+            ),
+        )
+    }
+
+    @Test
+    fun configuringAnApiKeyDoesNotRestoreAStaleEnabledState() {
+        assertEquals(
+            false,
+            SafeLexiconInstallDefaultPolicy.resolveAfterApiKeyUpdate(
+                explicitEnabled = true,
+                wasConfigured = false,
+                isConfigured = true,
+            ),
+        )
+        assertEquals(
+            true,
+            SafeLexiconInstallDefaultPolicy.resolveAfterApiKeyUpdate(
+                explicitEnabled = true,
+                wasConfigured = true,
+                isConfigured = true,
+            ),
+        )
+        assertEquals(
+            false,
+            SafeLexiconInstallDefaultPolicy.resolveAfterApiKeyUpdate(
+                explicitEnabled = true,
+                wasConfigured = true,
+                isConfigured = false,
+            ),
+        )
+    }
 }

@@ -20,6 +20,7 @@ import app.murmurnote.android.util.Logger
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -87,6 +88,7 @@ class SettingsViewModel @Inject constructor(
         val realtimePerformanceMode: String = "BALANCED",
         val lowBatteryProtection: Boolean = true,
         val aiExtractionEnabled: Boolean = false,
+        val safeLexiconEnabled: Boolean = false,
         val appUpdateStatus: AppUpdateStatus = AppUpdateStatus.Idle
     )
 
@@ -140,6 +142,11 @@ class SettingsViewModel @Inject constructor(
         viewModelScope.launch { appPreferences.realtimePerformanceMode.collect { v -> _uiState.update { it.copy(realtimePerformanceMode = v) } } }
         viewModelScope.launch { appPreferences.lowBatteryProtection.collect { v -> _uiState.update { it.copy(lowBatteryProtection = v) } } }
         viewModelScope.launch { appPreferences.aiExtractionEnabled.collect { v -> _uiState.update { it.copy(aiExtractionEnabled = v) } } }
+        viewModelScope.launch {
+            appPreferences.safeLexiconEnabled.collect { enabled ->
+                _uiState.update { it.copy(safeLexiconEnabled = enabled) }
+            }
+        }
         // 进设置页只算一次"模型在不在"，不自动拷贝 assets 内置模型；大模型安装只响应用户点击。
         viewModelScope.launch {
             asrModelManager.refreshStatus()
@@ -171,9 +178,11 @@ class SettingsViewModel @Inject constructor(
         llmApiKeySaveJob?.cancel()
         appPreferences.setLlmApiKey(previousProvider, previousApiKey)
         appPreferences.setLlmProvider(provider)
+        val activeApiKey = appPreferences.llmApiKey.first()
         _uiState.update {
             it.copy(
                 llmProvider = provider.name,
+                llmApiKey = activeApiKey,
                 llmTestStatus = TestStatus.Idle,
                 availableLlmModels = emptyList(),
                 modelLoadError = null
@@ -191,6 +200,16 @@ class SettingsViewModel @Inject constructor(
         if (enabled && _uiState.value.availableLlmModels.isEmpty()) {
             refreshLlmModels()
         }
+    }
+
+    fun setSafeLexiconEnabled(enabled: Boolean) = viewModelScope.launch {
+        if (enabled) {
+            llmApiKeySaveJob?.cancel()
+            val provider = LlmProvider.parse(_uiState.value.llmProvider)
+            appPreferences.setLlmApiKey(provider, _uiState.value.llmApiKey)
+        }
+        val applied = appPreferences.setSafeLexiconEnabled(enabled)
+        _uiState.update { it.copy(safeLexiconEnabled = applied) }
     }
 
     fun refreshLlmModels() = viewModelScope.launch {

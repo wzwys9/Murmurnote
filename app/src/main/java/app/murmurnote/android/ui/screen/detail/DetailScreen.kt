@@ -354,7 +354,7 @@ fun DetailScreen(
                                                 onClick = { viewModel.rememberPendingRule(global = true) },
                                                 enabled = !state.savingRule
                                             ) {
-                                                Text("记为全局规则")
+                                                Text("加入实验室词本")
                                             }
                                             TextButton(
                                                 onClick = viewModel::dismissCorrectionAction,
