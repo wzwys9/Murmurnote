@@ -1,10 +1,11 @@
 # Implementation Plan: Local ASR and deterministic correction
 
-## Current Slice: 个性化自学习纠错（实现中，2026-07-11）
+## Current Slice: 个性化自学习纠错（代码完成，待 APK/真机体验，2026-07-11）
 
 本轮以 `SELF_LEARNING_CORRECTION_SPEC.md` 为准。先完成研究、隐私边界和规格确认；用户确认
 前不修改运行时代码。实现阶段遵循“失败测试 → Room v8 学习存储 → 受约束 LLM → 统一流水线
-→ 实验室管理 UI → 完整验证”。
+→ 实验室管理 UI → 完整验证”。代码、JVM 测试、Android 测试源码编译和 Debug Lint 已完成；
+按确认规格，本轮不主动打包或安装 APK。
 
 ### Task A: 用户反馈与候选契约
 
@@ -28,6 +29,14 @@
 
 - 新增默认关闭且受 API 门槛保护的独立开关、首次隐私说明和学习管理页。
 - 先写领域/Repository/迁移/流水线/UI 状态测试，再跑完整 JVM、Lint、Release 和真机门槛。
+
+### Verification result
+
+- `:app:testDebugUnitTest`：254 tests，0 failures / errors / skipped。
+- `:app:compileDebugAndroidTestKotlin`：通过；Room v7→v8、DataStore、Repository 和 Android ICU
+  instrumentation 测试已编译。
+- `:app:lintDebug`：通过，0 issues。
+- Release/APK/真机 instrumentation：按“不主动打包 APK”的确认边界保留到用户体验轮次。
 
 ### Approval checkpoint
 
