@@ -12,11 +12,15 @@ import app.murmurnote.android.data.local.entity.ItemType
 import app.murmurnote.android.data.local.entity.ProcessingStatus
 import app.murmurnote.android.data.local.entity.Recording
 import app.murmurnote.android.data.local.entity.RecordingSegment
-import app.murmurnote.android.data.local.entity.RecordingSegmentStatus
 import app.murmurnote.android.data.local.entity.TranscriptSegment
 import app.murmurnote.android.data.remote.llm.LlmClient
+import app.murmurnote.android.data.preference.AppPreferences
 import app.murmurnote.android.data.repository.ItemRepository
 import app.murmurnote.android.data.repository.RecordingRepository
+import app.murmurnote.android.data.repository.SummaryRepository
+import app.murmurnote.android.data.repository.TranscriptRepository
+import app.murmurnote.android.domain.correction.CorrectionScope
+import app.murmurnote.android.domain.correction.SingleReplacementDiff
 import app.murmurnote.android.service.TranscriptionService
 import app.murmurnote.android.util.Logger
 import dagger.hilt.android.lifecycle.HiltViewModel
@@ -25,6 +29,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -39,9 +44,12 @@ import javax.inject.Inject
 @HiltViewModel
 class DetailViewModel @Inject constructor(
     private val recordingRepo: RecordingRepository,
+    private val transcriptRepo: TranscriptRepository,
+    private val summaryRepo: SummaryRepository,
     private val itemRepo: ItemRepository,
     private val player: AudioPlayer,
     private val llmClient: LlmClient,
+    private val appPreferences: AppPreferences,
     private val logger: Logger
 ) : ViewModel() {
 
@@ -65,6 +73,11 @@ class DetailViewModel @Inject constructor(
         val segmentDraft: String = "",
         val savingSegment: Boolean = false,
         val segmentEditError: String? = null,
+        val showRawTranscript: Boolean = false,
+        val pendingRuleDiff: SingleReplacementDiff? = null,
+        val savingRule: Boolean = false,
+        val lastCreatedRuleId: String? = null,
+        val correctionActionMessage: String? = null,
         val tagDraft: String = "",
         val tagError: String? = null
     ) {
@@ -78,7 +91,7 @@ class DetailViewModel @Inject constructor(
                 val r = recording ?: return false
                 if (r.processingStatus == ProcessingStatus.FAILED) return true
                 if (r.processingStatus == ProcessingStatus.COMPLETED &&
-                    segments.isEmpty() && items.isEmpty()
+                    r.rawTranscript == null && items.isEmpty()
                 ) return true
                 return false
             }
@@ -90,7 +103,6 @@ class DetailViewModel @Inject constructor(
     private var loadedPath: String? = null
     private var loadedId: String? = null
     private var positionTicker: Job? = null
-    private var repairingRecordingSegmentsFor: String? = null
 
     fun load(id: String) {
         if (loadedId == id) return
@@ -99,7 +111,17 @@ class DetailViewModel @Inject constructor(
         viewModelScope.launch {
             recordingRepo.observe(id).collect { rec ->
                 _state.update { it.copy(recording = rec) }
-                maybeRepairCompletedRecordingSegments()
+                if (rec?.audioAvailable != true) {
+                    if (loadedPath != null) {
+                        player.release()
+                        loadedPath = null
+                        stopTicker()
+                        _state.update {
+                            it.copy(isPlaying = false, durationMs = 0, positionMs = 0)
+                        }
+                    }
+                    return@collect
+                }
                 val path = rec?.originalFilePath
                 if (path != null && path != loadedPath) {
                     val f = File(path)
@@ -118,45 +140,18 @@ class DetailViewModel @Inject constructor(
             }
         }
         viewModelScope.launch {
-            recordingRepo.observeSegments(id).collect { segs ->
+            transcriptRepo.observeSegments(id).collect { segs ->
                 _state.update { it.copy(segments = segs) }
-                maybeRepairCompletedRecordingSegments()
             }
         }
         viewModelScope.launch {
             recordingRepo.observeRecordingSegments(id).collect { segs ->
                 _state.update { it.copy(recordingSegments = segs) }
-                maybeRepairCompletedRecordingSegments()
             }
         }
         viewModelScope.launch {
             itemRepo.observeForRecording(id).collect { items ->
                 _state.update { it.copy(items = items) }
-            }
-        }
-    }
-
-    private fun maybeRepairCompletedRecordingSegments() {
-        val snapshot = _state.value
-        val rec = snapshot.recording ?: return
-        if (rec.processingStatus != ProcessingStatus.COMPLETED) return
-        if (snapshot.segments.isEmpty() && rec.rawTranscript.isNullOrBlank()) return
-        val hasPendingSegment = snapshot.recordingSegments.any {
-            it.status == RecordingSegmentStatus.READY ||
-                it.status == RecordingSegmentStatus.TRANSCRIBING
-        }
-        if (!hasPendingSegment || repairingRecordingSegmentsFor == rec.id) return
-        repairingRecordingSegmentsFor = rec.id
-        viewModelScope.launch {
-            runCatching {
-                recordingRepo.markRecordingSegmentsTranscribed(rec.id)
-            }.onSuccess {
-                logger.i("Detail", "repaired recording segment statuses id=${rec.id}")
-            }.onFailure { e ->
-                logger.w("Detail", "failed to repair recording segment statuses: ${e.message}")
-            }
-            if (repairingRecordingSegmentsFor == rec.id) {
-                repairingRecordingSegmentsFor = null
             }
         }
     }
@@ -226,6 +221,14 @@ class DetailViewModel @Inject constructor(
         }
     }
 
+    fun toggleKeepAudio() {
+        val rec = _state.value.recording ?: return
+        if (!rec.audioAvailable) return
+        viewModelScope.launch {
+            recordingRepo.setKeepAudio(rec.id, !rec.keepAudio)
+        }
+    }
+
     /**
      * 重新跑 Pipeline。复用现有 Recording 行（id 不变），原 segments/items 会被清空后重新生成。
      * 失败原因写到 reprocessError 给 UI 提示。成功则进入前台 Service —— UI 仍可看到该 recording
@@ -239,7 +242,7 @@ class DetailViewModel @Inject constructor(
             val source = rec.source
             val file = File(rec.originalFilePath)
             if (!file.exists()) {
-                logger.w("Detail", "reprocess aborted: file missing ${rec.originalFilePath}")
+                logger.w("Detail", "reprocess aborted: source audio missing")
                 _state.update {
                     it.copy(
                         reprocessing = false,
@@ -250,14 +253,9 @@ class DetailViewModel @Inject constructor(
             }
             // 释放当前 player 引用，避免重处理过程中文件被占用造成 ASR 段失败
             player.release()
-            logger.i("Detail", "reprocess id=${rec.id} src=${rec.originalFilePath}")
+            logger.i("Detail", "reprocess id=${rec.id}")
             val intent = TranscriptionService.reprocessIntent(context, file, source, rec.id)
-            // O+ 必须用 startForegroundService（service 自己会调 startForeground）
-            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
-                context.startForegroundService(intent)
-            } else {
-                context.startService(intent)
-            }
+            context.startForegroundService(intent)
             _state.update { it.copy(reprocessing = false) }
         }
     }
@@ -267,27 +265,35 @@ class DetailViewModel @Inject constructor(
     }
 
     /**
-     * 仅重新跑一次 Ollama 提取，不动 ASR。前提：Recording.rawTranscript 非空（即转写已经成功）。
+     * 仅对当前 corrected revision 重新跑一次 AI 提取，不动 ASR。
      * 适用场景：上次提取因为 LLM 临时不可用 / 模型不存在 / 返回空 summary 等被吞掉，
      * 用户明知转写文字是有效的，只想再让 LLM 试一次。比走整条 Pipeline 重跑要快、不消耗 ASR 配额。
      */
     fun regenerateSummary() {
         val rec = _state.value.recording ?: return
-        val transcript = rec.rawTranscript
+        val transcript = rec.correctedTranscript
         if (transcript.isNullOrBlank()) {
             _state.update { it.copy(regenerateError = "尚无转写文本，无法重新生成总结。请先完成 ASR 转写。") }
-            logger.w("Detail", "regenerateSummary aborted: rawTranscript blank")
+            logger.w("Detail", "regenerateSummary aborted: corrected transcript blank")
             return
         }
         if (_state.value.regeneratingSummary) return
         viewModelScope.launch {
             _state.update { it.copy(regeneratingSummary = true, regenerateError = null) }
+            if (!appPreferences.aiExtractionEnabled.first()) {
+                _state.update {
+                    it.copy(
+                        regeneratingSummary = false,
+                        regenerateError = "请先在设置中明确开启云端 AI 提取"
+                    )
+                }
+                return@launch
+            }
+            val requestedRevision = rec.correctionRevision
             logger.i("Detail", "regenerateSummary id=${rec.id} chars=${transcript.length}")
-            llmClient.extractItems(transcript).fold(
+            llmClient.extractItemsAuto(transcript).fold(
                 onSuccess = { ext ->
                     val createdAtPretty = formatPretty(rec.createdAt)
-                    // 旧 items 删干净再插，不然每次重试都会叠出重复条目
-                    itemRepo.deleteForRecording(rec.id)
                     val newItems = ext.items.map { dto ->
                         ExtractedItem(
                             recordingId = rec.id,
@@ -298,7 +304,6 @@ class DetailViewModel @Inject constructor(
                             createdAt = rec.createdAt
                         )
                     }
-                    itemRepo.insertAll(newItems)
                     val titleFromSummary = ext.summary
                         .lineSequence()
                         .map { it.trim().removePrefix("•").trim() }
@@ -309,14 +314,22 @@ class DetailViewModel @Inject constructor(
                     } else {
                         "录音 $createdAtPretty"
                     }
-                    recordingRepo.update(
-                        rec.copy(
-                            title = finalTitle,
-                            summary = ext.summary,
-                            finalSummary = ext.summary,
-                            transcriptDirty = false
-                        )
+                    val saved = summaryRepo.saveForRevision(
+                        recordingId = rec.id,
+                        expectedRevision = requestedRevision,
+                        title = finalTitle,
+                        summary = ext.summary,
+                        items = newItems
                     )
+                    if (!saved) {
+                        _state.update {
+                            it.copy(
+                                regeneratingSummary = false,
+                                regenerateError = "转写在生成期间发生了变化，本次总结未保存，请重新生成"
+                            )
+                        }
+                        return@fold
+                    }
                     _state.update { it.copy(regeneratingSummary = false) }
                     logger.i(
                         "Detail",
@@ -368,22 +381,29 @@ class DetailViewModel @Inject constructor(
     fun saveSegmentEdit() {
         val rec = _state.value.recording ?: return
         val segmentId = _state.value.editingSegmentId ?: return
-        val text = _state.value.segmentDraft.trim()
-        if (text.isBlank()) {
-            _state.update { it.copy(segmentEditError = "转写段不能为空") }
-            return
-        }
+        val text = _state.value.segmentDraft
+        val before = _state.value.segments.firstOrNull { it.id == segmentId }
         if (_state.value.savingSegment) return
         viewModelScope.launch {
             _state.update { it.copy(savingSegment = true, segmentEditError = null) }
             runCatching {
-                recordingRepo.updateTranscriptSegmentText(rec.id, segmentId, text)
-            }.onSuccess {
+                transcriptRepo.editSegment(rec.id, segmentId, text)
+            }.onSuccess { diff ->
                 _state.update {
                     it.copy(
                         editingSegmentId = null,
                         segmentDraft = "",
-                        savingSegment = false
+                        savingSegment = false,
+                        pendingRuleDiff = diff?.takeIf {
+                            it.eligibleForRule && before?.correctedText == before?.rawText
+                        },
+                        correctionActionMessage = if (diff?.eligibleForRule == true &&
+                            before?.correctedText == before?.rawText
+                        ) {
+                            "修正已保存；是否记住这次精确替换？"
+                        } else {
+                            "修正已保存"
+                        }
                     )
                 }
                 logger.i("Detail", "segment edited id=${rec.id} segmentId=$segmentId chars=${text.length}")
@@ -403,12 +423,106 @@ class DetailViewModel @Inject constructor(
         _state.update { it.copy(segmentEditError = null) }
     }
 
-    fun exportResult(context: Context, format: String) {
+    fun toggleRawTranscript() {
+        _state.update { it.copy(showRawTranscript = !it.showRawTranscript) }
+    }
+
+    fun dismissCorrectionAction() {
+        _state.update {
+            it.copy(
+                pendingRuleDiff = null,
+                correctionActionMessage = null,
+                lastCreatedRuleId = null
+            )
+        }
+    }
+
+    fun rememberPendingRule(global: Boolean) {
         val rec = _state.value.recording ?: return
-        val segments = _state.value.segments
-        val items = _state.value.items
+        val diff = _state.value.pendingRuleDiff ?: return
+        if (_state.value.savingRule) return
+        viewModelScope.launch {
+            _state.update { it.copy(savingRule = true) }
+            runCatching {
+                transcriptRepo.rememberRule(
+                    recordingId = rec.id,
+                    diff = diff,
+                    scope = if (global) CorrectionScope.GLOBAL else CorrectionScope.RECORDING
+                )
+            }.onSuccess { rule ->
+                _state.update {
+                    it.copy(
+                        pendingRuleDiff = null,
+                        savingRule = false,
+                        lastCreatedRuleId = rule.id,
+                        correctionActionMessage = if (global) "已记为全局精确规则" else "已记为本次录音规则"
+                    )
+                }
+            }.onFailure { e ->
+                _state.update {
+                    it.copy(
+                        savingRule = false,
+                        segmentEditError = e.message ?: e.javaClass.simpleName
+                    )
+                }
+            }
+        }
+    }
+
+    fun undoLastRememberedRule() {
+        val rec = _state.value.recording ?: return
+        val ruleId = _state.value.lastCreatedRuleId ?: return
+        if (_state.value.savingRule) return
+        viewModelScope.launch {
+            _state.update { it.copy(savingRule = true) }
+            runCatching { transcriptRepo.setRuleEnabled(rec.id, ruleId, enabled = false) }
+                .onSuccess {
+                    _state.update {
+                        it.copy(
+                            savingRule = false,
+                            lastCreatedRuleId = null,
+                            correctionActionMessage = "已撤销刚创建的规则"
+                        )
+                    }
+                }
+                .onFailure { error ->
+                    _state.update {
+                        it.copy(
+                            savingRule = false,
+                            segmentEditError = error.message ?: error.javaClass.simpleName
+                        )
+                    }
+                }
+        }
+    }
+
+    fun revertTranscriptToRaw() {
+        val rec = _state.value.recording ?: return
+        viewModelScope.launch {
+            runCatching { transcriptRepo.revertToRaw(rec.id) }
+                .onSuccess {
+                    _state.update {
+                        it.copy(
+                            pendingRuleDiff = null,
+                            correctionActionMessage = "已恢复到只读原文；旧版本仍保留在修订历史中"
+                        )
+                    }
+                }
+                .onFailure { e ->
+                    _state.update { it.copy(segmentEditError = e.message ?: e.javaClass.simpleName) }
+                }
+        }
+    }
+
+    fun exportResult(context: Context, format: String) {
+        val recordingId = _state.value.recording?.id ?: return
         viewModelScope.launch {
             runCatching {
+                val snapshot = summaryRepo.getExportSnapshot(recordingId)
+                    ?: error("录音已不存在")
+                val rec = snapshot.recording
+                val segments = snapshot.segments
+                val items = snapshot.items
                 val safeTitle = rec.title.replace(Regex("[^A-Za-z0-9_\\-\\u4e00-\\u9fa5]+"), "_").take(40)
                     .ifBlank { "murmurnote" }
                 val extension = format.lowercase()
@@ -489,6 +603,8 @@ class DetailViewModel @Inject constructor(
         appendLine()
         appendLine("## AI 总结")
         appendLine()
+        appendLine(summaryRevisionNote(rec))
+        appendLine()
         appendLine(rec.finalSummary ?: rec.summary ?: "（无）")
         appendLine()
         appendLine("## 提取项")
@@ -506,11 +622,11 @@ class DetailViewModel @Inject constructor(
         if (sortedSegments.isNotEmpty()) {
             sortedSegments.forEach {
                 appendLine()
-                appendLine("[${formatDurationForExport(it.startMs)}-${formatDurationForExport(it.endMs)}] ${it.text}")
+                appendLine("[${formatDurationForExport(it.startMs)}-${formatDurationForExport(it.endMs)}] ${it.correctedText}")
             }
         } else {
             appendLine()
-            appendLine(rec.rawTranscript ?: "（无）")
+            appendLine(rec.correctedTranscript ?: "（无）")
         }
     }
 
@@ -525,6 +641,7 @@ class DetailViewModel @Inject constructor(
         appendLine("归档：${if (rec.archived) "是" else "否"}")
         appendLine()
         appendLine("AI 总结")
+        appendLine(summaryRevisionNote(rec))
         appendLine(rec.finalSummary ?: rec.summary ?: "（无）")
         appendLine()
         appendLine("提取项")
@@ -534,10 +651,10 @@ class DetailViewModel @Inject constructor(
         val sortedSegments = segments.sortedBy { it.sequence }
         if (sortedSegments.isNotEmpty()) {
             sortedSegments.forEach {
-                appendLine("[${formatDurationForExport(it.startMs)}-${formatDurationForExport(it.endMs)}] ${it.text}")
+                appendLine("[${formatDurationForExport(it.startMs)}-${formatDurationForExport(it.endMs)}] ${it.correctedText}")
             }
         } else {
-            appendLine(rec.rawTranscript ?: "（无）")
+            appendLine(rec.correctedTranscript ?: "（无）")
         }
     }
 
@@ -555,6 +672,15 @@ class DetailViewModel @Inject constructor(
             .put("summary", rec.finalSummary ?: rec.summary)
             .put("draftSummary", rec.draftSummary)
             .put("rawTranscript", rec.rawTranscript)
+            .put("correctedTranscript", rec.correctedTranscript)
+            .put("correctionRevision", rec.correctionRevision)
+            .put("summaryTranscriptRevision", rec.summaryTranscriptRevision)
+            .put("rawProvenance", rec.rawProvenance)
+            .put("asrEngineType", rec.asrEngineType)
+            .put("asrModelId", rec.asrModelId)
+            .put("asrConfigFingerprint", rec.asrConfigFingerprint)
+            .put("asrConfigSnapshot", rec.asrConfigSnapshotJson)
+            .put("vadPresetVersion", rec.vadPresetVersion)
             .put("tags", JSONArray().also { array -> rec.tagList().forEach { array.put(it) } })
             .put("archived", rec.archived)
         root.put("items", JSONArray().also { array ->
@@ -576,7 +702,14 @@ class DetailViewModel @Inject constructor(
                         .put("sequence", it.sequence)
                         .put("startMs", it.startMs)
                         .put("endMs", it.endMs)
-                        .put("text", it.text)
+                        .put("rawText", it.rawText)
+                        .put("correctedText", it.correctedText)
+                        .put("correctionRevision", it.correctionRevision)
+                        .put("rawProvenance", it.rawProvenance)
+                        .put("asrConfigFingerprint", it.asrConfigFingerprint)
+                        .put("vadPresetVersion", it.vadPresetVersion)
+                        .put("cutReason", it.cutReason)
+                        .put("overlapBeforeMs", it.overlapBeforeMs)
                 )
             }
         })
@@ -592,6 +725,17 @@ class DetailViewModel @Inject constructor(
             "%d:%02d:%02d".format(Locale.US, hours, minutes, seconds)
         } else {
             "%02d:%02d".format(Locale.US, minutes, seconds)
+        }
+    }
+
+    private fun summaryRevisionNote(rec: Recording): String {
+        val summaryRevision = rec.summaryTranscriptRevision
+        return when {
+            summaryRevision == null -> "总结修订：未绑定；当前转写修订 ${rec.correctionRevision}"
+            summaryRevision == rec.correctionRevision ->
+                "总结修订：$summaryRevision（与当前转写一致）"
+            else ->
+                "总结修订：$summaryRevision；当前转写修订 ${rec.correctionRevision}（已过期）"
         }
     }
 

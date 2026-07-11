@@ -4,30 +4,147 @@ import androidx.room.Dao
 import androidx.room.Insert
 import androidx.room.OnConflictStrategy
 import androidx.room.Query
-import androidx.room.Update
 import app.murmurnote.android.data.local.entity.ProcessingStatus
 import app.murmurnote.android.data.local.entity.Recording
 import app.murmurnote.android.data.local.entity.RecordingSegment
-import app.murmurnote.android.data.local.entity.TranscriptSegment
 import kotlinx.coroutines.flow.Flow
+
+data class RecordingAudioOwnerPath(
+    val id: String,
+    val originalFilePath: String
+)
+
+data class RecordingSegmentOwnerPath(
+    val recordingId: String,
+    val filePath: String
+)
 
 @Dao
 interface RecordingDao {
 
-    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    @Insert(onConflict = OnConflictStrategy.ABORT)
     suspend fun insert(recording: Recording)
-
-    @Update
-    suspend fun update(recording: Recording)
 
     @Query("UPDATE recordings SET processingStatus = :status, errorMessage = :error WHERE id = :id")
     suspend fun updateStatus(id: String, status: ProcessingStatus, error: String? = null)
+
+    @Query(
+        """
+        UPDATE recordings
+        SET processingStatus = 'FAILED', errorMessage = :error
+        WHERE processingStatus IN (
+            'PENDING', 'RECORDING', 'CONVERTING', 'SPLITTING', 'TRANSCRIBING', 'EXTRACTING'
+        )
+        """
+    )
+    suspend fun markInterruptedProcessingFailed(error: String): Int
+
+    @Query(
+        """
+        UPDATE recordings
+        SET processingStatus = 'FAILED', errorMessage = :error
+        WHERE id = :id
+          AND processingStatus IN (
+              'PENDING', 'RECORDING', 'CONVERTING', 'SPLITTING', 'TRANSCRIBING', 'EXTRACTING'
+          )
+        """
+    )
+    suspend fun markProcessingFailedIfInProgress(id: String, error: String): Int
+
+    @Query("UPDATE recordings SET durationMs = :durationMs WHERE id = :id")
+    suspend fun updateDuration(id: String, durationMs: Long): Int
 
     @Query("UPDATE recordings SET tags = :tags WHERE id = :id")
     suspend fun updateTags(id: String, tags: String)
 
     @Query("UPDATE recordings SET archived = :archived WHERE id = :id")
     suspend fun updateArchived(id: String, archived: Boolean)
+
+    @Query(
+        """
+        UPDATE recordings
+        SET rawTranscript = :rawTranscript,
+            correctedTranscript = :correctedTranscript,
+            correctionRevision = 0,
+            rawProvenance = :rawProvenance,
+            asrEngineType = :asrEngineType,
+            asrModelId = :asrModelId,
+            asrConfigFingerprint = :asrConfigFingerprint,
+            asrConfigSnapshotJson = :asrConfigSnapshotJson,
+            vadPresetVersion = :vadPresetVersion,
+            transcriptDirty = CASE
+                WHEN summary IS NOT NULL OR draftSummary IS NOT NULL OR finalSummary IS NOT NULL
+                THEN 1 ELSE 0
+            END,
+            transcriptEditedAt = NULL
+        WHERE id = :id
+          AND rawTranscript IS NULL
+          AND correctionRevision = 0
+        """
+    )
+    suspend fun finalizeModelTranscript(
+        id: String,
+        rawTranscript: String,
+        correctedTranscript: String,
+        rawProvenance: String,
+        asrEngineType: String,
+        asrModelId: String,
+        asrConfigFingerprint: String,
+        asrConfigSnapshotJson: String,
+        vadPresetVersion: String
+    ): Int
+
+    @Query(
+        """
+        UPDATE recordings
+        SET correctedTranscript = :correctedTranscript,
+            correctionRevision = :newRevision,
+            transcriptDirty = :transcriptDirty,
+            transcriptEditedAt = :editedAt
+        WHERE id = :id
+          AND correctionRevision = :expectedRevision
+          AND rawTranscript IS NOT NULL
+        """
+    )
+    suspend fun updateCorrectedTranscriptRevision(
+        id: String,
+        expectedRevision: Long,
+        newRevision: Long,
+        correctedTranscript: String,
+        transcriptDirty: Boolean,
+        editedAt: Long
+    ): Int
+
+    @Query(
+        """
+        UPDATE recordings
+        SET title = :title,
+            summary = :summary,
+            finalSummary = :summary,
+            summaryTranscriptRevision = :expectedRevision,
+            transcriptDirty = 0,
+            processingStatus = 'COMPLETED',
+            errorMessage = NULL
+        WHERE id = :id
+          AND correctionRevision = :expectedRevision
+          AND rawTranscript IS NOT NULL
+        """
+    )
+    suspend fun saveSummaryForRevision(
+        id: String,
+        expectedRevision: Long,
+        title: String,
+        summary: String
+    ): Int
+
+    @Query(
+        """
+        UPDATE recordings
+        SET processingStatus = 'COMPLETED', errorMessage = :error
+        WHERE id = :id
+        """
+    )
+    suspend fun completeWithoutNewSummary(id: String, error: String?): Int
 
     @Query("DELETE FROM recordings WHERE id = :id")
     suspend fun deleteById(id: String)
@@ -47,62 +164,12 @@ interface RecordingDao {
     @Query("SELECT COUNT(*) FROM recordings")
     fun countAll(): Flow<Int>
 
-    // Segments
-    @Insert(onConflict = OnConflictStrategy.REPLACE)
-    suspend fun insertSegments(segments: List<TranscriptSegment>)
-
-    @Insert(onConflict = OnConflictStrategy.REPLACE)
-    suspend fun insertSegment(segment: TranscriptSegment)
-
-    @Query("SELECT * FROM transcript_segments WHERE recordingId = :recordingId ORDER BY sequence ASC")
-    fun observeSegments(recordingId: String): Flow<List<TranscriptSegment>>
-
-    @Query("SELECT * FROM transcript_segments WHERE recordingId = :recordingId ORDER BY sequence ASC")
-    suspend fun getSegments(recordingId: String): List<TranscriptSegment>
-
-    @Query(
-        """
-        UPDATE transcript_segments
-        SET text = :text, isEdited = 1, editedAt = :editedAt
-        WHERE id = :id
-        """
-    )
-    suspend fun updateTranscriptSegmentText(id: Long, text: String, editedAt: Long)
-
-    @Query(
-        """
-        UPDATE recordings
-        SET rawTranscript = :rawTranscript, transcriptDirty = 1, transcriptEditedAt = :editedAt
-        WHERE id = :recordingId
-        """
-    )
-    suspend fun markTranscriptEdited(recordingId: String, rawTranscript: String, editedAt: Long)
-
-    @Query("DELETE FROM transcript_segments WHERE recordingId = :recordingId")
-    suspend fun deleteSegmentsForRecording(recordingId: String)
-
     // Rolling recording segments
-    @Insert(onConflict = OnConflictStrategy.REPLACE)
-    suspend fun insertRecordingSegments(segments: List<RecordingSegment>)
-
-    @Insert(onConflict = OnConflictStrategy.REPLACE)
-    suspend fun insertRecordingSegment(segment: RecordingSegment)
-
     @Query("SELECT * FROM recording_segments WHERE recordingId = :recordingId ORDER BY sequence ASC")
     fun observeRecordingSegments(recordingId: String): Flow<List<RecordingSegment>>
 
     @Query("SELECT * FROM recording_segments WHERE recordingId = :recordingId ORDER BY sequence ASC")
     suspend fun getRecordingSegments(recordingId: String): List<RecordingSegment>
-
-    @Query(
-        """
-        UPDATE recording_segments
-        SET status = 'TRANSCRIBED', errorMessage = NULL
-        WHERE recordingId = :recordingId
-          AND status IN ('READY', 'TRANSCRIBING')
-        """
-    )
-    suspend fun markRecordingSegmentsTranscribed(recordingId: String)
 
     @Query("DELETE FROM recording_segments WHERE recordingId = :recordingId")
     suspend fun deleteRecordingSegmentsForRecording(recordingId: String)
@@ -117,7 +184,7 @@ interface RecordingDao {
            OR summary LIKE '%' || :query || '%'
            OR draftSummary LIKE '%' || :query || '%'
            OR finalSummary LIKE '%' || :query || '%'
-           OR rawTranscript LIKE '%' || :query || '%'
+           OR correctedTranscript LIKE '%' || :query || '%'
         ORDER BY createdAt DESC
     """)
     fun searchRecordings(query: String): Flow<List<Recording>>
@@ -134,7 +201,7 @@ interface RecordingDao {
                   OR draftSummary LIKE '%' || :query || '%'
                   OR finalSummary LIKE '%' || :query || '%'
               ))
-              OR (:searchTranscript = 1 AND rawTranscript LIKE '%' || :query || '%')
+              OR (:searchTranscript = 1 AND correctedTranscript LIKE '%' || :query || '%')
           )
         ORDER BY createdAt DESC
     """)
@@ -146,6 +213,45 @@ interface RecordingDao {
         searchTranscript: Boolean
     ): Flow<List<Recording>>
 
-    @Query("DELETE FROM recordings WHERE expirationDate IS NOT NULL AND expirationDate < :nowMs")
-    suspend fun deleteExpired(nowMs: Long): Int
+    @Query(
+        """
+        SELECT * FROM recordings
+        WHERE audioAvailable = 1
+          AND keepAudio = 0
+          AND audioExpiresAt IS NOT NULL
+          AND audioExpiresAt <= :nowMs
+          AND processingStatus IN ('COMPLETED', 'FAILED')
+        ORDER BY audioExpiresAt ASC
+        """
+    )
+    suspend fun getAudioExpiryCandidates(nowMs: Long): List<Recording>
+
+    @Query("SELECT id, originalFilePath FROM recordings WHERE id != :recordingId AND audioAvailable = 1")
+    suspend fun getOtherAvailableAudioOwners(recordingId: String): List<RecordingAudioOwnerPath>
+
+    @Query(
+        """
+        SELECT recording_segments.recordingId, recording_segments.filePath FROM recording_segments
+        INNER JOIN recordings ON recordings.id = recording_segments.recordingId
+        WHERE recording_segments.recordingId != :recordingId
+          AND recordings.audioAvailable = 1
+        """
+    )
+    suspend fun getOtherAvailableRecordingSegments(recordingId: String): List<RecordingSegmentOwnerPath>
+
+    @Query(
+        """
+        UPDATE recordings SET audioAvailable = 0
+        WHERE id = :id
+          AND audioAvailable = 1
+          AND keepAudio = 0
+          AND audioExpiresAt IS NOT NULL
+          AND audioExpiresAt <= :nowMs
+          AND processingStatus IN ('COMPLETED', 'FAILED')
+        """
+    )
+    suspend fun markAudioUnavailableIfStillEligible(id: String, nowMs: Long): Int
+
+    @Query("UPDATE recordings SET keepAudio = :keepAudio WHERE id = :id")
+    suspend fun setKeepAudio(id: String, keepAudio: Boolean): Int
 }

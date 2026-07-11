@@ -252,9 +252,9 @@ private fun recordingPreview(rec: Recording, query: String, filters: SearchFilte
     val q = query.trim()
     val candidates = when (filters.scope) {
         SearchScope.SUMMARY -> listOf(summary)
-        SearchScope.TRANSCRIPT -> listOf(rec.rawTranscript)
+        SearchScope.TRANSCRIPT -> listOf(rec.correctedTranscript)
         SearchScope.ITEMS -> emptyList()
-        SearchScope.ALL -> listOf(summary, rec.rawTranscript)
+        SearchScope.ALL -> listOf(summary, rec.correctedTranscript)
     }.filterNotNull().filter { it.isNotBlank() }
     val matched = candidates.firstOrNull { q.isNotBlank() && it.contains(q, ignoreCase = true) }
         ?: candidates.firstOrNull()

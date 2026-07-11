@@ -29,6 +29,9 @@ interface ItemDao {
     @Query("SELECT * FROM extracted_items WHERE recordingId = :recordingId ORDER BY id ASC")
     fun observeForRecording(recordingId: String): Flow<List<ExtractedItem>>
 
+    @Query("SELECT * FROM extracted_items WHERE recordingId = :recordingId ORDER BY id ASC")
+    suspend fun getForRecordingSnapshot(recordingId: String): List<ExtractedItem>
+
     @Query(
         """
         SELECT extracted_items.*

@@ -1,15 +1,12 @@
 package app.murmurnote.android.data.local.entity
 
-import androidx.room.ColumnInfo
 import androidx.room.Entity
 import androidx.room.ForeignKey
 import androidx.room.Index
 import androidx.room.PrimaryKey
 
-enum class RecordingSegmentStatus { READY, TRANSCRIBING, TRANSCRIBED, FAILED }
-
 @Entity(
-    tableName = "recording_segments",
+    tableName = "legacy_transcript_segment_conflicts",
     foreignKeys = [
         ForeignKey(
             entity = Recording::class,
@@ -20,22 +17,18 @@ enum class RecordingSegmentStatus { READY, TRANSCRIBING, TRANSCRIBED, FAILED }
     ],
     indices = [
         Index("recordingId"),
-        Index(value = ["recordingId", "sequence"], unique = true)
+        Index(value = ["legacySegmentId"], unique = true)
     ]
 )
-data class RecordingSegment(
+data class LegacyTranscriptSegmentConflict(
     @PrimaryKey(autoGenerate = true) val id: Long = 0,
     val recordingId: String,
+    val legacySegmentId: Long,
     val sequence: Int,
-    val filePath: String,
+    val text: String,
     val startMs: Long,
     val endMs: Long,
-    val status: RecordingSegmentStatus,
-    val errorMessage: String? = null,
-    val transcriptText: String? = null,
-    val asrConfigFingerprint: String? = null,
-    val vadPresetVersion: String? = null,
-    val cutReason: String? = null,
-    @ColumnInfo(defaultValue = "0")
-    val overlapBeforeMs: Long = 0
+    val isEdited: Boolean,
+    val editedAt: Long?,
+    val reason: String
 )

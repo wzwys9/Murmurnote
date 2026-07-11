@@ -1,6 +1,5 @@
 package app.murmurnote.android.ui.screen.detail
 
-import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -15,7 +14,6 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Delete
@@ -45,7 +43,6 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
@@ -95,15 +92,26 @@ fun DetailScreen(
         ) {
             // 播放器
             item {
-                PlayerCard(
-                    isPlaying = state.isPlaying,
-                    durationMs = state.durationMs,
-                    positionMs = state.positionMs,
-                    speed = state.speed,
-                    onTogglePlay = viewModel::togglePlay,
-                    onSeek = { viewModel.seekTo(it) },
-                    onSpeed = { viewModel.setSpeed(it) }
-                )
+                if (state.recording?.audioAvailable == false) {
+                    Card(modifier = Modifier.fillMaxWidth()) {
+                        Text(
+                            "音频已按留存策略清理；转写、修订和总结仍保留。",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.padding(16.dp)
+                        )
+                    }
+                } else {
+                    PlayerCard(
+                        isPlaying = state.isPlaying,
+                        durationMs = state.durationMs,
+                        positionMs = state.positionMs,
+                        speed = state.speed,
+                        onTogglePlay = viewModel::togglePlay,
+                        onSeek = { viewModel.seekTo(it) },
+                        onSpeed = { viewModel.setSpeed(it) }
+                    )
+                }
             }
 
             state.recording?.let { rec ->
@@ -111,12 +119,15 @@ fun DetailScreen(
                     TagsArchiveCard(
                         tags = rec.tags.toTagList(),
                         archived = rec.archived,
+                        keepAudio = rec.keepAudio,
+                        audioAvailable = rec.audioAvailable,
                         draft = state.tagDraft,
                         error = state.tagError,
                         onDraftChange = viewModel::updateTagDraft,
                         onAdd = viewModel::addTag,
                         onRemove = viewModel::removeTag,
-                        onToggleArchived = viewModel::toggleArchived
+                        onToggleArchived = viewModel::toggleArchived,
+                        onToggleKeepAudio = viewModel::toggleKeepAudio
                     )
                 }
             }
@@ -152,19 +163,25 @@ fun DetailScreen(
                 val hasSummary = !rec.finalSummary.isNullOrBlank() ||
                     !rec.summary.isNullOrBlank() ||
                     !rec.draftSummary.isNullOrBlank()
-                val showSummaryCard = hasSummary && (
-                    rec.processingStatus == ProcessingStatus.COMPLETED ||
-                        rec.processingStatus == ProcessingStatus.FAILED
-                    )
+                val canOfferManualSummary = !rec.correctedTranscript.isNullOrBlank()
+                val showSummaryCard = (hasSummary || canOfferManualSummary) &&
+                    (rec.processingStatus == ProcessingStatus.COMPLETED ||
+                        rec.processingStatus == ProcessingStatus.FAILED)
                 if (showSummaryCard) {
                     item {
                         SummaryCard(
                             summary = rec.finalSummary ?: rec.summary,
                             draftSummary = rec.draftSummary,
+                            summaryRevision = rec.summaryTranscriptRevision,
+                            currentRevision = rec.correctionRevision,
+                            isStale = hasSummary && (
+                                rec.transcriptDirty ||
+                                    rec.summaryTranscriptRevision != rec.correctionRevision
+                                ),
                             createdAt = rec.createdAt,
                             regenerating = state.regeneratingSummary,
                             regenerateError = state.regenerateError,
-                            canRegenerate = !rec.rawTranscript.isNullOrBlank(),
+                            canRegenerate = !rec.correctedTranscript.isNullOrBlank(),
                             onRegenerate = viewModel::regenerateSummary,
                             onDismissError = viewModel::clearRegenerateError
                         )
@@ -193,6 +210,15 @@ fun DetailScreen(
                 ItemType.NOTE to "📌 备忘",
                 ItemType.DECISION to "🎯 决策"
             )
+            if (state.items.isNotEmpty() && state.recording?.transcriptDirty == true) {
+                item(key = "stale-items-warning") {
+                    Text(
+                        "下方提取项基于旧转写修订；重新生成总结后才会更新。",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.error
+                    )
+                }
+            }
             sections.forEach { (type, label) ->
                 val items = state.items.filter { it.type == type }
                 if (items.isNotEmpty()) {
@@ -240,7 +266,7 @@ fun DetailScreen(
             }
 
             // 转写
-            if (state.segments.isNotEmpty()) {
+            if (state.segments.isNotEmpty() || state.recording?.correctedTranscript != null) {
                 item {
                     Card(modifier = Modifier.fillMaxWidth()) {
                         Box(modifier = Modifier.fillMaxWidth().padding(16.dp)) {
@@ -254,7 +280,21 @@ fun DetailScreen(
                                 )
                             }
                             Column(modifier = Modifier.fillMaxWidth().padding(top = 18.dp)) {
-                                Text("完整转写", style = MaterialTheme.typography.titleSmall)
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Text(
+                                        if (state.showRawTranscript) "识别原文（只读）" else "完整转写（当前修订）",
+                                        style = MaterialTheme.typography.titleSmall,
+                                        modifier = Modifier.weight(1f)
+                                    )
+                                    TextButton(onClick = viewModel::toggleRawTranscript) {
+                                        Text(if (state.showRawTranscript) "返回修正文" else "查看原文")
+                                    }
+                                    if (!state.showRawTranscript && state.segments.any { it.rawText != it.correctedText }) {
+                                        TextButton(onClick = viewModel::revertTranscriptToRaw) {
+                                            Text("恢复原文")
+                                        }
+                                    }
+                                }
                                 if (rec?.transcriptDirty == true) {
                                     Spacer(Modifier.height(4.dp))
                                     Text(
@@ -290,19 +330,82 @@ fun DetailScreen(
                                         }
                                     }
                                 }
-                                Spacer(Modifier.height(8.dp))
-                                state.segments.forEach { seg ->
-                                    TranscriptSegmentRow(
-                                        segment = seg,
-                                        editing = state.editingSegmentId == seg.id,
-                                        draft = state.segmentDraft,
-                                        saving = state.savingSegment,
-                                        onSeek = { viewModel.seekTo(seg.startMs) },
-                                        onEdit = { viewModel.startEditingSegment(seg) },
-                                        onDraftChange = viewModel::updateSegmentDraft,
-                                        onSave = viewModel::saveSegmentEdit,
-                                        onCancel = viewModel::cancelSegmentEdit
+                                state.correctionActionMessage?.let { message ->
+                                    Spacer(Modifier.height(4.dp))
+                                    Text(
+                                        message,
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.primary
                                     )
+                                    val pendingRuleDiff = state.pendingRuleDiff
+                                    if (pendingRuleDiff != null) {
+                                        Text(
+                                            "精确映射：“${pendingRuleDiff.observedText}” → “${pendingRuleDiff.replacementText}”",
+                                            style = MaterialTheme.typography.bodySmall
+                                        )
+                                        FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                            TextButton(
+                                                onClick = { viewModel.rememberPendingRule(global = false) },
+                                                enabled = !state.savingRule
+                                            ) {
+                                                Text("记住本次录音")
+                                            }
+                                            TextButton(
+                                                onClick = { viewModel.rememberPendingRule(global = true) },
+                                                enabled = !state.savingRule
+                                            ) {
+                                                Text("记为全局规则")
+                                            }
+                                            TextButton(
+                                                onClick = viewModel::dismissCorrectionAction,
+                                                enabled = !state.savingRule
+                                            ) {
+                                                Text("不记住")
+                                            }
+                                        }
+                                    } else if (state.lastCreatedRuleId != null) {
+                                        TextButton(
+                                            onClick = viewModel::undoLastRememberedRule,
+                                            enabled = !state.savingRule
+                                        ) {
+                                            Text("撤销刚创建的规则")
+                                        }
+                                    } else {
+                                        TextButton(onClick = viewModel::dismissCorrectionAction) {
+                                            Text("知道了")
+                                        }
+                                    }
+                                }
+                                Spacer(Modifier.height(8.dp))
+                                if (state.segments.isEmpty()) {
+                                    Text(
+                                        text = if (state.showRawTranscript) {
+                                            rec?.rawTranscript.orEmpty()
+                                        } else {
+                                            rec?.correctedTranscript.orEmpty()
+                                        },
+                                        style = MaterialTheme.typography.bodyMedium,
+                                        color = if (state.showRawTranscript) {
+                                            MaterialTheme.colorScheme.onSurfaceVariant
+                                        } else {
+                                            MaterialTheme.colorScheme.onSurface
+                                        }
+                                    )
+                                } else {
+                                    state.segments.forEach { seg ->
+                                        TranscriptSegmentRow(
+                                            segment = seg,
+                                            showRaw = state.showRawTranscript,
+                                            editing = state.editingSegmentId == seg.id,
+                                            draft = state.segmentDraft,
+                                            saving = state.savingSegment,
+                                            onSeek = { viewModel.seekTo(seg.startMs) },
+                                            onEdit = { viewModel.startEditingSegment(seg) },
+                                            onDraftChange = viewModel::updateSegmentDraft,
+                                            onSave = viewModel::saveSegmentEdit,
+                                            onCancel = viewModel::cancelSegmentEdit
+                                        )
+                                    }
                                 }
                             }
                         }
@@ -358,12 +461,15 @@ private fun ExportCard(
 private fun TagsArchiveCard(
     tags: List<String>,
     archived: Boolean,
+    keepAudio: Boolean,
+    audioAvailable: Boolean,
     draft: String,
     error: String?,
     onDraftChange: (String) -> Unit,
     onAdd: () -> Unit,
     onRemove: (String) -> Unit,
-    onToggleArchived: () -> Unit
+    onToggleArchived: () -> Unit,
+    onToggleKeepAudio: () -> Unit
 ) {
     Card(modifier = Modifier.fillMaxWidth()) {
         Column(modifier = Modifier.padding(16.dp)) {
@@ -375,6 +481,11 @@ private fun TagsArchiveCard(
                 )
                 TextButton(onClick = onToggleArchived) {
                     Text(if (archived) "取消归档" else "归档")
+                }
+                if (audioAvailable) {
+                    TextButton(onClick = onToggleKeepAudio) {
+                        Text(if (keepAudio) "恢复30天清理" else "长期保留音频")
+                    }
                 }
             }
             if (tags.isNotEmpty()) {
@@ -422,6 +533,7 @@ private fun TagsArchiveCard(
 @Composable
 private fun TranscriptSegmentRow(
     segment: TranscriptSegment,
+    showRaw: Boolean,
     editing: Boolean,
     draft: String,
     saving: Boolean,
@@ -439,9 +551,9 @@ private fun TranscriptSegmentRow(
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier.weight(1f)
             )
-            if (segment.isEdited) {
+            if (segment.rawText != segment.correctedText) {
                 Text(
-                    "已编辑",
+                    if (segment.isEdited) "已编辑" else "规则修正",
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.primary
                 )
@@ -458,7 +570,7 @@ private fun TranscriptSegmentRow(
                 IconButton(onClick = onCancel, enabled = !saving) {
                     Icon(Icons.Filled.Close, contentDescription = "取消")
                 }
-            } else {
+            } else if (!showRaw) {
                 IconButton(onClick = onEdit) {
                     Icon(Icons.Filled.Edit, contentDescription = "编辑转写")
                 }
@@ -473,8 +585,13 @@ private fun TranscriptSegmentRow(
             )
         } else {
             Text(
-                text = segment.text,
+                text = if (showRaw) segment.rawText else segment.correctedText,
                 style = MaterialTheme.typography.bodyMedium,
+                color = if (showRaw) {
+                    MaterialTheme.colorScheme.onSurfaceVariant
+                } else {
+                    MaterialTheme.colorScheme.onSurface
+                },
                 modifier = Modifier
                     .fillMaxWidth()
                     .clickable { onSeek() }
@@ -497,8 +614,8 @@ private fun RecordingSegmentsCard(segments: List<RecordingSegment>) {
             )
             Spacer(Modifier.height(4.dp))
             Text(
-                if (failed > 0) "$failed 段失败，最终处理会补跑缺失转写。"
-                else "用于录音中实时转写和最终处理复用。",
+                if (failed > 0) "$failed 段实时预览失败；停止后会用完整音频重新识别。"
+                else "这些只是录音中的非最终预览，不会自动成为最终转写。",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
@@ -617,7 +734,7 @@ private fun ReprocessCard(
         )
         canReprocess -> Triple(
             "ℹ 转写或 AI 提取无内容",
-            "可能是网络抖动 / Ollama 服务忙 / 录音过短。点重试再跑一次。",
+            "可能是网络抖动 / AI 服务忙 / 录音过短。点重试再跑一次。",
             Color(0xFFE08300)
         )
         status != null && status != ProcessingStatus.COMPLETED -> Triple(
@@ -682,12 +799,15 @@ private fun ReprocessCard(
  * AI 总结卡片：
  * - 有内容：直接显示 + 右上角小刷新按钮（让满意度低的用户也能再 roll 一次）
  * - 空 / "（提取失败：...）" fallback：突出"未提取到要点"，给一个大的「重新生成总结」按钮
- * 仅重跑 LLM 提取，不动 ASR；前提是 rawTranscript 非空（否则禁用按钮）。
+ * 仅重跑 LLM 提取，不动 ASR；前提是 correctedTranscript 非空（否则禁用按钮）。
  */
 @Composable
 private fun SummaryCard(
     summary: String?,
     draftSummary: String?,
+    summaryRevision: Long?,
+    currentRevision: Long,
+    isStale: Boolean,
     createdAt: Long,
     regenerating: Boolean,
     regenerateError: String?,
@@ -706,6 +826,16 @@ private fun SummaryCard(
                 modifier = Modifier.align(Alignment.TopEnd)
             )
             Column(modifier = Modifier.fillMaxWidth().padding(top = 18.dp)) {
+                if (isStale) {
+                    Text(
+                        summaryRevision?.let {
+                            "总结基于修订 $it，当前为 $currentRevision；内容已过期。"
+                        } ?: "该总结未绑定转写修订，当前为 $currentRevision；请重新生成。",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.error
+                    )
+                    Spacer(Modifier.height(8.dp))
+                }
                 draftSummary?.takeIf { it.isNotBlank() && it != summary }?.let {
                     Text(
                         "录音中临时总结",
@@ -745,7 +875,7 @@ private fun SummaryCard(
                 Spacer(Modifier.height(4.dp))
                 if (isEmptyOrFallback) {
                     Text(
-                        summary?.takeIf { it.isNotBlank() } ?: "AI 没能从这段录音提取到要点。",
+                        summary?.takeIf { it.isNotBlank() } ?: "尚未为当前转写生成 AI 总结。",
                         style = MaterialTheme.typography.bodyMedium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
@@ -814,9 +944,9 @@ private fun labelOf(s: ProcessingStatus): String = when (s) {
     ProcessingStatus.PENDING -> "排队中"
     ProcessingStatus.RECORDING -> "录音中"
     ProcessingStatus.CONVERTING -> "转码 mono WAV"
-    ProcessingStatus.SPLITTING -> "切分静音段"
-    ProcessingStatus.TRANSCRIBING -> "GLM-ASR 转写"
-    ProcessingStatus.EXTRACTING -> "Ollama AI 提取"
+    ProcessingStatus.SPLITTING -> "Silero VAD 语音切段"
+    ProcessingStatus.TRANSCRIBING -> "ASR 转写"
+    ProcessingStatus.EXTRACTING -> "AI 提取"
     ProcessingStatus.COMPLETED -> "已完成"
     ProcessingStatus.FAILED -> "失败"
 }
