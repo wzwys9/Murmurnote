@@ -40,7 +40,7 @@ class AudioConverter @Inject constructor(
             append(" -f wav ")
             append(quote(output.absolutePath))
         }
-        logger.i("Convert", "begin ${input.name} (size=${input.length()}) → ${output.name}")
+        logger.i("Convert", "begin inputBytes=${input.length()}")
 
         val started = SystemClock.elapsedRealtime()
         val deferred = CompletableDeferred<Unit>()
@@ -49,18 +49,17 @@ class AudioConverter @Inject constructor(
             if (ReturnCode.isSuccess(rc)) {
                 deferred.complete(Unit)
             } else {
-                val tail = session.allLogsAsString.takeLast(800)
-                logger.e("Convert", "ffmpeg failed rc=$rc input=${input.name} tail=$tail")
+                logger.e("Convert", "ffmpeg failed rc=$rc")
                 deferred.completeExceptionally(
-                    IllegalStateException("ffmpeg convert failed: rc=$rc, log=$tail")
+                    IllegalStateException("ffmpeg convert failed: rc=$rc")
                 )
             }
         }
         deferred.await()
-        check(output.exists() && output.length() > 0) { "ffmpeg produced empty output: ${output.absolutePath}" }
+        check(output.exists() && output.length() > 0) { "ffmpeg produced empty output" }
         logger.i(
             "Convert",
-            "done ${input.name} → ${output.name} size=${output.length()} elapsed=${SystemClock.elapsedRealtime() - started}ms"
+            "done outputBytes=${output.length()} elapsed=${SystemClock.elapsedRealtime() - started}ms"
         )
         return output
     }

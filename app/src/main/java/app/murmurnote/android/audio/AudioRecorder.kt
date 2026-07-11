@@ -14,37 +14,53 @@ import kotlin.math.log10
 
 @Singleton
 class AudioRecorder @Inject constructor(
+    private val sileroVadDetector: SileroVadDetector,
     private val logger: Logger
 ) {
     companion object {
         const val SAMPLE_RATE_HZ = 16_000
-        const val ROLLING_SEGMENT_MS = 15_000L
-        private const val LIVE_PAUSE_SEGMENT_MS = 1_800L
-        private const val LIVE_HARD_CUT_OVERLAP_MS = 600L
-        private const val MIN_LIVE_SEGMENT_MS = 4_000L
-        private const val MIN_LIVE_SPEECH_MS = 1_000L
-        private const val SPEECH_RMS_DBFS_THRESHOLD = -55.0
         private const val CHANNEL_COUNT = 1
         private const val BITS_PER_SAMPLE = 16
         private const val BYTES_PER_SAMPLE = BITS_PER_SAMPLE / 8
         private const val BYTE_RATE = SAMPLE_RATE_HZ * CHANNEL_COUNT * BYTES_PER_SAMPLE
+        private const val CAPTURE_READ_BUFFER_BYTES = BYTE_RATE / 5
         private const val WAV_HEADER_BYTES = 44
         private const val MAX_UINT32 = 0xffff_ffffL
-        private val SEGMENT_PCM_BYTES = msToPcmBytes(ROLLING_SEGMENT_MS)
-        private val HARD_CUT_OVERLAP_BYTES = msToPcmBytes(LIVE_HARD_CUT_OVERLAP_MS).toInt()
-        private val PAUSE_PCM_BYTES = msToPcmBytes(LIVE_PAUSE_SEGMENT_MS)
-        private val MIN_SEGMENT_PCM_BYTES = msToPcmBytes(MIN_LIVE_SEGMENT_MS)
-        private val MIN_SPEECH_PCM_BYTES = msToPcmBytes(MIN_LIVE_SPEECH_MS)
+        private const val LIVE_VAD_QUEUE_CAPACITY = 32
+        private const val LIVE_VAD_STOP_TIMEOUT_MS = 10_000L
+        private const val MAX_PENDING_PREVIEW_SEGMENTS = 8
 
-        private fun msToPcmBytes(ms: Long): Long =
-            ((ms * BYTE_RATE) / 1000L).coerceAtLeast(0L)
+        /**
+         * The canonical WAV write always happens before the best-effort preview handoff. Preview
+         * rejection or failure can therefore disable only live UI and never drop source audio.
+         */
+        internal fun dispatchCapturedPcm(
+            buffer: ByteArray,
+            length: Int,
+            isSessionActive: () -> Boolean = { true },
+            writeLossless: (ByteArray, Int) -> Unit,
+            offerLivePreview: (ByteArray, Int) -> Boolean,
+            onLivePreviewFailure: (Throwable) -> Unit = {}
+        ): Boolean {
+            if (!isSessionActive()) return false
+            writeLossless(buffer, length)
+            return try {
+                offerLivePreview(buffer, length)
+            } catch (failure: Throwable) {
+                onLivePreviewFailure(failure)
+                false
+            }
+        }
     }
 
     data class RecordedSegment(
         val sequence: Int,
         val file: File,
         val startMs: Long,
-        val endMs: Long
+        val endMs: Long,
+        val cutReason: NeuralVadSegmentPlanner.CutReason,
+        val overlapBeforeMs: Long,
+        val vadPresetVersion: String
     )
 
     private val lock = Any()
@@ -56,14 +72,11 @@ class AudioRecorder @Inject constructor(
     private var currentFile: File? = null
     private var segmentDir: File? = null
     private var finalWriter: WavWriter? = null
-    private var segmentWriter: WavWriter? = null
+    private var liveVadWorker: NonBlockingLiveVadWorker? = null
+    private var liveVadToken: Any? = null
+    private var captureToken: Any? = null
+    private var lastLiveVadSnapshot = LiveVadWorkerSnapshot(LiveVadWorkerState.NEW)
     private val segments = mutableListOf<RecordedSegment>()
-    private var currentSegmentSequence: Int = 0
-    private var currentSegmentStartPcmBytes: Long = 0L
-    private var currentSegmentSpeechPcmBytes: Long = 0L
-    private var currentSegmentTrailingSilencePcmBytes: Long = 0L
-    private var totalPcmBytes: Long = 0L
-    private val hardCutOverlapBuffer = PcmOverlapBuffer(HARD_CUT_OVERLAP_BYTES)
     @Volatile private var lastAmplitude: Int = 0
 
     @Volatile var isRecording: Boolean = false
@@ -73,7 +86,11 @@ class AudioRecorder @Inject constructor(
 
     @SuppressLint("MissingPermission")
     fun start(target: File): File {
-        check(!isRecording) { "Recorder already started" }
+        synchronized(lock) {
+            check(!isRecording && currentFile == null && recordingThread == null) {
+                "Recorder is already active or still stopping"
+            }
+        }
         target.parentFile?.mkdirs()
         if (target.exists()) target.delete()
 
@@ -83,7 +100,7 @@ class AudioRecorder @Inject constructor(
             AudioFormat.ENCODING_PCM_16BIT
         )
         check(minBuffer > 0) { "AudioRecord min buffer unavailable: $minBuffer" }
-        val bufferSize = maxOf(minBuffer, BYTE_RATE / 5)
+        val bufferSize = maxOf(minBuffer, CAPTURE_READ_BUFFER_BYTES)
 
         val record = AudioRecord(
             MediaRecorder.AudioSource.MIC,
@@ -97,27 +114,38 @@ class AudioRecorder @Inject constructor(
             error("AudioRecord 初始化失败")
         }
 
-        val segmentsDirectory = File(target.parentFile, "${target.nameWithoutExtension}_segments")
-        if (segmentsDirectory.exists()) segmentsDirectory.deleteRecursively()
-        segmentsDirectory.mkdirs()
-
+        val previewDirectory = File(target.parentFile, "${target.nameWithoutExtension}_segments")
+        if (previewDirectory.exists()) {
+            check(previewDirectory.deleteRecursively()) { "无法清理旧的实时预览目录" }
+        }
+        check(previewDirectory.mkdirs()) { "无法创建实时预览目录" }
+        val liveToken = Any()
+        val worker = NonBlockingLiveVadWorker(
+            queueCapacity = LIVE_VAD_QUEUE_CAPACITY,
+            processorFactory = {
+                LiveNeuralVadPcmProcessor(
+                    session = sileroVadDetector.openStreamingSession(),
+                    outputDirectory = previewDirectory,
+                    onSegment = { segment -> acceptLiveVadSegment(liveToken, segment) }
+                )
+            }
+        )
         synchronized(lock) {
             currentFile = target
-            segmentDir = segmentsDirectory
+            segmentDir = previewDirectory
             finalWriter = WavWriter(target).also { it.open() }
+            liveVadWorker = worker
+            liveVadToken = liveToken
+            captureToken = liveToken
+            lastLiveVadSnapshot = LiveVadWorkerSnapshot(LiveVadWorkerState.STARTING)
             segments.clear()
-            hardCutOverlapBuffer.clear()
-            totalPcmBytes = 0L
-            currentSegmentSequence = 0
-            currentSegmentStartPcmBytes = 0L
-            openSegmentLocked()
         }
-
         try {
+            worker.start()
             record.startRecording()
         } catch (t: Throwable) {
-            cleanupAfterFailedStart(record, target, segmentsDirectory)
-            logger.e("Rec", "AudioRecord.startRecording failed for ${target.name}", t)
+            cleanupAfterFailedStart(record, target, previewDirectory, worker)
+            logger.e("Rec", "AudioRecord.startRecording failed", t)
             throw t
         }
 
@@ -130,13 +158,24 @@ class AudioRecorder @Inject constructor(
         isPaused = false
 
         recordingThread = Thread(
-            { recordLoop(record, bufferSize) },
+            {
+                recordLoop(
+                    record = record,
+                    bufferSize = CAPTURE_READ_BUFFER_BYTES,
+                    token = liveToken,
+                    writer = checkNotNull(finalWriter),
+                    worker = worker
+                )
+            },
             "MurmurnoteAudioRecorder"
         ).also { it.start() }
         logger.i(
             "Rec",
-            "start wav → ${target.absolutePath}; rolling=${ROLLING_SEGMENT_MS}ms " +
-                "pauseCut=${LIVE_PAUSE_SEGMENT_MS}ms overlap=${LIVE_HARD_CUT_OVERLAP_MS}ms"
+            "start lossless wav capture",
+            fields = mapOf(
+                "sampleRateHz" to SAMPLE_RATE_HZ,
+                "vadPreset" to NeuralVadSegmentPlanner.PRESET.version,
+            ),
         )
         return target
     }
@@ -145,20 +184,10 @@ class AudioRecorder @Inject constructor(
         if (!isRecording || isPaused) return
         isPaused = true
         pauseStartMs = SystemClock.elapsedRealtime()
-        synchronized(lock) {
-            if (finishSegmentLocked(discardIfNoSpeech = false)) {
-                currentSegmentSequence += 1
-            }
-            currentSegmentStartPcmBytes = totalPcmBytes
-        }
     }
 
     fun resume() {
         if (!isRecording || !isPaused) return
-        synchronized(lock) {
-            currentSegmentStartPcmBytes = totalPcmBytes
-            if (segmentWriter == null) openSegmentLocked()
-        }
         pausedAccumulatedMs += SystemClock.elapsedRealtime() - pauseStartMs
         isPaused = false
     }
@@ -168,40 +197,66 @@ class AudioRecorder @Inject constructor(
         isRecording = false
         isPaused = false
         runCatching { audioRecord?.stop() }
-        recordingThread?.join(2_000)
+        val captureThread = recordingThread
+        captureThread?.join(2_000)
         runCatching { audioRecord?.release() }
+        if (captureThread?.isAlive == true) {
+            captureThread.interrupt()
+            captureThread.join(2_000)
+        }
+        val worker = synchronized(lock) { liveVadWorker }
+        val liveSnapshot = finishLiveVad(worker)
 
-        val result = synchronized(lock) {
-            finishSegmentLocked(discardIfNoSpeech = false)
+        val previewSegmentCount: Int
+        val file = synchronized(lock) {
             finalWriter?.close()
-            writeSegmentManifestLocked()
-            val segmentCount = segments.size
             val file = currentFile
+            previewSegmentCount = segments.size
+            lastLiveVadSnapshot = liveSnapshot
             clearStateLocked()
-            file to segmentCount
+            file
         }
         logger.i(
             "Rec",
-            "stop wav → ${result.first?.absolutePath} segments=${result.second} size=${result.first?.length() ?: 0}"
+            "stop lossless wav",
+            fields = mapOf(
+                "bytes" to (file?.length() ?: 0L),
+                "previewSegments" to previewSegmentCount,
+                "liveVadState" to liveSnapshot.state.name,
+                "droppedPreviewChunks" to liveSnapshot.droppedChunkCount,
+            )
         )
-        return result.first
+        return file
     }
 
     fun cancel() {
-        val cancelledFile = currentFile?.absolutePath
+        val hadCancelledFile = currentFile != null
         isRecording = false
         isPaused = false
         runCatching { audioRecord?.stop() }
-        recordingThread?.join(2_000)
+        val captureThread = recordingThread
+        captureThread?.join(2_000)
         runCatching { audioRecord?.release() }
+        if (captureThread?.isAlive == true) {
+            captureThread.interrupt()
+            captureThread.join(2_000)
+        }
+        val worker = synchronized(lock) { liveVadWorker }
+        worker?.abort()
+        val workerStopped = worker?.awaitStopped(LIVE_VAD_STOP_TIMEOUT_MS) ?: true
         synchronized(lock) {
-            runCatching { segmentWriter?.close() }
             runCatching { finalWriter?.close() }
             currentFile?.delete()
-            segmentDir?.deleteRecursively()
+            val directory = segmentDir
+            if (workerStopped) directory?.deleteRecursively()
+            else if (directory != null) {
+                deletePreviewDirectoryWhenWorkerStops(checkNotNull(worker), directory)
+            }
+            lastLiveVadSnapshot = worker?.snapshot()
+                ?: LiveVadWorkerSnapshot(LiveVadWorkerState.ABORTED)
             clearStateLocked()
         }
-        if (cancelledFile != null) logger.d("Rec", "low-level cancel cleared $cancelledFile")
+        if (hadCancelledFile) logger.d("Rec", "low-level cancel cleared recording files")
     }
 
     fun elapsedMs(): Long {
@@ -212,98 +267,62 @@ class AudioRecorder @Inject constructor(
 
     fun amplitudeDb(): Int = lastAmplitude
 
-    fun recordedSegments(): List<RecordedSegment> = synchronized(lock) { segments.toList() }
+    internal fun recordedSegments(): List<RecordedSegment> = synchronized(lock) {
+        segments.toList()
+    }
 
-    private fun recordLoop(record: AudioRecord, bufferSize: Int) {
+    internal fun discardRecordedSegment(sequence: Int) {
+        val file = synchronized(lock) {
+            val segment = segments.firstOrNull { it.sequence == sequence } ?: return
+            segments.remove(segment)
+            segment.file
+        }
+        runCatching { file.delete() }
+    }
+
+    internal fun liveVadSnapshot(): LiveVadWorkerSnapshot {
+        val worker = synchronized(lock) { liveVadWorker }
+        return worker?.snapshot() ?: synchronized(lock) { lastLiveVadSnapshot }
+    }
+
+    private fun recordLoop(
+        record: AudioRecord,
+        bufferSize: Int,
+        token: Any,
+        writer: WavWriter,
+        worker: NonBlockingLiveVadWorker
+    ) {
         val buffer = ByteArray(bufferSize - (bufferSize % 2))
-        while (isRecording) {
+        while (isCaptureSessionActive(token)) {
             val read = record.read(buffer, 0, buffer.size)
             if (read > 0) {
+                if (!isCaptureSessionActive(token)) break
                 val evenRead = read - (read % BYTES_PER_SAMPLE)
                 if (evenRead <= 0) continue
                 updateAmplitude(buffer, evenRead)
                 if (!isPaused) {
-                    synchronized(lock) {
-                        finalWriter?.write(buffer, evenRead)
-                        segmentWriter?.write(buffer, evenRead)
-                        totalPcmBytes += evenRead
-                        hardCutOverlapBuffer.write(buffer, evenRead)
-                        updateSegmentSpeechStateLocked(buffer, evenRead)
-                        val segmentBytes = totalPcmBytes - currentSegmentStartPcmBytes
-                        val reachedMaxSegment = segmentBytes >= SEGMENT_PCM_BYTES
-                        val reachedNaturalPause =
-                            currentSegmentSpeechPcmBytes >= MIN_SPEECH_PCM_BYTES &&
-                                segmentBytes >= MIN_SEGMENT_PCM_BYTES &&
-                                currentSegmentTrailingSilencePcmBytes >= PAUSE_PCM_BYTES
-                        if (reachedMaxSegment || reachedNaturalPause) {
-                            val forcedHardCut = reachedMaxSegment && !reachedNaturalPause
-                            if (finishSegmentLocked(discardIfNoSpeech = true)) {
-                                currentSegmentSequence += 1
-                            }
-                            val overlap = if (forcedHardCut) hardCutOverlapBuffer.snapshot() else ByteArray(0)
-                            currentSegmentStartPcmBytes = totalPcmBytes - overlap.size.toLong()
-                            openSegmentLocked(overlap)
+                    dispatchCapturedPcm(
+                        buffer = buffer,
+                        length = evenRead,
+                        isSessionActive = { isCaptureSessionActive(token) },
+                        writeLossless = { bytes, length ->
+                            writer.write(bytes, length)
+                        },
+                        offerLivePreview = { bytes, length ->
+                            worker.tryOffer(bytes, length)
+                        },
+                        onLivePreviewFailure = { failure ->
+                            worker.abort()
+                            logger.w(
+                                "Rec",
+                                "live VAD handoff failed type=${failure.javaClass.simpleName}"
+                            )
                         }
-                    }
-                }
-            } else if (read < 0 && isRecording) {
-                logger.w("Rec", "AudioRecord.read returned $read")
-            }
-        }
-    }
-
-    private fun openSegmentLocked(initialPcm: ByteArray = ByteArray(0)) {
-        val dir = segmentDir ?: return
-        val file = File(dir, "segment_${currentSegmentSequence.toString().padStart(4, '0')}.wav")
-        if (file.exists()) file.delete()
-        segmentWriter = WavWriter(file).also { it.open() }
-        currentSegmentSpeechPcmBytes = 0L
-        currentSegmentTrailingSilencePcmBytes = 0L
-        if (initialPcm.isNotEmpty()) {
-            segmentWriter?.write(initialPcm, initialPcm.size)
-            updateSegmentSpeechStateLocked(initialPcm, initialPcm.size)
-        }
-    }
-
-    private fun finishSegmentLocked(discardIfNoSpeech: Boolean): Boolean {
-        val writer = segmentWriter ?: return false
-        segmentWriter = null
-        writer.close()
-        if (writer.dataBytes <= 0L || (discardIfNoSpeech && currentSegmentSpeechPcmBytes <= 0L)) {
-            writer.file.delete()
-            currentSegmentSpeechPcmBytes = 0L
-            currentSegmentTrailingSilencePcmBytes = 0L
-            return false
-        }
-        segments += RecordedSegment(
-            sequence = currentSegmentSequence,
-            file = writer.file,
-            startMs = pcmBytesToMs(currentSegmentStartPcmBytes),
-            endMs = pcmBytesToMs(currentSegmentStartPcmBytes + writer.dataBytes)
-        )
-        return true
-    }
-
-    private fun writeSegmentManifestLocked() {
-        if (segments.isEmpty()) return
-        val final = currentFile ?: return
-        runCatching {
-            RecordingSegmentManifest.write(
-                finalFile = final,
-                sampleRateHz = SAMPLE_RATE_HZ,
-                bitsPerSample = BITS_PER_SAMPLE,
-                segmentTargetMs = ROLLING_SEGMENT_MS,
-                segments = segments.map {
-                    RecordingSegmentManifest.Segment(
-                        sequence = it.sequence,
-                        file = it.file,
-                        startMs = it.startMs,
-                        endMs = it.endMs
                     )
                 }
-            )
-        }.onFailure { e ->
-            logger.w("Rec", "failed to write rolling segment manifest: ${e.message}")
+            } else if (read < 0 && isCaptureSessionActive(token)) {
+                logger.w("Rec", "AudioRecord.read returned $read")
+            }
         }
     }
 
@@ -313,26 +332,84 @@ class AudioRecorder @Inject constructor(
         currentFile = null
         segmentDir = null
         finalWriter = null
-        segmentWriter = null
+        liveVadWorker = null
+        liveVadToken = null
+        captureToken = null
         segments.clear()
-        hardCutOverlapBuffer.clear()
-        totalPcmBytes = 0L
-        currentSegmentSequence = 0
-        currentSegmentStartPcmBytes = 0L
-        currentSegmentSpeechPcmBytes = 0L
-        currentSegmentTrailingSilencePcmBytes = 0L
         lastAmplitude = 0
     }
 
-    private fun cleanupAfterFailedStart(record: AudioRecord, target: File, segmentsDirectory: File) {
+    private fun cleanupAfterFailedStart(
+        record: AudioRecord,
+        target: File,
+        previewDirectory: File,
+        worker: NonBlockingLiveVadWorker
+    ) {
         runCatching { record.release() }
+        worker.abort()
+        val workerStopped = worker.awaitStopped(LIVE_VAD_STOP_TIMEOUT_MS)
         synchronized(lock) {
-            runCatching { segmentWriter?.close() }
             runCatching { finalWriter?.close() }
+            lastLiveVadSnapshot = worker.snapshot()
             clearStateLocked()
         }
         target.delete()
-        segmentsDirectory.deleteRecursively()
+        if (workerStopped) previewDirectory.deleteRecursively()
+        else deletePreviewDirectoryWhenWorkerStops(worker, previewDirectory)
+    }
+
+    private fun acceptLiveVadSegment(token: Any, segment: LiveVadAudioSegment) {
+        var overflowWorker: NonBlockingLiveVadWorker? = null
+        synchronized(lock) {
+            if (liveVadToken !== token) return
+            if (segments.size >= MAX_PENDING_PREVIEW_SEGMENTS) {
+                overflowWorker = liveVadWorker
+                return@synchronized
+            }
+            segments += RecordedSegment(
+                sequence = segment.sequence,
+                file = segment.file,
+                startMs = segment.startMs,
+                endMs = segment.endMs,
+                cutReason = segment.cutReason,
+                overlapBeforeMs = segment.overlapBeforeMs,
+                vadPresetVersion = segment.vadPresetVersion
+            )
+        }
+        if (overflowWorker != null) {
+            runCatching { segment.file.delete() }
+            overflowWorker?.disableForBackpressure()
+        }
+    }
+
+    private fun finishLiveVad(worker: NonBlockingLiveVadWorker?): LiveVadWorkerSnapshot {
+        if (worker == null) return LiveVadWorkerSnapshot(LiveVadWorkerState.ABORTED)
+        worker.finish()
+        if (!worker.awaitStopped(LIVE_VAD_STOP_TIMEOUT_MS)) {
+            worker.abort()
+            worker.awaitStopped(LIVE_VAD_STOP_TIMEOUT_MS)
+        }
+        return worker.snapshot()
+    }
+
+    private fun isCaptureSessionActive(token: Any): Boolean = synchronized(lock) {
+        captureToken === token && isRecording
+    }
+
+    private fun deletePreviewDirectoryWhenWorkerStops(
+        worker: NonBlockingLiveVadWorker,
+        directory: File
+    ) {
+        Thread(
+            {
+                worker.awaitStopped(timeoutMs = 0L)
+                runCatching { directory.deleteRecursively() }
+            },
+            "MurmurnoteLiveVadCleanup"
+        ).apply {
+            isDaemon = true
+            start()
+        }
     }
 
     private fun updateAmplitude(buffer: ByteArray, read: Int) {
@@ -345,76 +422,6 @@ class AudioRecorder @Inject constructor(
             i += 2
         }
         lastAmplitude = if (peak <= 0) 0 else (20 * log10(peak.toDouble())).toInt().coerceIn(0, 100)
-    }
-
-    private fun updateSegmentSpeechStateLocked(buffer: ByteArray, read: Int) {
-        if (isSpeechFrame(buffer, read)) {
-            currentSegmentSpeechPcmBytes += read
-            currentSegmentTrailingSilencePcmBytes = 0L
-        } else if (currentSegmentSpeechPcmBytes > 0L) {
-            currentSegmentTrailingSilencePcmBytes += read
-        }
-    }
-
-    private fun isSpeechFrame(buffer: ByteArray, read: Int): Boolean {
-        var sumSq = 0.0
-        var samples = 0
-        var i = 0
-        while (i + 1 < read) {
-            val sample = ((buffer[i + 1].toInt() shl 8) or (buffer[i].toInt() and 0xff)).toShort().toDouble()
-            sumSq += sample * sample
-            samples += 1
-            i += 2
-        }
-        if (samples == 0) return false
-        val rms = kotlin.math.sqrt(sumSq / samples)
-        if (rms <= 0.0) return false
-        val dbfs = 20.0 * log10(rms / Short.MAX_VALUE.toDouble())
-        return dbfs >= SPEECH_RMS_DBFS_THRESHOLD
-    }
-
-    private fun pcmBytesToMs(bytes: Long): Long = (bytes * 1000L) / BYTE_RATE
-
-    private class PcmOverlapBuffer(private val capacity: Int) {
-        private val data = ByteArray(capacity)
-        private var nextWrite = 0
-        private var size = 0
-
-        fun write(buffer: ByteArray, length: Int) {
-            if (capacity <= 0 || length <= 0) return
-            val copyLength = minOf(length, buffer.size)
-            if (copyLength >= capacity) {
-                System.arraycopy(buffer, copyLength - capacity, data, 0, capacity)
-                nextWrite = 0
-                size = capacity
-                return
-            }
-            var copied = 0
-            while (copied < copyLength) {
-                val chunk = minOf(copyLength - copied, capacity - nextWrite)
-                System.arraycopy(buffer, copied, data, nextWrite, chunk)
-                nextWrite = (nextWrite + chunk) % capacity
-                copied += chunk
-            }
-            size = minOf(capacity, size + copyLength)
-        }
-
-        fun snapshot(): ByteArray {
-            if (size <= 0) return ByteArray(0)
-            val result = ByteArray(size)
-            val start = (nextWrite - size + capacity) % capacity
-            val first = minOf(size, capacity - start)
-            System.arraycopy(data, start, result, 0, first)
-            if (first < size) {
-                System.arraycopy(data, 0, result, first, size - first)
-            }
-            return result
-        }
-
-        fun clear() {
-            nextWrite = 0
-            size = 0
-        }
     }
 
     private class WavWriter(val file: File) {

@@ -4,16 +4,18 @@ import android.content.Context
 import android.content.Intent
 import android.net.Uri
 import androidx.core.content.ContextCompat
+import app.murmurnote.android.data.local.entity.ProcessingStatus
+import app.murmurnote.android.data.local.entity.Recording
 import app.murmurnote.android.data.local.entity.RecordingSource
+import app.murmurnote.android.data.repository.RecordingRepository
+import app.murmurnote.android.domain.pipeline.ProcessingStartupRecovery
 import app.murmurnote.android.service.TranscriptionService
 import app.murmurnote.android.util.Logger
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.io.File
-import java.text.SimpleDateFormat
-import java.util.Date
-import java.util.Locale
+import java.util.UUID
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -26,29 +28,79 @@ import javax.inject.Singleton
 @Singleton
 class AudioImporter @Inject constructor(
     @ApplicationContext private val context: Context,
+    private val recordingRepository: RecordingRepository,
+    private val processingStartupRecovery: ProcessingStartupRecovery,
     private val logger: Logger
 ) {
-    suspend fun importAndProcess(uri: Uri): Result<File> = runCatching {
-        val name = queryDisplayName(uri) ?: "imported"
-        val sanitized = name.replace(Regex("[^A-Za-z0-9._\\-一-龥]"), "_")
-        val ts = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US).format(Date())
-        val dir = File(context.getExternalFilesDir(null), "imports").apply { mkdirs() }
-        val target = File(dir, "imp_${ts}_$sanitized")
+    suspend fun importAndProcess(uri: Uri): Result<File> {
+        var target: File? = null
+        var durableRecordingId: String? = null
+        return runCatching {
+            processingStartupRecovery.awaitCompletion()
+            val suffix = queryDisplayName(uri)
+                ?.substringAfterLast('.', missingDelimiterValue = "")
+                ?.lowercase()
+                ?.takeIf { it.matches(Regex("[a-z0-9]{1,8}")) }
+                ?.let { ".$it" }
+                ?: ".audio"
+            val externalRoot = requireNotNull(context.getExternalFilesDir(null)) {
+                "应用私有导入目录不可用"
+            }
+            val dir = File(externalRoot, "imports").apply {
+                check(isDirectory || mkdirs()) { "无法创建导入目录" }
+            }
+            // createTempFile is atomic. Two same-name imports in the same second can never share
+            // ownership, so deleting or expiring one Recording cannot remove another one's audio.
+            val uniqueTarget = File.createTempFile("imp_", suffix, dir).also { target = it }
 
-        withContext(Dispatchers.IO) {
-            context.contentResolver.openInputStream(uri)?.use { input ->
-                target.outputStream().use { input.copyTo(it) }
-            } ?: error("无法打开 Uri：$uri")
+            withContext(Dispatchers.IO) {
+                context.contentResolver.openInputStream(uri)?.use { input ->
+                    uniqueTarget.outputStream().use { input.copyTo(it) }
+                } ?: error("无法打开所选音频")
+            }
+            if (!uniqueTarget.exists() || uniqueTarget.length() < 1024) {
+                error("文件过小或拷贝失败")
+            }
+
+            logger.i("Import", "audio copied size=${uniqueTarget.length()}")
+            val now = System.currentTimeMillis()
+            val recordingId = UUID.randomUUID().toString()
+            recordingRepository.insert(
+                Recording(
+                    id = recordingId,
+                    title = "导入音频",
+                    originalFilePath = uniqueTarget.absolutePath,
+                    durationMs = 0L,
+                    createdAt = now,
+                    source = RecordingSource.IMPORTED,
+                    processingStatus = ProcessingStatus.PENDING,
+                    audioExpiresAt = now + AUDIO_RETENTION_MS
+                )
+            )
+            durableRecordingId = recordingId
+            ContextCompat.startForegroundService(
+                context,
+                TranscriptionService.reprocessIntent(
+                    context,
+                    uniqueTarget,
+                    RecordingSource.IMPORTED,
+                    recordingId
+                )
+            )
+            uniqueTarget
+        }.onFailure { error ->
+            val recordingId = durableRecordingId
+            if (recordingId == null) {
+                target?.delete()
+            } else {
+                recordingRepository.markProcessingFailedIfInProgress(
+                    recordingId,
+                    "导入文件已保存，但处理服务启动失败，可手动重试"
+                )
+            }
+            logger.w("Import", "import failed type=${error.javaClass.simpleName}")
         }
-        if (!target.exists() || target.length() < 1024) error("文件过小或拷贝失败")
-
-        logger.i("Import", "uri=$uri → ${target.absolutePath} size=${target.length()}")
-        ContextCompat.startForegroundService(
-            context,
-            TranscriptionService.intent(context, target, RecordingSource.IMPORTED)
-        )
-        target
-    }.onFailure { logger.e("Import", "import failed: $uri", it) }
+    }
 
     private fun queryDisplayName(uri: Uri): String? {
         if (uri.scheme == "file") return uri.lastPathSegment
@@ -72,5 +124,9 @@ class AudioImporter @Inject constructor(
             }
             else -> null
         }
+    }
+
+    private companion object {
+        const val AUDIO_RETENTION_MS = 30L * 24 * 3600 * 1000
     }
 }

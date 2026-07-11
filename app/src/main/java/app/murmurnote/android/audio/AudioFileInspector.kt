@@ -24,7 +24,7 @@ class AudioFileInspector @Inject constructor(
         if (info == null) {
             // ffprobe 拿不到任何元数据：通常是文件损坏或被占用。把这一行落到日志里
             // 比让上层"durationMs=0 → AudioSplitter 直接 error"再回溯要快得多。
-            logger.w("Inspect", "ffprobe returned no media info for ${file.name} size=${file.length()}")
+            logger.w("Inspect", "ffprobe returned no media info size=${file.length()}")
             return Info(0, 0, 0, null)
         }
         val durationSec = info.duration?.toDoubleOrNull() ?: 0.0
@@ -40,11 +40,11 @@ class AudioFileInspector @Inject constructor(
         )
         // 异常元数据（无音轨 / 时长为 0）按 W 级别落日志，这两类输入会导致 Pipeline 后续阶段失败。
         if (stream == null) {
-            logger.w("Inspect", "${file.name}: ffprobe found no audio stream (codec=${info.streams?.joinToString { it.type ?: "?" }})")
+            logger.w("Inspect", "ffprobe found no audio stream types=${info.streams?.joinToString { it.type ?: "?" }}")
         } else if (out.durationMs <= 0) {
-            logger.w("Inspect", "${file.name}: zero duration (codec=$codec sr=$sampleRate ch=$channels)")
+            logger.w("Inspect", "zero duration codec=$codec sr=$sampleRate ch=$channels")
         } else {
-            logger.d("Inspect", "${file.name} dur=${out.durationMs}ms codec=$codec sr=$sampleRate ch=$channels")
+            logger.d("Inspect", "dur=${out.durationMs}ms codec=$codec sr=$sampleRate ch=$channels")
         }
         return out
     }
