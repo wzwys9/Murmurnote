@@ -5,6 +5,10 @@ import android.content.pm.PackageManager
 import android.os.Build
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.animation.core.LinearEasing
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.tween
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
@@ -46,7 +50,13 @@ import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.geometry.CornerRadius
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
@@ -133,7 +143,12 @@ fun HomeScreen(
             Spacer(Modifier.height(40.dp))
 
             Surface(
-                modifier = Modifier.size(160.dp).clip(CircleShape),
+                modifier = Modifier
+                    .size(160.dp)
+                    .clip(CircleShape)
+                    .semantics {
+                        contentDescription = if (state.isRecording) "停止录音" else "开始录音"
+                    },
                 color = if (state.isRecording) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary,
                 shape = CircleShape,
                 shadowElevation = 6.dp,
@@ -150,8 +165,21 @@ fun HomeScreen(
                         imageVector = if (state.isRecording) Icons.Filled.Stop else Icons.Filled.Mic,
                         contentDescription = null,
                         modifier = Modifier.size(56.dp),
-                        tint = MaterialTheme.colorScheme.onPrimary
+                        tint = if (state.isRecording) MaterialTheme.colorScheme.onError
+                        else MaterialTheme.colorScheme.onPrimary
                     )
+                    if (state.isRecording) {
+                        RecordingAmplitudeIndicator(
+                            amplitudeDb = state.amplitudeDb,
+                            isPaused = state.isPaused,
+                            color = MaterialTheme.colorScheme.onError,
+                            modifier = Modifier
+                                .align(Alignment.BottomCenter)
+                                .padding(bottom = 22.dp)
+                                .width(78.dp)
+                                .height(24.dp)
+                        )
+                    }
                 }
             }
             Spacer(Modifier.height(16.dp))
@@ -220,6 +248,51 @@ fun HomeScreen(
         }
     }
 }
+
+internal fun recordingAmplitudeLevel(amplitudeDb: Int): Float =
+    ((amplitudeDb - RECORDING_NOISE_FLOOR_DB) /
+        (RECORDING_PEAK_DB - RECORDING_NOISE_FLOOR_DB))
+        .coerceIn(0f, 1f)
+
+@Composable
+private fun RecordingAmplitudeIndicator(
+    amplitudeDb: Int,
+    isPaused: Boolean,
+    color: Color,
+    modifier: Modifier = Modifier,
+) {
+    val targetLevel = if (isPaused) 0f else recordingAmplitudeLevel(amplitudeDb)
+    val animatedLevel by animateFloatAsState(
+        targetValue = targetLevel,
+        animationSpec = tween(durationMillis = 90, easing = LinearEasing),
+        label = "recording-amplitude",
+    )
+
+    Canvas(modifier = modifier) {
+        val barCount = RECORDING_BAR_GAINS.size
+        val gap = size.width * 0.055f
+        val barWidth = (size.width - gap * (barCount - 1)) / barCount
+        val minimumHeight = 3.dp.toPx()
+        val heightRange = (size.height - minimumHeight).coerceAtLeast(0f)
+
+        RECORDING_BAR_GAINS.forEachIndexed { index, gain ->
+            val barHeight = minimumHeight + heightRange * animatedLevel * gain
+            drawRoundRect(
+                color = color.copy(alpha = 0.9f),
+                topLeft = Offset(
+                    x = index * (barWidth + gap),
+                    y = (size.height - barHeight) / 2f,
+                ),
+                size = Size(barWidth, barHeight),
+                cornerRadius = CornerRadius(barWidth / 2f),
+            )
+        }
+    }
+}
+
+private const val RECORDING_NOISE_FLOOR_DB = 35f
+private const val RECORDING_PEAK_DB = 90f
+private val RECORDING_BAR_GAINS = floatArrayOf(0.45f, 0.72f, 1f, 0.82f, 1f, 0.72f, 0.45f)
 
 @Composable
 private fun ProcessingQueueCard(
@@ -312,7 +385,7 @@ private fun RealtimeTranscriptCard(
                     Spacer(Modifier.width(8.dp))
                 }
                 Text(
-                    "实时转写",
+                    "实时预览（停止后重新识别）",
                     style = MaterialTheme.typography.titleSmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
@@ -453,23 +526,23 @@ private fun describe(s: PipelineStage): StageDescription = when (s) {
     is PipelineStage.Recording -> StageDescription("录音中", formatElapsed(s.durationMs), null, false, false)
     is PipelineStage.Converting -> StageDescription(
         "1/4 转码音频",
-        "正在把录音转成 mono WAV（GLM-ASR 要求）",
+        "正在把录音转成 16 kHz 单声道 WAV",
         s.progress.takeIf { it > 0 }, false, false
     )
     is PipelineStage.Splitting -> StageDescription(
-        "2/4 切分静音",
-        if (s.segmentCount == 0) "正在按静音点切片…" else "已切成 ${s.segmentCount} 段（每段 ≤25 秒）",
+        "2/4 神经 VAD 切段",
+        if (s.segmentCount == 0) "正在用 Silero 检测语音边界…" else "已切成 ${s.segmentCount} 段（每段 ≤25 秒）",
         null, false, false
     )
     is PipelineStage.Transcribing -> StageDescription(
         "3/4 转写中",
-        "第 ${s.segmentIndex + 1}/${s.totalSegments} 段 · 已识别 ${s.recognizedChars} 字\n正在流式转写，处理结果会保存到列表。",
+        "第 ${s.segmentIndex + 1}/${s.totalSegments} 段 · 已识别 ${s.recognizedChars} 字\n正在转写，完整结果会保存到列表。",
         if (s.totalSegments > 0) (s.segmentIndex + 1).toFloat() / s.totalSegments else null,
         false, false
     )
     is PipelineStage.Extracting -> StageDescription(
         "4/4 AI 提取",
-        "DeepSeek 正在从 ${s.transcriptLength} 字转写中提取 todo / idea / note / decision …",
+        "已启用的 AI 服务正在从 ${s.transcriptLength} 字转写中提取 todo / idea / note / decision …",
         null, false, false
     )
     is PipelineStage.Saving -> StageDescription("保存中", "写入本地数据库…", null, false, false)

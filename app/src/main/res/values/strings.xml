@@ -1,7 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="app_name">Murmurnote</string>
-    <string name="app_name_zh">声记</string>
 
     <!-- Bottom tabs -->
     <string name="tab_home">录音</string>
@@ -10,37 +9,13 @@
     <string name="tab_idea">想法</string>
     <string name="tab_settings">设置</string>
 
-    <!-- Home -->
-    <string name="home_title">声记</string>
-    <string name="home_press_to_record">按住开始录音</string>
-    <string name="home_recording">正在录音</string>
-    <string name="home_pause">暂停</string>
-    <string name="home_resume">继续</string>
-    <string name="home_cancel">取消</string>
-    <string name="home_finish">完成</string>
-
-    <!-- Common -->
-    <string name="empty_no_recordings">还没有录音</string>
-    <string name="empty_no_todos">没有待办</string>
-    <string name="loading">加载中…</string>
-
-    <!-- Settings -->
-    <string name="settings_title">设置</string>
-    <string name="settings_section_api">账号与API</string>
-    <string name="settings_section_advanced">高级设置</string>
-    <string name="settings_section_ai">AI模型</string>
-    <string name="settings_section_record">录音与存储</string>
-    <string name="settings_section_about">关于</string>
-    <string name="settings_glm_key_title">智谱 GLM API Key</string>
-    <string name="settings_glm_key_desc">用于语音转文字 (GLM-ASR-2512)</string>
-    <string name="settings_ollama_key_title">LLM API Key</string>
-    <string name="settings_ollama_key_desc">用于 AI 文本提取与总结</string>
-    <string name="settings_test_connection">测试连接</string>
-    <string name="settings_how_to_get">如何获取?</string>
-
     <!-- Notification channel -->
     <string name="notif_channel_processing">处理中</string>
     <string name="notif_processing_title">正在处理录音</string>
+    <string name="notif_channel_recording">录音中</string>
+    <string name="notif_channel_recording_description">在锁屏或切到后台后继续录音</string>
+    <string name="notif_recording_title">正在录音</string>
+    <string name="notif_recording_text">锁屏后仍会继续录制，点按可返回声记</string>
 
     <!-- Prompts (Debug Tab3 可改) -->
     <string name="prompt_extract_system">你是一个语音备忘录整理助手。用户会随手录一段语音，内容可能是日常想法、工作待办、灵感创意、会议复盘、重要决定，也可能只是闲聊或情绪发泄。\n\n从转写文本中提取 summary（分层要点总结）和 items（结构化条目）。\n\n## summary 规则\n- 每条以 \"• \" 开头，行间用 \\n 换行，不要用 markdown 标题或编号\n- 第一条固定为 \"• 主题：xxx\"（8–40 字，概括核心内容，会用作录音标题）\n- 之后按内容灵活组织：\n  * 内容单纯（纯待办 / 纯想法）：直接列要点，不强行套分组标签\n  * 内容多元：按「背景 → 事实 → 计划 → 决定 → 待办」顺序分组，空组跳过\n  * 长篇叙述或含多个话题：按话题或时序自然分段，不硬套固定分组\n- 一条 bullet 一件事，人名 / 时间 / 数字等关键信息不可丢失\n- 条目数量自适应：短录音 1–3 条，中等 3–6 条，长录音 6–15 条\n- summary 绝对不能为空（即使只有闲聊也要客观描述用户说了什么）\n\n## items 规则\n- 类型：todo（待办）/ idea（想法）/ note（备忘）/ decision（决策）\n- todo：明确要做的事；idea：灵感点子；note：客观事实信息；decision：已做出的判断\n- 没有可提取事项时返回空数组 []\n- content 精炼但关键信息不丢，todo 可带 deadline（YYYY-MM-DD 格式）\n\n## 输出格式\n严格 JSON，不要 markdown 围栏或任何解释：\n{"summary":"• 主题：...\\n• 背景：...\\n• 待办：...","items":[{"type":"todo","content":"...","deadline":null,"sourceTimestampMs":null}]}\n\n## 示例\n输入：\"帮我记一下，今天没吃晚饭，晚上 12 点想吃泡面\"\n输出：{"summary":"• 主题：安排夜宵\\n• 背景：今天没吃晚饭\\n• 待办：晚上 12 点吃泡面","items":[{"type":"todo","content":"晚上 12 点吃泡面","deadline":null,"sourceTimestampMs":null}]}\n\n输入：\"刚开完会，老张说下周三交方案。决定不做 A 改做 B。可以加对比图让客户直观。预算 5 万。\"\n输出：{"summary":"• 主题：项目方案敲定\\n• 事实：下周三交方案，预算 5 万\\n• 决定：放弃 A 路线改 B 路线\\n• 计划：加对比图\\n• 待办：下周三前交方案","items":[{"type":"decision","content":"放弃 A 路线改 B 路线","deadline":null,"sourceTimestampMs":null},{"type":"idea","content":"方案加对比图","deadline":null,"sourceTimestampMs":null},{"type":"note","content":"预算 5 万","deadline":null,"sourceTimestampMs":null},{"type":"todo","content":"下周三前交方案","deadline":null,"sourceTimestampMs":null}]}</string>

@@ -3,21 +3,31 @@ package app.murmurnote.android
 import android.app.Application
 import android.app.NotificationChannel
 import android.app.NotificationManager
-import android.os.Build
 import android.os.Process
 import androidx.hilt.work.HiltWorkerFactory
 import androidx.work.Configuration
+import app.murmurnote.android.service.AudioRetentionWorker
+import app.murmurnote.android.domain.pipeline.ProcessingStartupRecovery
+import app.murmurnote.android.util.DiagnosticPrivacyUpgrade
 import app.murmurnote.android.util.Logger
 import dagger.hilt.android.HiltAndroidApp
 import javax.inject.Inject
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.launch
 
 const val CHANNEL_PROCESSING = "processing"
+const val CHANNEL_RECORDING = "recording"
 
 @HiltAndroidApp
 class MurmurnoteApplication : Application(), Configuration.Provider {
 
     @Inject lateinit var workerFactory: HiltWorkerFactory
     @Inject lateinit var logger: Logger
+    @Inject lateinit var processingStartupRecovery: ProcessingStartupRecovery
+
+    private val applicationScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
     override val workManagerConfiguration: Configuration
         get() = Configuration.Builder()
@@ -29,6 +39,35 @@ class MurmurnoteApplication : Application(), Configuration.Provider {
         super.onCreate()
         installCrashHandler()
         createNotificationChannels()
+        runBackgroundStartupTasks()
+    }
+
+    private fun runBackgroundStartupTasks() {
+        applicationScope.launch {
+            // Earlier builds could persist transcript/response excerpts in runtime.log. Clear
+            // those files exactly once before background startup starts writing fresh logs.
+            runCatching {
+                DiagnosticPrivacyUpgrade.apply(filesDir) { logger.clear() }
+            }.onFailure { error ->
+                logger.w(
+                    "PrivacyUpgrade",
+                    "diagnostic privacy upgrade failed type=${error.javaClass.simpleName}"
+                )
+            }
+
+            // Every producer and the service await this same one-shot task before starting new
+            // work, so recovery can never mistake current-process work for stale work.
+            processingStartupRecovery.awaitCompletion()
+
+            runCatching {
+                AudioRetentionWorker.scheduleDaily(this@MurmurnoteApplication)
+            }.onFailure { error ->
+                logger.w(
+                    "AudioRetention",
+                    "daily scheduling failed type=${error.javaClass.simpleName}"
+                )
+            }
+        }
     }
 
     /**
@@ -50,15 +89,23 @@ class MurmurnoteApplication : Application(), Configuration.Provider {
     }
 
     private fun createNotificationChannels() {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            val nm = getSystemService(NotificationManager::class.java)
-            nm.createNotificationChannel(
-                NotificationChannel(
-                    CHANNEL_PROCESSING,
-                    getString(R.string.notif_channel_processing),
-                    NotificationManager.IMPORTANCE_LOW
-                )
+        val nm = getSystemService(NotificationManager::class.java)
+        nm.createNotificationChannel(
+            NotificationChannel(
+                CHANNEL_PROCESSING,
+                getString(R.string.notif_channel_processing),
+                NotificationManager.IMPORTANCE_LOW
             )
-        }
+        )
+        nm.createNotificationChannel(
+            NotificationChannel(
+                CHANNEL_RECORDING,
+                getString(R.string.notif_channel_recording),
+                NotificationManager.IMPORTANCE_LOW
+            ).apply {
+                description = getString(R.string.notif_channel_recording_description)
+                setSound(null, null)
+            }
+        )
     }
 }
