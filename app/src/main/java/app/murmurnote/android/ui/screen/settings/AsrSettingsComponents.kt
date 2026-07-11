@@ -17,6 +17,7 @@ import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
+import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExposedDropdownMenuAnchorType
@@ -28,9 +29,6 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.RadioButton
-import androidx.compose.material3.SegmentedButton
-import androidx.compose.material3.SegmentedButtonDefaults
-import androidx.compose.material3.SingleChoiceSegmentedButtonRow
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -44,66 +42,92 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
-import app.murmurnote.android.data.asr.AsrEngineType
 import app.murmurnote.android.data.asr.AsrLanguageMode
 import app.murmurnote.android.data.asr.AsrModelManager
 import app.murmurnote.android.data.asr.LocalAsrModelSpec
 
-private data class AsrEngineOption(
-    val panel: AsrSettingsPanel,
-    val label: String,
-    val description: String,
-    val engineType: AsrEngineType
-)
-
 @Composable
-fun AsrEngineSelectorCard(
-    engineType: String,
-    onEngineSelected: (String) -> Unit
+internal fun AsrSettingsDirectoryCard(
+    panel: AsrSettingsPanel,
+    selected: Boolean,
+    statusText: String? = null,
+    onSelect: () -> Unit,
+    onConfigure: () -> Unit,
 ) {
-    val selectedPanel = resolveAsrSettingsPanel(engineType)
-    val options = listOf(
-        AsrEngineOption(
-            panel = AsrSettingsPanel.CLOUD,
-            label = "云端识别",
-            description = "智谱 GLM-ASR，需要网络、API Key，并可能产生调用费用。",
-            engineType = AsrEngineType.CLOUD_GLM
-        ),
-        AsrEngineOption(
-            panel = AsrSettingsPanel.LOCAL,
-            label = "本地模型",
-            description = "使用 SenseVoiceSmall 或 Qwen3-ASR，模型就绪后可离线运行。",
-            engineType = AsrEngineType.LOCAL_SENSE_VOICE
-        )
-    )
+    val title: String
+    val description: String
+    when (panel) {
+        AsrSettingsPanel.CLOUD -> {
+            title = "云端语音识别"
+            description = "智谱 GLM-ASR · API Key 与接口设置"
+        }
+        AsrSettingsPanel.LOCAL -> {
+            title = "本地模型"
+            description = "SenseVoiceSmall、Qwen3-ASR · 模型与语言设置"
+        }
+    }
 
-    Card(modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp)) {
-        Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-            Text("识别引擎", style = MaterialTheme.typography.titleMedium)
-            SingleChoiceSegmentedButtonRow(modifier = Modifier.fillMaxWidth()) {
-                options.forEachIndexed { index, option ->
-                    SegmentedButton(
-                        shape = SegmentedButtonDefaults.itemShape(
-                            index = index,
-                            count = options.size
-                        ),
-                        onClick = { onEngineSelected(option.engineType.name) },
-                        selected = option.panel == selectedPanel,
-                        label = { Text(option.label) }
+    Card(
+        modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp),
+        colors = CardDefaults.cardColors(
+            containerColor = if (selected) {
+                MaterialTheme.colorScheme.primaryContainer
+            } else {
+                MaterialTheme.colorScheme.surfaceVariant
+            },
+        ),
+    ) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Row(
+                modifier = Modifier
+                    .weight(1f)
+                    .selectable(
+                        selected = selected,
+                        onClick = onSelect,
+                        role = Role.RadioButton,
                     )
+                    .padding(start = 12.dp, top = 12.dp, bottom = 12.dp, end = 4.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                RadioButton(selected = selected, onClick = null)
+                Column(
+                    modifier = Modifier.padding(start = 8.dp),
+                    verticalArrangement = Arrangement.spacedBy(4.dp),
+                ) {
+                    Text(title, style = MaterialTheme.typography.titleMedium)
+                    Text(
+                        description,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    Text(
+                        if (selected) "当前使用" else "点击选择",
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.primary,
+                    )
+                    statusText?.let { status ->
+                        Text(
+                            status,
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
                 }
             }
-            Text(
-                options.first { it.panel == selectedPanel }.description,
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
-            Text(
-                "切换引擎不会清空另一套已保存的配置。",
-                style = MaterialTheme.typography.labelSmall,
-                color = MaterialTheme.colorScheme.primary
-            )
+            TextButton(
+                onClick = onConfigure,
+                modifier = Modifier
+                    .padding(end = 8.dp)
+                    .semantics { contentDescription = "配置$title" },
+            ) {
+                Text("配置")
+            }
         }
     }
 }

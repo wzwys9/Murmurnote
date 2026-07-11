@@ -1,6 +1,7 @@
 package app.murmurnote.android.ui.screen.settings
 
 import android.content.Intent
+import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.selection.selectable
@@ -20,6 +21,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.OpenInNew
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.ExpandLess
 import androidx.compose.material.icons.filled.ExpandMore
@@ -49,6 +51,7 @@ import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -68,6 +71,7 @@ import androidx.core.net.toUri
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import app.murmurnote.android.BuildConfig
+import app.murmurnote.android.data.asr.AsrEngineType
 import app.murmurnote.android.data.asr.AsrModelUrls
 import app.murmurnote.android.data.asr.AsrModelManager
 import app.murmurnote.android.data.remote.llm.LlmProvider
@@ -81,10 +85,26 @@ fun SettingsScreen(
     val state by viewModel.uiState.collectAsStateWithLifecycle()
     val llmProvider = LlmProvider.parse(state.llmProvider)
     val asrSettingsPanel = resolveAsrSettingsPanel(state.asrEngineType)
-    val isQwenLocalAsr = state.asrLocalModelId == AsrModelUrls.QWEN3_ASR_ID
 
     var versionClickCount by remember { mutableIntStateOf(0) }
     var lastClickTime by remember { mutableLongStateOf(0L) }
+    var asrSettingsDetail by rememberSaveable {
+        mutableStateOf<AsrSettingsPanel?>(null)
+    }
+
+    BackHandler(enabled = asrSettingsDetail != null) {
+        asrSettingsDetail = null
+    }
+    asrSettingsDetail?.let { detail ->
+        AsrSettingsDetailScreen(
+            modifier = modifier,
+            panel = detail,
+            state = state,
+            viewModel = viewModel,
+            onBack = { asrSettingsDetail = null },
+        )
+        return
+    }
 
     LazyColumn(
         modifier = modifier.fillMaxWidth(),
@@ -92,114 +112,44 @@ fun SettingsScreen(
     ) {
         item { SettingSectionHeader("语音识别") }
         item {
-            AsrEngineSelectorCard(
-                engineType = state.asrEngineType,
-                onEngineSelected = viewModel::setAsrEngineType
+            AsrSettingsDirectoryCard(
+                panel = AsrSettingsPanel.CLOUD,
+                selected = asrSettingsPanel == AsrSettingsPanel.CLOUD,
+                statusText = asrSettingsStatusText(
+                    panel = AsrSettingsPanel.CLOUD,
+                    selected = asrSettingsPanel == AsrSettingsPanel.CLOUD,
+                    cloudApiConfigured = state.glmApiKey.isNotBlank(),
+                    localModelDisplayName = AsrModelUrls.modelById(
+                        state.asrLocalModelId,
+                    ).displayName,
+                ),
+                onSelect = {
+                    viewModel.setAsrEngineType(AsrEngineType.CLOUD_GLM.name)
+                },
+                onConfigure = {
+                    asrSettingsDetail = AsrSettingsPanel.CLOUD
+                },
             )
         }
-        when (asrSettingsPanel) {
-            AsrSettingsPanel.CLOUD -> {
-                item {
-                    SettingGroupHeader(
-                        title = "云端识别设置",
-                        description = "使用智谱 GLM-ASR，需要网络连接。"
-                    )
-                }
-                item {
-                    ApiKeySettingItem(
-                        title = "智谱 GLM API Key",
-                        description = "仅用于云端语音识别；已内置密钥时可留空",
-                        placeholder = "请输入您的智谱 API Key",
-                        value = state.glmApiKey,
-                        isConfigured = state.glmApiKey.isNotBlank(),
-                        onValueChange = viewModel::updateGlmApiKey,
-                        onTest = viewModel::testGlmConnection,
-                        testStatus = state.glmTestStatus,
-                        helpUrl = "https://bigmodel.cn/usercenter/apikeys"
-                    )
-                }
-                item {
-                    ExpandableSection("云端识别高级设置") {
-                        ServiceBaseUrlField(
-                            value = state.glmBaseUrl,
-                            onValueChange = viewModel::updateGlmBaseUrl,
-                            label = "GLM Base URL"
-                        )
-                    }
-                }
-            }
-
-            AsrSettingsPanel.LOCAL -> {
-                item {
-                    SettingGroupHeader(
-                        title = "本地识别设置",
-                        description = "模型安装完成后可完全离线识别。"
-                    )
-                }
-                item {
-                    LocalAsrModelCard(
-                        nativeLibReady = state.asrNativeLibReady,
-                        localModels = state.asrLocalModels,
-                        selectedModelId = state.asrLocalModelId,
-                        onModelSelected = viewModel::setAsrLocalModel
-                    )
-                }
-                item {
-                    LocalAsrLanguageCard(
-                        isQwen = isQwenLocalAsr,
-                        mode = state.asrLanguageMode,
-                        manualLanguage = state.asrManualLanguage,
-                        useItn = state.asrSenseVoiceUseItn,
-                        onModeSelected = viewModel::setAsrLanguageMode,
-                        onManualLanguageSelected = viewModel::setAsrManualLanguage,
-                        onUseItnChanged = viewModel::setAsrSenseVoiceUseItn
-                    )
-                }
-                item {
-                    val ctx = LocalContext.current
-                    LocalModelStatusBlock(
-                        modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp),
-                        status = state.asrModelStatus,
-                        model = AsrModelUrls.modelById(state.asrLocalModelId),
-                        updateCheck = state.asrModelUpdateCheck,
-                        updateChecking = state.asrModelUpdateChecking,
-                        bundledAssetsAvailable = state.asrBundledAssetsAvailable,
-                        mirrorIndex = state.asrMirrorIndex,
-                        mirrorOptions = state.asrMirrorOptions,
-                        localConcurrency = state.asrLocalConcurrency,
-                        onMirrorSelected = viewModel::setAsrMirrorIndex,
-                        onConcurrencyChanged = viewModel::setAsrLocalConcurrency,
-                        onInstallBundledModel = viewModel::installBundledAsrModel,
-                        onRequestDownload = viewModel::requestAsrDownloadConfirm,
-                        onRequestInstallHashMismatch = viewModel::requestInstallHashMismatchModel,
-                        onCheckModelUpdate = viewModel::checkAsrModelUpdate,
-                        onCancelDownload = { viewModel.cancelAsrDownload(ctx) },
-                        onDeleteModel = viewModel::deleteAsrModel
-                    )
-                }
-                if (state.showAsrDownloadConfirm) {
-                    item {
-                        AsrDownloadConfirmDialog(
-                            model = AsrModelUrls.modelById(state.asrLocalModelId),
-                            onDismiss = viewModel::dismissAsrDownloadConfirm,
-                            onConfirm = { viewModel.startAsrDownload(it) }
-                        )
-                    }
-                }
-                if (
-                    state.showAsrHashMismatchConfirm &&
-                    state.asrModelStatus is AsrModelManager.ModelStatus.HashMismatch
-                ) {
-                    item {
-                        AsrHashMismatchConfirmDialog(
-                            model = AsrModelUrls.modelById(state.asrLocalModelId),
-                            status = state.asrModelStatus as AsrModelManager.ModelStatus.HashMismatch,
-                            onDismiss = viewModel::dismissInstallHashMismatchModel,
-                            onConfirm = { viewModel.installHashMismatchModel(it) }
-                        )
-                    }
-                }
-            }
+        item {
+            AsrSettingsDirectoryCard(
+                panel = AsrSettingsPanel.LOCAL,
+                selected = asrSettingsPanel == AsrSettingsPanel.LOCAL,
+                statusText = asrSettingsStatusText(
+                    panel = AsrSettingsPanel.LOCAL,
+                    selected = asrSettingsPanel == AsrSettingsPanel.LOCAL,
+                    cloudApiConfigured = state.glmApiKey.isNotBlank(),
+                    localModelDisplayName = AsrModelUrls.modelById(
+                        state.asrLocalModelId,
+                    ).displayName,
+                ),
+                onSelect = {
+                    viewModel.setAsrEngineType(AsrEngineType.LOCAL_SENSE_VOICE.name)
+                },
+                onConfigure = {
+                    asrSettingsDetail = AsrSettingsPanel.LOCAL
+                },
+            )
         }
         item {
             SettingGroupHeader(
@@ -343,6 +293,163 @@ fun SettingsScreen(
                     }
                 }
             }
+        }
+    }
+}
+
+@Composable
+private fun AsrSettingsDetailScreen(
+    modifier: Modifier,
+    panel: AsrSettingsPanel,
+    state: SettingsViewModel.UiState,
+    viewModel: SettingsViewModel,
+    onBack: () -> Unit,
+) {
+    val title = if (panel == AsrSettingsPanel.CLOUD) {
+        "云端语音识别"
+    } else {
+        "本地模型"
+    }
+    val description = if (panel == AsrSettingsPanel.CLOUD) {
+        "智谱 GLM-ASR 的 API 与接口设置"
+    } else {
+        "模型选择、识别语言、安装与更新"
+    }
+
+    LazyColumn(
+        modifier = modifier.fillMaxWidth(),
+        contentPadding = PaddingValues(bottom = 8.dp),
+    ) {
+        item {
+            SettingsDetailHeader(
+                title = title,
+                description = description,
+                onBack = onBack,
+            )
+        }
+        when (panel) {
+            AsrSettingsPanel.CLOUD -> {
+                item {
+                    ApiKeySettingItem(
+                        title = "智谱 GLM API Key",
+                        description = "仅用于云端语音识别；已内置密钥时可留空",
+                        placeholder = "请输入您的智谱 API Key",
+                        value = state.glmApiKey,
+                        isConfigured = state.glmApiKey.isNotBlank(),
+                        onValueChange = viewModel::updateGlmApiKey,
+                        onTest = viewModel::testGlmConnection,
+                        testStatus = state.glmTestStatus,
+                        helpUrl = "https://bigmodel.cn/usercenter/apikeys",
+                    )
+                }
+                item {
+                    ExpandableSection("云端识别高级设置") {
+                        ServiceBaseUrlField(
+                            value = state.glmBaseUrl,
+                            onValueChange = viewModel::updateGlmBaseUrl,
+                            label = "GLM Base URL",
+                        )
+                    }
+                }
+            }
+
+            AsrSettingsPanel.LOCAL -> {
+                item {
+                    LocalAsrModelCard(
+                        nativeLibReady = state.asrNativeLibReady,
+                        localModels = state.asrLocalModels,
+                        selectedModelId = state.asrLocalModelId,
+                        onModelSelected = viewModel::setAsrLocalModel,
+                    )
+                }
+                item {
+                    LocalAsrLanguageCard(
+                        isQwen = state.asrLocalModelId == AsrModelUrls.QWEN3_ASR_ID,
+                        mode = state.asrLanguageMode,
+                        manualLanguage = state.asrManualLanguage,
+                        useItn = state.asrSenseVoiceUseItn,
+                        onModeSelected = viewModel::setAsrLanguageMode,
+                        onManualLanguageSelected = viewModel::setAsrManualLanguage,
+                        onUseItnChanged = viewModel::setAsrSenseVoiceUseItn,
+                    )
+                }
+                item {
+                    val context = LocalContext.current
+                    LocalModelStatusBlock(
+                        modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp),
+                        status = state.asrModelStatus,
+                        model = AsrModelUrls.modelById(state.asrLocalModelId),
+                        updateCheck = state.asrModelUpdateCheck,
+                        updateChecking = state.asrModelUpdateChecking,
+                        bundledAssetsAvailable = state.asrBundledAssetsAvailable,
+                        mirrorIndex = state.asrMirrorIndex,
+                        mirrorOptions = state.asrMirrorOptions,
+                        localConcurrency = state.asrLocalConcurrency,
+                        onMirrorSelected = viewModel::setAsrMirrorIndex,
+                        onConcurrencyChanged = viewModel::setAsrLocalConcurrency,
+                        onInstallBundledModel = viewModel::installBundledAsrModel,
+                        onRequestDownload = viewModel::requestAsrDownloadConfirm,
+                        onRequestInstallHashMismatch = viewModel::requestInstallHashMismatchModel,
+                        onCheckModelUpdate = viewModel::checkAsrModelUpdate,
+                        onCancelDownload = { viewModel.cancelAsrDownload(context) },
+                        onDeleteModel = viewModel::deleteAsrModel,
+                    )
+                }
+                if (state.showAsrDownloadConfirm) {
+                    item {
+                        AsrDownloadConfirmDialog(
+                            model = AsrModelUrls.modelById(state.asrLocalModelId),
+                            onDismiss = viewModel::dismissAsrDownloadConfirm,
+                            onConfirm = { viewModel.startAsrDownload(it) },
+                        )
+                    }
+                }
+                if (
+                    state.showAsrHashMismatchConfirm &&
+                    state.asrModelStatus is AsrModelManager.ModelStatus.HashMismatch
+                ) {
+                    item {
+                        AsrHashMismatchConfirmDialog(
+                            model = AsrModelUrls.modelById(state.asrLocalModelId),
+                            status = state.asrModelStatus,
+                            onDismiss = viewModel::dismissInstallHashMismatchModel,
+                            onConfirm = { viewModel.installHashMismatchModel(it) },
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun SettingsDetailHeader(
+    title: String,
+    description: String,
+    onBack: () -> Unit,
+) {
+    Row(
+        modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        IconButton(onClick = onBack) {
+            Icon(
+                imageVector = Icons.AutoMirrored.Filled.ArrowBack,
+                contentDescription = "返回设置",
+            )
+        }
+        Column(modifier = Modifier.padding(start = 4.dp)) {
+            Text(
+                text = title,
+                style = MaterialTheme.typography.titleLarge,
+                fontWeight = FontWeight.SemiBold,
+                modifier = Modifier.semantics { heading() },
+            )
+            Text(
+                text = description,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
         }
     }
 }
