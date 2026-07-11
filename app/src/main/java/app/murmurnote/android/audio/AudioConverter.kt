@@ -2,9 +2,6 @@ package app.murmurnote.android.audio
 
 import android.os.SystemClock
 import app.murmurnote.android.util.Logger
-import com.arthenica.ffmpegkit.FFmpegKit
-import com.arthenica.ffmpegkit.ReturnCode
-import kotlinx.coroutines.CompletableDeferred
 import java.io.File
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -18,7 +15,8 @@ import javax.inject.Singleton
  */
 @Singleton
 class AudioConverter @Inject constructor(
-    private val logger: Logger
+    private val logger: Logger,
+    private val ffmpegCommandRunner: FfmpegCommandRunner,
 ) {
 
     /**
@@ -43,20 +41,21 @@ class AudioConverter @Inject constructor(
         logger.i("Convert", "begin inputBytes=${input.length()}")
 
         val started = SystemClock.elapsedRealtime()
-        val deferred = CompletableDeferred<Unit>()
-        FFmpegKit.executeAsync(cmd) { session ->
-            val rc = session.returnCode
-            if (ReturnCode.isSuccess(rc)) {
-                deferred.complete(Unit)
-            } else {
-                logger.e("Convert", "ffmpeg failed rc=$rc")
-                deferred.completeExceptionally(
-                    IllegalStateException("ffmpeg convert failed: rc=$rc")
-                )
-            }
+        val result = try {
+            ffmpegCommandRunner.execute(cmd)
+        } catch (error: Throwable) {
+            output.delete()
+            throw error
         }
-        deferred.await()
-        check(output.exists() && output.length() > 0) { "ffmpeg produced empty output" }
+        if (!result.isSuccess) {
+            output.delete()
+            logger.e("Convert", "ffmpeg failed rc=${result.returnCode}")
+            error("ffmpeg convert failed: rc=${result.returnCode}")
+        }
+        if (!output.exists() || output.length() <= 0L) {
+            output.delete()
+            error("ffmpeg produced empty output")
+        }
         logger.i(
             "Convert",
             "done outputBytes=${output.length()} elapsed=${SystemClock.elapsedRealtime() - started}ms"

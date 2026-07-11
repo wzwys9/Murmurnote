@@ -2,9 +2,6 @@ package app.murmurnote.android.audio
 
 import android.os.SystemClock
 import app.murmurnote.android.util.Logger
-import com.arthenica.ffmpegkit.FFmpegKit
-import com.arthenica.ffmpegkit.ReturnCode
-import kotlinx.coroutines.CompletableDeferred
 import java.io.File
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -21,6 +18,7 @@ import javax.inject.Singleton
 class AudioSplitter @Inject constructor(
     private val sileroVadDetector: SileroVadDetector,
     private val logger: Logger,
+    private val ffmpegCommandRunner: FfmpegCommandRunner,
 ) {
 
     companion object {
@@ -183,11 +181,14 @@ class AudioSplitter @Inject constructor(
                 append(" -ac 1 -ar 16000 -c:a pcm_s16le -f wav ")
                 append(quote(output.absolutePath))
             }
-            val completed = CompletableDeferred<Boolean>()
-            FFmpegKit.executeAsync(command) { session ->
-                completed.complete(ReturnCode.isSuccess(session.returnCode))
+            val result = try {
+                ffmpegCommandRunner.execute(command)
+            } catch (error: Throwable) {
+                output.delete()
+                throw error
             }
-            if (!completed.await() || !output.exists() || output.length() <= 0L) {
+            if (!result.isSuccess || !output.exists() || output.length() <= 0L) {
+                output.delete()
                 logger.e(
                     "Split",
                     "audio slice materialization failed",
@@ -195,6 +196,7 @@ class AudioSplitter @Inject constructor(
                         "segmentIndex" to index,
                         "startSample" to segment.startSample,
                         "endSample" to segment.endSampleExclusive,
+                        "returnCode" to result.returnCode,
                     ),
                 )
                 error("ffmpeg failed to materialize neural VAD segment $index")

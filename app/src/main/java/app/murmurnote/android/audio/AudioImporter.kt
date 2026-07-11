@@ -10,9 +10,16 @@ import app.murmurnote.android.data.local.entity.RecordingSource
 import app.murmurnote.android.data.repository.RecordingRepository
 import app.murmurnote.android.domain.pipeline.ProcessingStartupRecovery
 import app.murmurnote.android.service.TranscriptionService
+import app.murmurnote.android.util.BoundedStreams
 import app.murmurnote.android.util.Logger
+import app.murmurnote.android.util.SizeLimitExceededException
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import java.io.File
 import java.util.UUID
@@ -32,34 +39,65 @@ class AudioImporter @Inject constructor(
     private val processingStartupRecovery: ProcessingStartupRecovery,
     private val logger: Logger
 ) {
-    suspend fun importAndProcess(uri: Uri): Result<File> {
+    private val importMutex = Mutex()
+
+    suspend fun importAndProcess(uri: Uri): Result<File> = importMutex.withLock {
         var target: File? = null
         var durableRecordingId: String? = null
-        return runCatching {
+        val result = runCatching {
             processingStartupRecovery.awaitCompletion()
-            val suffix = queryDisplayName(uri)
-                ?.substringAfterLast('.', missingDelimiterValue = "")
-                ?.lowercase()
-                ?.takeIf { it.matches(Regex("[a-z0-9]{1,8}")) }
-                ?.let { ".$it" }
-                ?: ".audio"
-            val externalRoot = requireNotNull(context.getExternalFilesDir(null)) {
-                "应用私有导入目录不可用"
-            }
-            val dir = File(externalRoot, "imports").apply {
-                check(isDirectory || mkdirs()) { "无法创建导入目录" }
-            }
-            // createTempFile is atomic. Two same-name imports in the same second can never share
-            // ownership, so deleting or expiring one Recording cannot remove another one's audio.
-            val uniqueTarget = File.createTempFile("imp_", suffix, dir).also { target = it }
-
-            withContext(Dispatchers.IO) {
+            val uniqueTarget = withContext(Dispatchers.IO) {
+                val suffix = queryDisplayName(uri)
+                    ?.substringAfterLast('.', missingDelimiterValue = "")
+                    ?.lowercase()
+                    ?.takeIf { it.matches(Regex("[a-z0-9]{1,8}")) }
+                    ?.let { ".$it" }
+                    ?: ".audio"
+                val externalRoot = requireNotNull(context.getExternalFilesDir(null)) {
+                    "应用私有导入目录不可用"
+                }
+                val dir = File(externalRoot, "imports").apply {
+                    check(isDirectory || mkdirs()) { "无法创建导入目录" }
+                }
+                // createTempFile is atomic. Every Recording exclusively owns its source file.
+                val imported = File.createTempFile("imp_", suffix, dir).also { target = it }
+                val copyContext = currentCoroutineContext()
                 context.contentResolver.openInputStream(uri)?.use { input ->
-                    uniqueTarget.outputStream().use { input.copyTo(it) }
+                    imported.outputStream().use { output ->
+                        try {
+                            BoundedStreams.copy(
+                                input = input,
+                                output = output,
+                                maxBytes = MAX_IMPORT_BYTES,
+                                onChunkCopied = { copyContext.ensureActive() },
+                            )
+                        } catch (error: SizeLimitExceededException) {
+                            throw IllegalArgumentException(
+                                "导入音频不能超过 ${MAX_IMPORT_BYTES / (1024 * 1024)} MB",
+                                error,
+                            )
+                        }
+                    }
                 } ?: error("无法打开所选音频")
-            }
-            if (!uniqueTarget.exists() || uniqueTarget.length() < 1024) {
-                error("文件过小或拷贝失败")
+                if (!imported.isFile || imported.length() < MIN_IMPORT_BYTES) {
+                    error("文件过小或拷贝失败")
+                }
+                val importDirectoryBytes = dir.listFiles()
+                    .orEmpty()
+                    .asSequence()
+                    .filter(File::isFile)
+                    .fold(0L) { total, file ->
+                        val length = file.length()
+                        if (length > MAX_IMPORT_DIRECTORY_BYTES - total) {
+                            MAX_IMPORT_DIRECTORY_BYTES + 1L
+                        } else {
+                            total + length
+                        }
+                    }
+                if (importDirectoryBytes > MAX_IMPORT_DIRECTORY_BYTES) {
+                    error("导入目录空间已达安全上限，请先删除不需要的旧录音")
+                }
+                imported
             }
 
             logger.i("Import", "audio copied size=${uniqueTarget.length()}")
@@ -100,6 +138,10 @@ class AudioImporter @Inject constructor(
             }
             logger.w("Import", "import failed type=${error.javaClass.simpleName}")
         }
+        result.exceptionOrNull()?.let { error ->
+            if (error is CancellationException) throw error
+        }
+        result
     }
 
     private fun queryDisplayName(uri: Uri): String? {
@@ -128,5 +170,8 @@ class AudioImporter @Inject constructor(
 
     private companion object {
         const val AUDIO_RETENTION_MS = 30L * 24 * 3600 * 1000
+        const val MIN_IMPORT_BYTES = 1024L
+        const val MAX_IMPORT_BYTES = 640L * 1024L * 1024L
+        const val MAX_IMPORT_DIRECTORY_BYTES = 2L * 1024L * 1024L * 1024L
     }
 }
