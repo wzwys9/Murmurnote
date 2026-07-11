@@ -1,0 +1,37 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<lint>
+    <!-- Version-catalog upgrades are deliberate compatibility work, not per-build defects. -->
+    <issue id="AndroidGradlePluginVersion" severity="ignore" />
+    <issue id="GradleDependency" severity="ignore" />
+
+    <!-- minSdk 29 always resolves the adaptive anydpi icon. Keep OEM fallback PNGs without
+         allowing their legacy square/round heuristics to obscure application warnings. -->
+    <issue id="IconDuplicates">
+        <ignore path="src/main/res/mipmap-mdpi/ic_launcher_round.png" />
+        <ignore path="src/main/res/mipmap-hdpi/ic_launcher_round.png" />
+        <ignore path="src/main/res/mipmap-xhdpi/ic_launcher_round.png" />
+        <ignore path="src/main/res/mipmap-xxhdpi/ic_launcher_round.png" />
+        <ignore path="src/main/res/mipmap-xxxhdpi/ic_launcher_round.png" />
+    </issue>
+    <issue id="IconLauncherShape">
+        <ignore path="src/main/res/mipmap-mdpi/ic_launcher.png" />
+        <ignore path="src/main/res/mipmap-mdpi/ic_launcher_round.png" />
+        <ignore path="src/main/res/mipmap-hdpi/ic_launcher.png" />
+        <ignore path="src/main/res/mipmap-hdpi/ic_launcher_round.png" />
+        <ignore path="src/main/res/mipmap-xhdpi/ic_launcher.png" />
+        <ignore path="src/main/res/mipmap-xhdpi/ic_launcher_round.png" />
+        <ignore path="src/main/res/mipmap-xxhdpi/ic_launcher.png" />
+        <ignore path="src/main/res/mipmap-xxhdpi/ic_launcher_round.png" />
+        <ignore path="src/main/res/mipmap-xxxhdpi/ic_launcher.png" />
+        <ignore path="src/main/res/mipmap-xxxhdpi/ic_launcher_round.png" />
+    </issue>
+
+    <!-- Generated sherpa-onnx binding source is vendored unchanged. -->
+    <issue id="WrongCommentType">
+        <ignore path="src/main/java/com/k2fsa/sherpa/onnx/OfflineRecognizer.kt" />
+    </issue>
+    <!-- Three-dot placeholders are part of the editable JSON prompt contract, not UI prose. -->
+    <issue id="TypographyEllipsis">
+        <ignore path="src/main/res/values/strings.xml" />
+    </issue>
+</lint>

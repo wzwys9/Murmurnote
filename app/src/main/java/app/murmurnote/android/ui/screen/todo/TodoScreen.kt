@@ -28,6 +28,10 @@ import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import app.murmurnote.android.data.local.entity.ExtractedItem
 import app.murmurnote.android.util.formatTimestampFull
+import java.time.Instant
+import java.time.ZoneId
+import java.time.format.DateTimeFormatter
+import java.util.Locale
 
 @Composable
 fun TodoScreen(
@@ -87,7 +91,7 @@ private fun TodoRow(item: ExtractedItem, onToggle: (Boolean) -> Unit, onClick: (
                     )
                     item.deadline?.let {
                         Text(
-                            "截止 ${java.text.SimpleDateFormat("M月d日").format(java.util.Date(it))}",
+                            formatTodoDeadline(it),
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
@@ -96,4 +100,13 @@ private fun TodoRow(item: ExtractedItem, onToggle: (Boolean) -> Unit, onClick: (
             }
         }
     }
+}
+
+internal fun formatTodoDeadline(
+    deadlineMs: Long,
+    zoneId: ZoneId = ZoneId.systemDefault(),
+    locale: Locale = Locale.getDefault(),
+): String {
+    val formatter = DateTimeFormatter.ofPattern("M月d日", locale).withZone(zoneId)
+    return "截止 ${formatter.format(Instant.ofEpochMilli(deadlineMs))}"
 }

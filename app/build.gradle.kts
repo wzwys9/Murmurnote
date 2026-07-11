@@ -89,6 +89,7 @@ android {
     // 同源问题：RememberInCompositionDetector 在 K2 上抛 IncompatibleClassChangeError，错误消息里
     // 也明确建议 disable，等 AGP/Compose 配上跟 Kotlin 2.0.21 K2 一致的 lint API 再开回来。
     lint {
+        lintConfig = file("lint.xml")
         disable += "NullSafeMutableLiveData"
         // RememberInCompositionDetectorKt 整个 helper 文件在 K2 metadata 上抛 IncompatibleClassChangeError，
         // 任何调到它的 detector 都会 hard-fail —— 已知至少这三个 Compose runtime 检测器都会撞同一处。
