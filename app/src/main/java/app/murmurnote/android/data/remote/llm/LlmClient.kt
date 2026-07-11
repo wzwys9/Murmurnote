@@ -8,6 +8,11 @@ import app.murmurnote.android.data.remote.llm.dto.ChatCompletionResponse
 import app.murmurnote.android.data.remote.llm.dto.ExtractedItemDto
 import app.murmurnote.android.data.remote.llm.dto.ExtractionResult
 import app.murmurnote.android.util.Logger
+import app.murmurnote.android.domain.correction.PersonalCorrectionCandidate
+import app.murmurnote.android.domain.correction.PersonalCorrectionPlanValidator
+import app.murmurnote.android.domain.correction.PersonalLearningReviewRequest
+import app.murmurnote.android.domain.correction.PersonalLearningReviewValidator
+import app.murmurnote.android.domain.correction.ValidatedPersonalLearningDecision
 import app.murmurnote.android.util.SizeLimitExceededException
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.Dispatchers
@@ -191,6 +196,73 @@ class LlmClient @Inject constructor(
             merged
         }.rethrowCancellation().onFailure { e ->
             logger.e("LLM", "extractItemsAuto failed type=${e.javaClass.simpleName}", e)
+        }
+    }
+
+    suspend fun reviewPersonalLearning(
+        request: PersonalLearningReviewRequest,
+    ): Result<ValidatedPersonalLearningDecision> = runCatching {
+        val config = currentConfig()
+        if (config.provider.requiresApiKey && config.apiKey.isBlank()) {
+            error("${config.provider.displayName} API Key 未配置")
+        }
+        val prompt = PersonalCorrectionPromptBuilder.learningReview(
+            observationId = request.observationId,
+            observedText = request.observedText,
+            replacementText = request.replacementText,
+            leftContext = request.leftContext,
+            rightContext = request.rightContext,
+            pinyinRelation = request.pinyinRelation,
+        )
+        logger.i(
+            "LLM",
+            "personalLearning begin provider=${config.provider.name} " +
+                "relation=${request.pinyinRelation.name}",
+        )
+        val raw = completeText(
+            config = config,
+            systemPrompt = prompt.systemPrompt,
+            userPrompt = prompt.userPrompt,
+            jsonMode = true,
+            label = "personalLearning",
+        )
+        val untrusted = PersonalCorrectionJsonParser.parseLearningDecision(raw, json)
+        PersonalLearningReviewValidator.validate(
+            expectedObservationId = request.observationId,
+            decision = untrusted,
+            pinyinRelation = request.pinyinRelation,
+        )
+            ?: error("个性化学习响应未通过安全校验")
+    }.rethrowCancellation().onFailure { error ->
+        logger.w("LLM", "personalLearning failed type=${error.javaClass.simpleName}")
+    }
+
+    suspend fun reviewPersonalCorrectionCandidates(
+        candidates: List<PersonalCorrectionCandidate>,
+    ): Result<List<PersonalCorrectionCandidate>> {
+        if (candidates.isEmpty()) return Result.success(emptyList())
+        return runCatching {
+            val config = currentConfig()
+            if (config.provider.requiresApiKey && config.apiKey.isBlank()) {
+                error("${config.provider.displayName} API Key 未配置")
+            }
+            val prompt = PersonalCorrectionPromptBuilder.candidateReview(candidates)
+            logger.i(
+                "LLM",
+                "personalCorrection begin provider=${config.provider.name} " +
+                    "candidates=${candidates.size}",
+            )
+            val raw = completeText(
+                config = config,
+                systemPrompt = prompt.systemPrompt,
+                userPrompt = prompt.userPrompt,
+                jsonMode = true,
+                label = "personalCorrection",
+            )
+            val decisions = PersonalCorrectionJsonParser.parseCandidateDecisions(raw, json)
+            PersonalCorrectionPlanValidator.approve(candidates, decisions)
+        }.rethrowCancellation().onFailure { error ->
+            logger.w("LLM", "personalCorrection failed type=${error.javaClass.simpleName}")
         }
     }
 

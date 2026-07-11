@@ -1,7 +1,8 @@
 package app.murmurnote.android.domain.correction
 
 enum class CorrectionMatchMode {
-    EXACT_TEXT
+    EXACT_TEXT,
+    CONTEXTUAL_LLM,
 }
 
 enum class CorrectionScope {

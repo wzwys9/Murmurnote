@@ -42,6 +42,7 @@ enum class ModelSegmentCutReason {
 
 enum class TranscriptRevisionSource {
     MODEL_FINAL,
+    PERSONALIZED_LLM,
     MANUAL_EDIT,
     REVERT_TO_RAW,
     LEGACY_MIGRATION
@@ -58,6 +59,7 @@ data class TranscriptRevision(
 
 enum class CorrectionAuditReason {
     EXACT_TEXT_RULE_APPLIED,
+    PERSONALIZED_LLM_CONTEXT_APPLIED,
     CONFLICTING_RULES,
     OVERLAPS_HIGHER_PRIORITY,
     MANUAL_EDIT,

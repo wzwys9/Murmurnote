@@ -4,21 +4,31 @@ import androidx.room.withTransaction
 import app.murmurnote.android.data.asr.AsrProvenance
 import app.murmurnote.android.data.local.MurmurnoteDatabase
 import app.murmurnote.android.data.local.dao.CorrectionDao
+import app.murmurnote.android.data.local.dao.PersonalCorrectionDao
 import app.murmurnote.android.data.local.dao.RecordingDao
 import app.murmurnote.android.data.local.dao.TranscriptDao
 import app.murmurnote.android.data.local.entity.CorrectionRecordEntity
+import app.murmurnote.android.data.local.entity.CorrectionLearningEventEntity
+import app.murmurnote.android.data.local.entity.CorrectionLearningProfileEntity
 import app.murmurnote.android.data.local.entity.CorrectionRuleEntity
 import app.murmurnote.android.data.local.entity.RawTranscriptProvenance
 import app.murmurnote.android.data.local.entity.TranscriptRevisionEntity
 import app.murmurnote.android.data.local.entity.TranscriptSegment
+import app.murmurnote.android.domain.correction.AppliedTextReplacement
 import app.murmurnote.android.domain.correction.CorrectionDecision
 import app.murmurnote.android.domain.correction.CorrectionMatchMode
 import app.murmurnote.android.domain.correction.CorrectionRule
 import app.murmurnote.android.domain.correction.CorrectionScope
+import app.murmurnote.android.domain.correction.CorrectedTextCoordinateMap
 import app.murmurnote.android.domain.correction.DeterministicCorrectionEngine
 import app.murmurnote.android.domain.correction.SafeLexiconCreateAction
 import app.murmurnote.android.domain.correction.SafeLexiconRulePolicy
 import app.murmurnote.android.domain.correction.SingleReplacementDiff
+import app.murmurnote.android.domain.correction.PersonalCorrectionEventStatus
+import app.murmurnote.android.domain.correction.PersonalCorrectionLearningPolicy
+import app.murmurnote.android.domain.correction.PersonalCorrectionLearningState
+import app.murmurnote.android.domain.correction.PinyinRelation
+import app.murmurnote.android.domain.correction.RawCodePointRange
 import app.murmurnote.android.domain.transcript.CorrectionAuditReason
 import app.murmurnote.android.domain.transcript.CorrectionAuditRecord
 import app.murmurnote.android.domain.transcript.ModelTranscriptSegment
@@ -36,7 +46,8 @@ class TranscriptRepository @Inject constructor(
     private val database: MurmurnoteDatabase,
     private val recordingDao: RecordingDao,
     private val transcriptDao: TranscriptDao,
-    private val correctionDao: CorrectionDao
+    private val correctionDao: CorrectionDao,
+    private val personalCorrectionDao: PersonalCorrectionDao,
 ) {
     private val correctionEngine = DeterministicCorrectionEngine()
 
@@ -232,7 +243,8 @@ class TranscriptRepository @Inject constructor(
         recordingId: String,
         segmentId: Long,
         newText: String,
-        now: Long = System.currentTimeMillis()
+        now: Long = System.currentTimeMillis(),
+        capturePersonalLearning: Boolean = false,
     ): SingleReplacementDiff? = database.withTransaction {
         val recording = requireFinalizedRecording(recordingId)
         check(recording.correctionRevision < Long.MAX_VALUE) {
@@ -245,6 +257,33 @@ class TranscriptRepository @Inject constructor(
         if (newText == segment.correctedText) return@withTransaction null
         val newRevision = recording.correctionRevision + 1
         val candidate = SingleReplacementDiff.between(segment.correctedText, newText)
+        val negativeFeedback = if (candidate != null) {
+            registerPersonalCorrectionNegativeFeedback(
+                recordingId = recordingId,
+                segmentId = segmentId,
+                priorRevision = recording.correctionRevision,
+                diff = candidate,
+                now = now,
+            )
+        } else {
+            PersonalCorrectionNegativeFeedback.NONE
+        }
+        val learningDraft = if (capturePersonalLearning && candidate != null) {
+            if (negativeFeedback.matched) {
+                negativeFeedback.rawLearningRange?.let { rawRange ->
+                    PersonalCorrectionLearningPolicy.fromMappedReplacement(
+                        rawText = segment.rawText,
+                        rawStartCodePoint = rawRange.startCodePoint,
+                        rawEndCodePointExclusive = rawRange.endCodePointExclusive,
+                        replacementText = candidate.replacementText,
+                    )
+                }
+            } else {
+                PersonalCorrectionLearningPolicy.fromEdit(segment.correctedText, newText)
+            }
+        } else {
+            null
+        }
 
         val updated = transcriptDao.setManualCorrection(
             recordingId = recordingId,
@@ -294,7 +333,199 @@ class TranscriptRepository @Inject constructor(
                 )
             )
         )
+        if (learningDraft != null) {
+            persistPersonalLearningDraft(
+                recordingId = recordingId,
+                segmentId = segmentId,
+                revision = newRevision,
+                draft = learningDraft,
+                now = now,
+            )
+        }
         candidate
+    }
+
+    private suspend fun persistPersonalLearningDraft(
+        recordingId: String,
+        segmentId: Long,
+        revision: Long,
+        draft: app.murmurnote.android.domain.correction.PersonalCorrectionObservationDraft,
+        now: Long,
+    ) {
+        val existing = personalCorrectionDao.findRule(
+            observedText = draft.observedText,
+            replacementText = draft.replacementText,
+        )
+        if (
+            existing == null &&
+            personalCorrectionDao.countProfiles() >= MAX_PERSONAL_CORRECTION_PROFILES
+        ) {
+            return
+        }
+        personalCorrectionDao.getRulesForObservedText(draft.observedText)
+            .filter { it.replacementText != draft.replacementText }
+            .forEach { conflicting ->
+                check(
+                    personalCorrectionDao.setProfileState(
+                        conflicting.id,
+                        PersonalCorrectionLearningState.DISABLED.name,
+                        now,
+                    ) == 1,
+                ) { "Conflicting personal correction profile changed" }
+                check(personalCorrectionDao.setRuleEnabled(conflicting.id, false, now) == 1) {
+                    "Conflicting personal correction rule changed"
+                }
+                personalCorrectionDao.supersedePendingEvents(conflicting.id, now)
+            }
+        val ruleId = if (existing == null) {
+            val id = UUID.randomUUID().toString()
+            correctionDao.insertRule(
+                CorrectionRuleEntity(
+                    id = id,
+                    observedText = draft.observedText,
+                    replacementText = draft.replacementText,
+                    scope = CorrectionScope.GLOBAL.name,
+                    scopeRecordingId = null,
+                    matchMode = CorrectionMatchMode.CONTEXTUAL_LLM.name,
+                    isEnabled = false,
+                    createdAt = now,
+                    updatedAt = now,
+                ),
+            )
+            personalCorrectionDao.insertProfile(
+                CorrectionLearningProfileEntity(
+                    ruleId = id,
+                    state = PersonalCorrectionLearningState.PENDING_REVIEW.name,
+                    positiveEvidenceCount = 1,
+                    negativeEvidenceCount = 0,
+                    pinyinRelation = PinyinRelation.UNAVAILABLE.name,
+                    createdAt = now,
+                    updatedAt = now,
+                ),
+            )
+            id
+        } else {
+            val profile = checkNotNull(personalCorrectionDao.getProfile(existing.id)) {
+                "Personal correction rule is missing its learning profile"
+            }
+            check(personalCorrectionDao.addPositiveEvidence(existing.id, now) == 1) {
+                "Personal correction profile changed while adding evidence"
+            }
+            if (
+                profile.state == PersonalCorrectionLearningState.ACTIVE.name ||
+                profile.state == PersonalCorrectionLearningState.DISABLED.name
+            ) {
+                return
+            }
+            existing.id
+        }
+        personalCorrectionDao.trimEvents(
+            ruleId = ruleId,
+            keepNewest = MAX_PERSONAL_CORRECTION_EVENTS_PER_RULE - 1,
+        )
+        personalCorrectionDao.insertEvent(
+            CorrectionLearningEventEntity(
+                id = UUID.randomUUID().toString(),
+                ruleId = ruleId,
+                recordingId = recordingId,
+                segmentId = segmentId,
+                revision = revision,
+                leftContext = draft.leftContext,
+                rightContext = draft.rightContext,
+                status = PersonalCorrectionEventStatus.PENDING.name,
+                pinyinRelation = PinyinRelation.UNAVAILABLE.name,
+                createdAt = now,
+            ),
+        )
+    }
+
+    private suspend fun registerPersonalCorrectionNegativeFeedback(
+        recordingId: String,
+        segmentId: Long,
+        priorRevision: Long,
+        diff: SingleReplacementDiff,
+        now: Long,
+    ): PersonalCorrectionNegativeFeedback {
+        val segments = transcriptDao.getSegments(recordingId)
+        val segment = segments.firstOrNull { it.id == segmentId }
+            ?: return PersonalCorrectionNegativeFeedback.NONE
+        val segmentRawStart = rawOffsetOf(segments, segmentId)
+        val segmentRawEnd = segmentRawStart + segment.rawText.codePointLength()
+        val personalizedRecords = correctionDao
+            .getLatestAppliedPersonalizedRecordsForSegment(
+                recordingId = recordingId,
+                maxRevision = priorRevision,
+                segmentRawStart = segmentRawStart,
+                segmentRawEnd = segmentRawEnd,
+            )
+        if (personalizedRecords.isEmpty()) return PersonalCorrectionNegativeFeedback.NONE
+        val initialRecords = correctionDao
+            .getAppliedRecordsForRevision(recordingId, INITIAL_REVISION)
+            .filter { record ->
+                record.rawStartCodePoint >= segmentRawStart &&
+                    record.rawEndCodePointExclusive <= segmentRawEnd
+            }
+        val coordinateMap = CorrectedTextCoordinateMap.create(
+            rawText = segment.rawText,
+            correctedText = segment.correctedText,
+            replacements = (initialRecords + personalizedRecords)
+                .distinctBy { it.id }
+                .map { record ->
+                    AppliedTextReplacement(
+                        rawStartCodePoint = record.rawStartCodePoint - segmentRawStart,
+                        rawEndCodePointExclusive =
+                            record.rawEndCodePointExclusive - segmentRawStart,
+                        originalText = record.originalText,
+                        replacementText = record.replacementText,
+                    )
+                },
+        ) ?: return PersonalCorrectionNegativeFeedback.NONE
+        val candidateRuleIds = personalizedRecords
+            .asSequence()
+            .mapNotNull { record ->
+                val correctedRange = coordinateMap.correctedRangeForRawReplacement(
+                    rawStartCodePoint = record.rawStartCodePoint - segmentRawStart,
+                    rawEndCodePointExclusive =
+                        record.rawEndCodePointExclusive - segmentRawStart,
+                ) ?: return@mapNotNull null
+                record.sourceRuleId?.takeIf {
+                    if (diff.startCodePoint == diff.endCodePointExclusive) {
+                        diff.startCodePoint > correctedRange.startCodePoint &&
+                            diff.startCodePoint < correctedRange.endCodePointExclusive
+                    } else {
+                        diff.startCodePoint < correctedRange.endCodePointExclusive &&
+                            correctedRange.startCodePoint < diff.endCodePointExclusive
+                    }
+                }
+            }
+            .distinct()
+            .toList()
+        val matchingRuleIds = candidateRuleIds.filter { ruleId ->
+            correctionDao.getRule(ruleId)?.matchMode ==
+                CorrectionMatchMode.CONTEXTUAL_LLM.name
+        }
+        if (matchingRuleIds.isEmpty()) return PersonalCorrectionNegativeFeedback.NONE
+        val rawLearningRange = coordinateMap.rawRangeForCorrectedIncludingReplacements(
+            startCodePoint = diff.startCodePoint,
+            endCodePointExclusive = diff.endCodePointExclusive,
+        )
+        matchingRuleIds.forEach { ruleId ->
+            check(personalCorrectionDao.registerNegativeFeedback(ruleId, now) == 1) {
+                "Personal correction profile changed during negative feedback"
+            }
+            check(personalCorrectionDao.setRuleEnabled(ruleId, false, now) == 1) {
+                "Personal correction rule changed during negative feedback"
+            }
+            personalCorrectionDao.failPendingEvents(
+                ruleId = ruleId,
+                reasonCode = "SUPERSEDED_BY_NEGATIVE_FEEDBACK",
+                updatedAt = now,
+            )
+        }
+        return PersonalCorrectionNegativeFeedback(
+            matched = true,
+            rawLearningRange = rawLearningRange,
+        )
     }
 
     suspend fun rememberRecordingRule(
@@ -620,8 +851,22 @@ class TranscriptRepository @Inject constructor(
             cutReason == other.cutReason &&
             overlapBeforeMs == other.overlapBeforeMs
 
+    private data class PersonalCorrectionNegativeFeedback(
+        val matched: Boolean,
+        val rawLearningRange: RawCodePointRange?,
+    ) {
+        companion object {
+            val NONE = PersonalCorrectionNegativeFeedback(
+                matched = false,
+                rawLearningRange = null,
+            )
+        }
+    }
+
     private companion object {
         const val INSERT_IGNORED = -1L
+        const val MAX_PERSONAL_CORRECTION_PROFILES = 500
+        const val MAX_PERSONAL_CORRECTION_EVENTS_PER_RULE = 20
         const val INITIAL_REVISION = 0L
         const val SEGMENT_SEPARATOR = "\n"
         const val SEGMENT_SEPARATOR_CODE_POINTS = 1

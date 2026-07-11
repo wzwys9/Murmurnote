@@ -6,6 +6,8 @@ data class PersonalCorrectionCandidate(
     val segmentId: Long,
     val startCodePoint: Int,
     val endCodePointExclusive: Int,
+    val rawStartCodePoint: Int = startCodePoint,
+    val rawEndCodePointExclusive: Int = endCodePointExclusive,
     val observedText: String,
     val replacementText: String,
     val leftContext: String,
@@ -16,6 +18,10 @@ data class PersonalCorrectionCandidate(
         require(ruleId.isNotBlank()) { "Candidate rule id must not be blank" }
         require(startCodePoint >= 0) { "Candidate start must not be negative" }
         require(endCodePointExclusive > startCodePoint) { "Candidate range must not be empty" }
+        require(rawStartCodePoint >= 0) { "Candidate raw start must not be negative" }
+        require(rawEndCodePointExclusive > rawStartCodePoint) {
+            "Candidate raw range must not be empty"
+        }
         require(observedText.isNotEmpty()) { "Candidate observed text must not be empty" }
         require(replacementText.isNotEmpty()) { "Candidate replacement must not be empty" }
     }

@@ -53,4 +53,20 @@ class PersonalCorrectionLearningPolicyTest {
             ),
         )
     }
+
+    @Test
+    fun buildsAValidatedDraftFromARawRangeRecoveredAfterNegativeFeedback() {
+        val draft = PersonalCorrectionLearningPolicy.fromMappedReplacement(
+            rawText = "这是生记应用",
+            rawStartCodePoint = 2,
+            rawEndCodePointExclusive = 3,
+            replacementText = "升",
+        )
+
+        requireNotNull(draft)
+        assertEquals("生", draft.observedText)
+        assertEquals("升", draft.replacementText)
+        assertEquals("这是", draft.leftContext)
+        assertEquals("记应用", draft.rightContext)
+    }
 }

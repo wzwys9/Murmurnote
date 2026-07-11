@@ -21,6 +21,7 @@ import app.murmurnote.android.data.local.entity.TranscriptSegment
 import app.murmurnote.android.data.remote.llm.LlmClient
 import app.murmurnote.android.data.remote.llm.dto.ExtractionResult
 import app.murmurnote.android.data.repository.RecordingRepository
+import app.murmurnote.android.data.repository.PersonalCorrectionService
 import app.murmurnote.android.data.repository.SummaryRepository
 import app.murmurnote.android.data.repository.TranscriptRepository
 import app.murmurnote.android.domain.transcript.ModelTranscriptBoundary
@@ -65,6 +66,7 @@ class AudioPipeline @Inject constructor(
     private val llmClient: LlmClient,
     private val recordingRepository: RecordingRepository,
     private val transcriptRepository: TranscriptRepository,
+    private val personalCorrectionService: PersonalCorrectionService,
     private val summaryRepository: SummaryRepository,
     private val appPreferences: AppPreferences,
     private val logger: Logger
@@ -223,6 +225,8 @@ class AudioPipeline @Inject constructor(
                 } finally {
                     attempt.engine.release()
                 }
+                stageName = "personal_correction"
+                personalCorrectionService.correctRecordingIfEnabled(recordingId)
                 recording = recordingRepository.get(recordingId)
                     ?: error("Recording disappeared after transcript finalization")
                 fullText = recording.correctedTranscript

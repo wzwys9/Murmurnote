@@ -140,4 +140,46 @@ interface CorrectionDao {
 
     @Query("SELECT * FROM correction_records WHERE recordingId = :recordingId ORDER BY id")
     fun observeRecords(recordingId: String): Flow<List<CorrectionRecordEntity>>
+
+    @Query(
+        """
+        SELECT * FROM correction_records
+        WHERE recordingId = :recordingId
+          AND revision = :revision
+          AND decision = 'APPLIED'
+          AND sourceRuleId IS NOT NULL
+        ORDER BY id
+        """,
+    )
+    suspend fun getAppliedRecordsForRevision(
+        recordingId: String,
+        revision: Long,
+    ): List<CorrectionRecordEntity>
+
+    @Query(
+        """
+        SELECT * FROM correction_records
+        WHERE recordingId = :recordingId
+          AND revision = (
+              SELECT MAX(revision) FROM correction_records
+              WHERE recordingId = :recordingId
+                AND revision <= :maxRevision
+                AND decision = 'APPLIED'
+                AND reason = 'PERSONALIZED_LLM_CONTEXT_APPLIED'
+                AND rawStartCodePoint >= :segmentRawStart
+                AND rawEndCodePointExclusive <= :segmentRawEnd
+          )
+          AND decision = 'APPLIED'
+          AND reason = 'PERSONALIZED_LLM_CONTEXT_APPLIED'
+          AND rawStartCodePoint >= :segmentRawStart
+          AND rawEndCodePointExclusive <= :segmentRawEnd
+        ORDER BY rawStartCodePoint, id
+        """,
+    )
+    suspend fun getLatestAppliedPersonalizedRecordsForSegment(
+        recordingId: String,
+        maxRevision: Long,
+        segmentRawStart: Int,
+        segmentRawEnd: Int,
+    ): List<CorrectionRecordEntity>
 }

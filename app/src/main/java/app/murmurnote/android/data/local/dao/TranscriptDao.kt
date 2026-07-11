@@ -79,6 +79,25 @@ interface TranscriptDao {
     @Query(
         """
         UPDATE transcript_segments
+        SET correctedText = :correctedText,
+            correctionRevision = :newRevision
+        WHERE id = :segmentId
+          AND recordingId = :recordingId
+          AND correctionRevision = :expectedSegmentRevision
+          AND isEdited = 0
+        """,
+    )
+    suspend fun setAutomatedCorrection(
+        recordingId: String,
+        segmentId: Long,
+        expectedSegmentRevision: Long,
+        correctedText: String,
+        newRevision: Long,
+    ): Int
+
+    @Query(
+        """
+        UPDATE transcript_segments
         SET correctedText = rawText,
             isEdited = 0,
             editedAt = NULL,

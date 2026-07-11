@@ -17,8 +17,10 @@ import app.murmurnote.android.data.remote.llm.LlmClient
 import app.murmurnote.android.data.preference.AppPreferences
 import app.murmurnote.android.data.repository.ItemRepository
 import app.murmurnote.android.data.repository.RecordingRepository
+import app.murmurnote.android.data.repository.PersonalCorrectionService
 import app.murmurnote.android.data.repository.SummaryRepository
 import app.murmurnote.android.data.repository.TranscriptRepository
+import app.murmurnote.android.domain.correction.PersonalCorrectionLearningPolicy
 import app.murmurnote.android.domain.correction.SingleReplacementDiff
 import app.murmurnote.android.service.TranscriptionService
 import app.murmurnote.android.util.Logger
@@ -48,6 +50,7 @@ class DetailViewModel @Inject constructor(
     private val itemRepo: ItemRepository,
     private val player: AudioPlayer,
     private val llmClient: LlmClient,
+    private val personalCorrectionService: PersonalCorrectionService,
     private val appPreferences: AppPreferences,
     private val logger: Logger
 ) : ViewModel() {
@@ -385,8 +388,18 @@ class DetailViewModel @Inject constructor(
         if (_state.value.savingSegment) return
         viewModelScope.launch {
             _state.update { it.copy(savingSegment = true, segmentEditError = null) }
+            val personalLearningEnabled = appPreferences.personalCorrectionEnabled.first()
+            val personalLearningEligible = personalLearningEnabled &&
+                before?.let {
+                    PersonalCorrectionLearningPolicy.fromEdit(it.correctedText, text) != null
+                } == true
             runCatching {
-                transcriptRepo.editSegment(rec.id, segmentId, text)
+                transcriptRepo.editSegment(
+                    recordingId = rec.id,
+                    segmentId = segmentId,
+                    newText = text,
+                    capturePersonalLearning = personalLearningEnabled,
+                )
             }.onSuccess { diff ->
                 _state.update {
                     it.copy(
@@ -394,9 +407,13 @@ class DetailViewModel @Inject constructor(
                         segmentDraft = "",
                         savingSegment = false,
                         pendingRuleDiff = diff?.takeIf {
-                            it.eligibleForRule && before?.correctedText == before?.rawText
+                            !personalLearningEnabled &&
+                                it.eligibleForRule &&
+                                before?.correctedText == before?.rawText
                         },
-                        correctionActionMessage = if (diff?.eligibleForRule == true &&
+                        correctionActionMessage = if (personalLearningEligible && diff != null) {
+                            "修正已保存，已加入个性化学习队列"
+                        } else if (diff?.eligibleForRule == true &&
                             before?.correctedText == before?.rawText
                         ) {
                             "修正已保存；是否记住这次精确替换？"
@@ -406,6 +423,18 @@ class DetailViewModel @Inject constructor(
                     )
                 }
                 logger.i("Detail", "segment edited id=${rec.id} segmentId=$segmentId chars=${text.length}")
+                if (personalLearningEligible && diff != null) {
+                    val reviewed = personalCorrectionService.reviewPendingIfEnabled()
+                    _state.update {
+                        it.copy(
+                            correctionActionMessage = if (reviewed > 0) {
+                                "修正已保存，个性化纠错已完成学习"
+                            } else {
+                                "修正已保存；需要评估时会在 AI 服务可用时继续"
+                            },
+                        )
+                    }
+                }
             }.onFailure { e ->
                 logger.e("Detail", "saveSegmentEdit failed", e)
                 _state.update {

@@ -14,6 +14,10 @@ import app.murmurnote.android.data.local.entity.ProcessingStatus
 import app.murmurnote.android.data.local.entity.Recording
 import app.murmurnote.android.data.local.entity.RecordingSource
 import app.murmurnote.android.domain.correction.CorrectionScope
+import app.murmurnote.android.domain.correction.PersonalLearningConfidence
+import app.murmurnote.android.domain.correction.PersonalLearningVerdict
+import app.murmurnote.android.domain.correction.PinyinRelation
+import app.murmurnote.android.domain.correction.ValidatedPersonalLearningDecision
 import app.murmurnote.android.domain.transcript.CorrectionAuditReason
 import app.murmurnote.android.domain.transcript.ModelTranscriptSegment
 import app.murmurnote.android.domain.transcript.ModelTranscriptBoundary
@@ -36,6 +40,7 @@ import org.junit.runner.RunWith
 class TranscriptRepositoryTest {
     private lateinit var database: MurmurnoteDatabase
     private lateinit var repository: TranscriptRepository
+    private lateinit var personalCorrectionRepository: PersonalCorrectionRepository
     private lateinit var summaryRepository: SummaryRepository
 
     @Before
@@ -48,7 +53,15 @@ class TranscriptRepositoryTest {
             database = database,
             recordingDao = database.recordingDao(),
             transcriptDao = database.transcriptDao(),
-            correctionDao = database.correctionDao()
+            correctionDao = database.correctionDao(),
+            personalCorrectionDao = database.personalCorrectionDao(),
+        )
+        personalCorrectionRepository = PersonalCorrectionRepository(
+            database = database,
+            recordingDao = database.recordingDao(),
+            transcriptDao = database.transcriptDao(),
+            correctionDao = database.correctionDao(),
+            personalCorrectionDao = database.personalCorrectionDao(),
         )
         summaryRepository = SummaryRepository(
             database = database,
@@ -381,6 +394,581 @@ class TranscriptRepositoryTest {
         assertEquals("omega", repository.getSegments(RECORDING_ID).single().correctedText)
         assertEquals(1, repository.getRecordingRules(RECORDING_ID).size)
         assertEquals(2, repository.getRevisions(RECORDING_ID).size)
+    }
+
+    @Test
+    fun editSegment_whenEnabledPersistsAPendingLearningSampleInTheSameRevision() = runBlocking {
+        val segmentId = insertFinalizedSingleSegment("这是生记应用")
+
+        repository.editSegment(
+            recordingId = RECORDING_ID,
+            segmentId = segmentId,
+            newText = "这是声记应用",
+            capturePersonalLearning = true,
+            now = 45L,
+        )
+
+        val event = database.personalCorrectionDao().getPendingEvents(limit = 5).single()
+        val profile = database.personalCorrectionDao().getProfile(event.ruleId)!!
+        val rule = database.correctionDao().getRule(event.ruleId)!!
+        assertEquals(segmentId, event.segmentId)
+        assertEquals(1L, event.revision)
+        assertEquals("这是", event.leftContext)
+        assertEquals("记应用", event.rightContext)
+        assertEquals("PENDING", event.status)
+        assertEquals("PENDING_REVIEW", profile.state)
+        assertEquals(1, profile.positiveEvidenceCount)
+        assertEquals("生", rule.observedText)
+        assertEquals("声", rule.replacementText)
+        assertEquals("CONTEXTUAL_LLM", rule.matchMode)
+        assertFalse(rule.isEnabled)
+    }
+
+    @Test
+    fun editSegment_whenLearningIsOffDoesNotCreatePersonalKnowledge() = runBlocking {
+        val segmentId = insertFinalizedSingleSegment("这是生记应用")
+
+        repository.editSegment(
+            recordingId = RECORDING_ID,
+            segmentId = segmentId,
+            newText = "这是声记应用",
+            capturePersonalLearning = false,
+            now = 46L,
+        )
+
+        assertTrue(database.personalCorrectionDao().getPendingEvents(limit = 5).isEmpty())
+        assertTrue(database.personalCorrectionDao().getActiveRules().isEmpty())
+    }
+
+    @Test
+    fun repeatedPersonalEditReusesTheRuleAndAddsEvidence() = runBlocking {
+        val firstSegment = insertFinalizedSingleSegment("这是生记应用")
+        repository.editSegment(
+            RECORDING_ID,
+            firstSegment,
+            "这是声记应用",
+            capturePersonalLearning = true,
+            now = 47L,
+        )
+        val firstEvent = database.personalCorrectionDao().getPendingEvents(5).single()
+
+        val secondRecordingId = "second-recording"
+        database.recordingDao().insert(
+            Recording(
+                id = secondRecordingId,
+                title = "Second",
+                originalFilePath = "/second.wav",
+                durationMs = 1_000,
+                createdAt = 48L,
+                source = RecordingSource.RECORDED,
+                processingStatus = ProcessingStatus.COMPLETED,
+                rawTranscript = "这是生记应用",
+                correctedTranscript = "这是生记应用",
+            ),
+        )
+        val secondSegment = database.transcriptDao().insertModelSegment(
+            app.murmurnote.android.data.local.entity.TranscriptSegment(
+                recordingId = secondRecordingId,
+                rawText = "这是生记应用",
+                correctedText = "这是生记应用",
+                startMs = 0,
+                endMs = 1_000,
+                sequence = 0,
+                asrConfigFingerprint = PROVENANCE.configFingerprint,
+                vadPresetVersion = PROVENANCE.vadPresetVersion,
+            ),
+        )
+        database.transcriptDao().insertRevision(
+            app.murmurnote.android.data.local.entity.TranscriptRevisionEntity(
+                recordingId = secondRecordingId,
+                revision = 0,
+                text = "这是生记应用",
+                source = TranscriptRevisionSource.MODEL_FINAL.name,
+                createdAt = 48L,
+            ),
+        )
+
+        repository.editSegment(
+            secondRecordingId,
+            secondSegment,
+            "这是声记应用",
+            capturePersonalLearning = true,
+            now = 49L,
+        )
+
+        val events = database.personalCorrectionDao().getPendingEvents(5)
+        assertEquals(2, events.size)
+        assertTrue(events.all { it.ruleId == firstEvent.ruleId })
+        assertEquals(
+            2,
+            database.personalCorrectionDao().getProfile(firstEvent.ruleId)!!.positiveEvidenceCount,
+        )
+
+        assertTrue(
+            personalCorrectionRepository.completeReview(
+                observationId = firstEvent.id,
+                observedPinyin = "sheng",
+                replacementPinyin = "sheng",
+                pinyinRelation = PinyinRelation.EXACT_PINYIN,
+                decision = ValidatedPersonalLearningDecision(
+                    observationId = firstEvent.id,
+                    verdict = PersonalLearningVerdict.ACTIVATE,
+                    confidence = PersonalLearningConfidence.HIGH,
+                    reasonCode = "PHONETIC_ASR_ERROR",
+                ),
+                now = 50L,
+            ),
+        )
+        assertTrue(database.personalCorrectionDao().getPendingEvents(5).isEmpty())
+    }
+
+    @Test
+    fun highConfidenceLearningReviewActivatesOnlyThePersistedCandidate() = runBlocking {
+        val segmentId = insertFinalizedSingleSegment("这是生记应用")
+        repository.editSegment(
+            RECORDING_ID,
+            segmentId,
+            "这是声记应用",
+            capturePersonalLearning = true,
+            now = 52L,
+        )
+        val pending = personalCorrectionRepository.getPendingObservations(3).single()
+
+        assertTrue(
+            personalCorrectionRepository.completeReview(
+                observationId = pending.eventId,
+                observedPinyin = "sheng",
+                replacementPinyin = "sheng",
+                pinyinRelation = PinyinRelation.EXACT_PINYIN,
+                decision = ValidatedPersonalLearningDecision(
+                    observationId = pending.eventId,
+                    verdict = PersonalLearningVerdict.ACTIVATE,
+                    confidence = PersonalLearningConfidence.HIGH,
+                    reasonCode = "PHONETIC_ASR_ERROR",
+                ),
+                now = 53L,
+            ),
+        )
+
+        val activeRule = database.personalCorrectionDao().getActiveRules().single()
+        assertEquals(pending.ruleId, activeRule.id)
+        assertTrue(activeRule.isEnabled)
+        val profile = database.personalCorrectionDao().getProfile(pending.ruleId)!!
+        assertEquals("ACTIVE", profile.state)
+        assertEquals("EXACT_PINYIN", profile.pinyinRelation)
+        assertEquals("ACTIVATE", profile.lastVerdict)
+        val event = database.personalCorrectionDao().getEvent(pending.eventId)!!
+        assertEquals("REVIEWED", event.status)
+        assertEquals("HIGH", event.llmConfidence)
+    }
+
+    @Test
+    fun nonHighLearningReviewCannotEnableAContextualRule() = runBlocking {
+        val segmentId = insertFinalizedSingleSegment("这是生记应用")
+        repository.editSegment(
+            RECORDING_ID,
+            segmentId,
+            "这是声记应用",
+            capturePersonalLearning = true,
+            now = 54L,
+        )
+        val pending = personalCorrectionRepository.getPendingObservations(3).single()
+
+        personalCorrectionRepository.completeReview(
+            observationId = pending.eventId,
+            observedPinyin = "sheng",
+            replacementPinyin = "sheng",
+            pinyinRelation = PinyinRelation.EXACT_PINYIN,
+            decision = ValidatedPersonalLearningDecision(
+                observationId = pending.eventId,
+                verdict = PersonalLearningVerdict.ACTIVATE,
+                confidence = PersonalLearningConfidence.MEDIUM,
+                reasonCode = "PHONETIC_ASR_ERROR",
+            ),
+            now = 55L,
+        )
+
+        assertTrue(database.personalCorrectionDao().getActiveRules().isEmpty())
+        val rule = database.correctionDao().getRule(pending.ruleId)!!
+        val profile = database.personalCorrectionDao().getProfile(pending.ruleId)!!
+        assertFalse(rule.isEnabled)
+        assertEquals("NEEDS_MORE_EVIDENCE", profile.state)
+    }
+
+    @Test
+    fun highConfidenceReviewStillRejectsAReverseReplacementCycle() = runBlocking {
+        insertActivePersonalRule("existing-rule", "甲", "乙")
+        val segmentId = insertFinalizedSingleSegment("乙")
+        repository.editSegment(
+            RECORDING_ID,
+            segmentId,
+            "甲",
+            capturePersonalLearning = true,
+            now = 55L,
+        )
+        val pending = personalCorrectionRepository.getPendingObservations(3).single()
+
+        assertTrue(
+            personalCorrectionRepository.completeReview(
+                observationId = pending.eventId,
+                observedPinyin = "yi",
+                replacementPinyin = "jia",
+                pinyinRelation = PinyinRelation.NOT_PHONETIC,
+                decision = ValidatedPersonalLearningDecision(
+                    observationId = pending.eventId,
+                    verdict = PersonalLearningVerdict.ACTIVATE,
+                    confidence = PersonalLearningConfidence.HIGH,
+                    reasonCode = "USER_TERM_FITS_CONTEXT",
+                ),
+                now = 56L,
+            ),
+        )
+
+        val newRule = database.correctionDao().getRule(pending.ruleId)!!
+        val newProfile = database.personalCorrectionDao().getProfile(pending.ruleId)!!
+        assertFalse(newRule.isEnabled)
+        assertEquals("REJECTED", newProfile.state)
+        assertEquals("LOCAL_RULE_CYCLE", newProfile.lastReasonCode)
+        assertTrue(database.correctionDao().getRule("existing-rule")!!.isEnabled)
+    }
+
+    @Test
+    fun learningReviewIsIdempotentAndCannotBeReplacedByALateResponse() = runBlocking {
+        val segmentId = insertFinalizedSingleSegment("这是生记应用")
+        repository.editSegment(
+            RECORDING_ID,
+            segmentId,
+            "这是声记应用",
+            capturePersonalLearning = true,
+            now = 56L,
+        )
+        val pending = personalCorrectionRepository.getPendingObservations(3).single()
+        val decision = ValidatedPersonalLearningDecision(
+            observationId = pending.eventId,
+            verdict = PersonalLearningVerdict.ACTIVATE,
+            confidence = PersonalLearningConfidence.HIGH,
+            reasonCode = "PHONETIC_ASR_ERROR",
+        )
+
+        assertTrue(
+            personalCorrectionRepository.completeReview(
+                pending.eventId,
+                "sheng",
+                "sheng",
+                PinyinRelation.EXACT_PINYIN,
+                decision,
+                now = 57L,
+            ),
+        )
+        assertFalse(
+            personalCorrectionRepository.completeReview(
+                pending.eventId,
+                "other",
+                "other",
+                PinyinRelation.NOT_PHONETIC,
+                decision.copy(
+                    verdict = PersonalLearningVerdict.REJECT,
+                    reasonCode = "NOT_AN_ASR_ERROR",
+                ),
+                now = 58L,
+            ),
+        )
+        assertEquals(
+            "ACTIVE",
+            database.personalCorrectionDao().getProfile(pending.ruleId)!!.state,
+        )
+    }
+
+    @Test
+    fun disablingAPendingProfileInvalidatesALateActivationResponse() = runBlocking {
+        val segmentId = insertFinalizedSingleSegment("这是生记应用")
+        repository.editSegment(
+            RECORDING_ID,
+            segmentId,
+            "这是声记应用",
+            capturePersonalLearning = true,
+            now = 58L,
+        )
+        val pending = personalCorrectionRepository.getPendingObservations(3).single()
+
+        personalCorrectionRepository.setProfileEnabled(
+            ruleId = pending.ruleId,
+            enabled = false,
+            now = 59L,
+        )
+
+        assertFalse(
+            personalCorrectionRepository.completeReview(
+                observationId = pending.eventId,
+                observedPinyin = "sheng",
+                replacementPinyin = "sheng",
+                pinyinRelation = PinyinRelation.EXACT_PINYIN,
+                decision = ValidatedPersonalLearningDecision(
+                    observationId = pending.eventId,
+                    verdict = PersonalLearningVerdict.ACTIVATE,
+                    confidence = PersonalLearningConfidence.HIGH,
+                    reasonCode = "PHONETIC_ASR_ERROR",
+                ),
+                now = 60L,
+            ),
+        )
+        assertTrue(database.personalCorrectionDao().getPendingEvents(3).isEmpty())
+        assertFalse(database.correctionDao().getRule(pending.ruleId)!!.isEnabled)
+        assertEquals(
+            "DISABLED",
+            database.personalCorrectionDao().getProfile(pending.ruleId)!!.state,
+        )
+    }
+
+    @Test
+    fun approvedPersonalCorrectionCreatesAnAuditedRevisionAndPreservesRaw() = runBlocking {
+        insertActivePersonalRule("learned-rule", "生", "声")
+        insertRecording()
+        repository.cacheModelSegment(
+            RECORDING_ID,
+            modelSegment("这是生记应用", sequence = 0),
+            PROVENANCE,
+        )
+        repository.finalizeModelTranscript(
+            RECORDING_ID,
+            PROVENANCE,
+            expectedSequences = listOf(0),
+            now = 60L,
+        )
+
+        val snapshot = personalCorrectionRepository.prepareSnapshot(RECORDING_ID)
+        assertEquals(1, snapshot.candidates.size)
+        assertTrue(
+            personalCorrectionRepository.applyApproved(
+                snapshot = snapshot,
+                approved = snapshot.candidates,
+                now = 61L,
+            ),
+        )
+
+        val recording = database.recordingDao().getById(RECORDING_ID)!!
+        assertEquals("这是生记应用", recording.rawTranscript)
+        assertEquals("这是声记应用", recording.correctedTranscript)
+        assertEquals(1L, recording.correctionRevision)
+        val segment = repository.getSegments(RECORDING_ID).single()
+        assertEquals("这是生记应用", segment.rawText)
+        assertEquals("这是声记应用", segment.correctedText)
+        assertFalse(segment.isEdited)
+        assertEquals(
+            TranscriptRevisionSource.PERSONALIZED_LLM,
+            repository.getRevisions(RECORDING_ID).last().source,
+        )
+        val audit = repository.getAuditRecords(RECORDING_ID).last()
+        assertEquals("learned-rule", audit.sourceRuleId)
+        assertEquals(CorrectionAuditReason.PERSONALIZED_LLM_CONTEXT_APPLIED, audit.reason)
+    }
+
+    @Test
+    fun deterministicRulesKeepPriorityWhilePersonalCorrectionUsesOtherTextInTheSegment() =
+        runBlocking {
+            insertActivePersonalRule("learned-rule", "生", "声")
+            insertActivePersonalRule("protected-rule", "Alpha版本", "恶意替换")
+            insertRecording()
+            repository.createGlobalLexiconRule(
+                observedText = "阿尔法",
+                replacementText = "Alpha版本",
+                now = 60L,
+            )
+            repository.cacheModelSegment(
+                RECORDING_ID,
+                modelSegment("阿尔法 生记应用", sequence = 0),
+                PROVENANCE,
+            )
+            repository.finalizeModelTranscript(
+                RECORDING_ID,
+                PROVENANCE,
+                expectedSequences = listOf(0),
+                applyGlobalLexicon = true,
+                now = 61L,
+            )
+
+            val snapshot = personalCorrectionRepository.prepareSnapshot(RECORDING_ID)
+
+            assertEquals(1, snapshot.candidates.size)
+            val candidate = snapshot.candidates.single()
+            assertEquals("learned-rule", candidate.ruleId)
+            assertEquals(8, candidate.startCodePoint)
+            assertEquals(4, candidate.rawStartCodePoint)
+            assertTrue(
+                personalCorrectionRepository.applyApproved(
+                    snapshot = snapshot,
+                    approved = snapshot.candidates,
+                    now = 62L,
+                ),
+            )
+            val recording = database.recordingDao().getById(RECORDING_ID)!!
+            assertEquals("阿尔法 生记应用", recording.rawTranscript)
+            assertEquals("Alpha版本 声记应用", recording.correctedTranscript)
+            val personalAudit = repository.getAuditRecords(RECORDING_ID)
+                .single {
+                    it.reason == CorrectionAuditReason.PERSONALIZED_LLM_CONTEXT_APPLIED
+                }
+            assertEquals(4, personalAudit.rawStartCodePoint)
+            assertEquals("生", personalAudit.originalText)
+        }
+
+    @Test
+    fun stalePersonalCorrectionSnapshotFailsClosedWithoutAnotherRevision() = runBlocking {
+        insertActivePersonalRule("learned-rule", "生", "声")
+        val segmentId = insertFinalizedSingleSegment("这是生记应用")
+        val snapshot = personalCorrectionRepository.prepareSnapshot(RECORDING_ID)
+        repository.editSegment(RECORDING_ID, segmentId, "用户的新版本", now = 62L)
+
+        assertFalse(
+            personalCorrectionRepository.applyApproved(
+                snapshot,
+                snapshot.candidates,
+                now = 63L,
+            ),
+        )
+        assertEquals("用户的新版本", repository.getSegments(RECORDING_ID).single().correctedText)
+        assertEquals(1L, database.recordingDao().getById(RECORDING_ID)!!.correctionRevision)
+    }
+
+    @Test
+    fun editingAnAutomaticPersonalCorrectionDisablesTheRuleAsNegativeFeedback() = runBlocking {
+        insertActivePersonalRule("learned-rule", "生", "声")
+        val segmentId = insertFinalizedSingleSegment("这是生记应用")
+        val snapshot = personalCorrectionRepository.prepareSnapshot(RECORDING_ID)
+        assertTrue(
+            personalCorrectionRepository.applyApproved(
+                snapshot,
+                snapshot.candidates,
+                now = 64L,
+            ),
+        )
+
+        repository.editSegment(
+            recordingId = RECORDING_ID,
+            segmentId = segmentId,
+            newText = "这是生记应用",
+            capturePersonalLearning = false,
+            now = 65L,
+        )
+
+        val oldRule = database.correctionDao().getRule("learned-rule")!!
+        val oldProfile = database.personalCorrectionDao().getProfile("learned-rule")!!
+        assertFalse(oldRule.isEnabled)
+        assertEquals("DISABLED", oldProfile.state)
+        assertEquals(1, oldProfile.negativeEvidenceCount)
+        assertTrue(database.personalCorrectionDao().getActiveRules().isEmpty())
+    }
+
+    @Test
+    fun correctingAnAutomaticResultLearnsFromTheOriginalAsrText() = runBlocking {
+        insertActivePersonalRule("old-rule", "生", "声")
+        val segmentId = insertFinalizedSingleSegment("这是生记应用")
+        val snapshot = personalCorrectionRepository.prepareSnapshot(RECORDING_ID)
+        assertTrue(
+            personalCorrectionRepository.applyApproved(
+                snapshot,
+                snapshot.candidates,
+                now = 65L,
+            ),
+        )
+
+        repository.editSegment(
+            recordingId = RECORDING_ID,
+            segmentId = segmentId,
+            newText = "这是升记应用",
+            capturePersonalLearning = true,
+            now = 66L,
+        )
+
+        assertFalse(database.correctionDao().getRule("old-rule")!!.isEnabled)
+        val pending = personalCorrectionRepository.getPendingObservations(3).single()
+        assertEquals("生", pending.observedText)
+        assertEquals("升", pending.replacementText)
+        assertEquals("这是", pending.leftContext)
+        assertEquals("记应用", pending.rightContext)
+    }
+
+    @Test
+    fun editingALargerRangeThatOverlapsAnAutomaticResultStillDisablesItsRule() = runBlocking {
+        insertActivePersonalRule("learned-rule", "生", "声")
+        val segmentId = insertFinalizedSingleSegment("这是生记应用")
+        val snapshot = personalCorrectionRepository.prepareSnapshot(RECORDING_ID)
+        assertTrue(
+            personalCorrectionRepository.applyApproved(
+                snapshot,
+                snapshot.candidates,
+                now = 67L,
+            ),
+        )
+
+        repository.editSegment(
+            recordingId = RECORDING_ID,
+            segmentId = segmentId,
+            newText = "这是升级软件",
+            capturePersonalLearning = false,
+            now = 68L,
+        )
+
+        assertFalse(database.correctionDao().getRule("learned-rule")!!.isEnabled)
+        assertEquals(
+            1,
+            database.personalCorrectionDao()
+                .getProfile("learned-rule")!!
+                .negativeEvidenceCount,
+        )
+    }
+
+    @Test
+    fun negativeFeedbackFindsTheAppliedRuleAfterAnotherSegmentWasEdited() = runBlocking {
+        insertActivePersonalRule("learned-rule", "生", "声")
+        insertRecording()
+        repository.cacheModelSegment(
+            RECORDING_ID,
+            modelSegment("这是生记应用", sequence = 0),
+            PROVENANCE,
+        )
+        repository.cacheModelSegment(
+            RECORDING_ID,
+            modelSegment("第二段原文", sequence = 1),
+            PROVENANCE,
+        )
+        repository.finalizeModelTranscript(
+            RECORDING_ID,
+            PROVENANCE,
+            expectedSequences = listOf(0, 1),
+            now = 66L,
+        )
+        val segments = repository.getSegments(RECORDING_ID)
+        val firstSegment = segments.single { it.sequence == 0 }
+        val secondSegment = segments.single { it.sequence == 1 }
+        val snapshot = personalCorrectionRepository.prepareSnapshot(RECORDING_ID)
+        assertTrue(
+            personalCorrectionRepository.applyApproved(
+                snapshot,
+                snapshot.candidates,
+                now = 67L,
+            ),
+        )
+        repository.editSegment(
+            RECORDING_ID,
+            secondSegment.id,
+            "第二段新版本",
+            capturePersonalLearning = false,
+            now = 68L,
+        )
+
+        repository.editSegment(
+            RECORDING_ID,
+            firstSegment.id,
+            "这是生记应用",
+            capturePersonalLearning = false,
+            now = 69L,
+        )
+
+        assertFalse(database.correctionDao().getRule("learned-rule")!!.isEnabled)
+        val profile = database.personalCorrectionDao().getProfile("learned-rule")!!
+        assertEquals("DISABLED", profile.state)
+        assertEquals(1, profile.negativeEvidenceCount)
     }
 
     @Test
@@ -754,6 +1342,38 @@ class TranscriptRepositoryTest {
             now = 1L
         )
         return segment.id
+    }
+
+    private suspend fun insertActivePersonalRule(
+        id: String,
+        observedText: String,
+        replacementText: String,
+    ) {
+        database.correctionDao().insertRule(
+            CorrectionRuleEntity(
+                id = id,
+                observedText = observedText,
+                replacementText = replacementText,
+                scope = CorrectionScope.GLOBAL.name,
+                matchMode = "CONTEXTUAL_LLM",
+                isEnabled = true,
+                createdAt = 1L,
+                updatedAt = 1L,
+            ),
+        )
+        database.personalCorrectionDao().insertProfile(
+            app.murmurnote.android.data.local.entity.CorrectionLearningProfileEntity(
+                ruleId = id,
+                state = "ACTIVE",
+                positiveEvidenceCount = 1,
+                negativeEvidenceCount = 0,
+                observedPinyin = "sheng",
+                replacementPinyin = "sheng",
+                pinyinRelation = "EXACT_PINYIN",
+                createdAt = 1L,
+                updatedAt = 1L,
+            ),
+        )
     }
 
     private suspend fun insertRecording() {
