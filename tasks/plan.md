@@ -1,5 +1,42 @@
 # Implementation Plan: Local ASR and deterministic correction
 
+## Current Slice: 个性化自学习纠错（实现中，2026-07-11）
+
+本轮以 `SELF_LEARNING_CORRECTION_SPEC.md` 为准。先完成研究、隐私边界和规格确认；用户确认
+前不修改运行时代码。实现阶段遵循“失败测试 → Room v8 学习存储 → 受约束 LLM → 统一流水线
+→ 实验室管理 UI → 完整验证”。
+
+### Task A: 用户反馈与候选契约
+
+- 只从用户明确保存的单区间替换学习；保存修改与网络学习解耦。
+- 使用 Android ICU 生成规范化拼音，拼音/形似只作候选信号，不能直接替换。
+- 定义默认 KEEP、候选/上下文上限、冲突和负反馈停用规则。
+
+### Task B: Room v8 个性化知识
+
+- 复用 `correction_rules` 并增加 `CONTEXTUAL_LLM` 模式。
+- 新增 profile/event 表、DAO、无损 v7→v8 migration、schema 和迁移测试。
+- 上下文随来源录音删除，聚合词对由用户在管理页独立控制。
+
+### Task C: 受约束 LLM 与流水线
+
+- LLM 只返回代码提供的候选 ID 和固定决定；本地严格校验后才应用。
+- 网络失败不影响 raw/ASR；应用产生独立修订和审计。
+- 录音与导入音频共用同一后处理路径；用户反向修改立即形成负反馈。
+
+### Task D: 实验室体验与验证
+
+- 新增默认关闭且受 API 门槛保护的独立开关、首次隐私说明和学习管理页。
+- 先写领域/Repository/迁移/流水线/UI 状态测试，再跑完整 JVM、Lint、Release 和真机门槛。
+
+### Approval checkpoint
+
+- [x] 阅读现有纠错、LLM、Room、设置和流水线边界。
+- [x] 调研中文纠错、ASR 个性化、拼音/字形融合和过度纠错的一手资料。
+- [x] 写出规格、威胁模型、资源上限和验收标准。
+- [x] 用户确认 `SELF_LEARNING_CORRECTION_SPEC.md`。
+- [x] 确认后进入 TDD 实现；确认前不修改运行时代码。
+
 ## Current Slice: 安全与架构加固（2026-07-11）
 
 本轮修复全量代码审计中已确认的阻塞项，不改变用户数据语义。

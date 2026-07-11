@@ -1,5 +1,19 @@
 # Local ASR and deterministic correction checklist
 
+## Current: 个性化自学习纠错（实现中）
+
+- [x] A1：审阅现有手动修改、精确词本、Room、LLM 和统一音频流水线
+- [x] A2：调研用户反馈个性化、中文音/形/语境纠错及过度纠错风险
+- [x] A3：确定“代码给候选、LLM 只裁决、默认保留原文”的安全架构
+- [x] A4：写入 `SELF_LEARNING_CORRECTION_SPEC.md`、隐私边界和验收标准
+- [x] Gate：用户确认一次修改即可成为上下文候选，以及最多 240 code point 的云端上下文
+- [ ] B1：失败测试与拼音/候选/响应验证纯领域实现
+- [ ] B2：Room v8 profile/event 表、DAO、migration、schema 和迁移测试
+- [ ] C1：受约束 LLM 学习评估与未来候选裁决
+- [ ] C2：录音/导入统一流水线、自动修订审计和负反馈停用
+- [ ] D1：实验室独立开关、首次隐私说明和学习管理 UI
+- [ ] D2：完整测试、Lint、Release 与真机验证
+
 ## Current: 安全与架构加固
 
 - [x] A1：归档安全策略失败测试与实现
