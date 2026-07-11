@@ -9,6 +9,7 @@ import android.provider.MediaStore
 import androidx.core.content.FileProvider
 import app.murmurnote.android.BuildConfig
 import app.murmurnote.android.data.asr.AsrModelManager
+import app.murmurnote.android.data.remote.interceptor.ApiLogCapturePolicy
 import app.murmurnote.android.data.repository.ApiLogRepository
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.Dispatchers
@@ -28,7 +29,7 @@ import javax.inject.Singleton
  * 把日志打成 zip 导出到系统下载目录。
  * Zip 内容：
  *   - runtime*.log        当前与轮转文本日志（HTTP / 录音 / Pipeline / 设置等）
- *   - api_logs.txt        最近 100 条 HTTP 请求/响应（默认脱敏并截断）
+ *   - api_logs.txt        最近 100 条 HTTP 元数据（不含请求/响应正文）
  *   - meta.txt            APP 版本、构建时间、设备信息
  */
 @Singleton
@@ -44,30 +45,21 @@ class LogExporter @Inject constructor(
 
         val zipBytes = withContext(Dispatchers.IO) { buildZip() }
 
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            val resolver = context.contentResolver
-            val values = ContentValues().apply {
-                put(MediaStore.Downloads.DISPLAY_NAME, displayName)
-                put(MediaStore.Downloads.MIME_TYPE, "application/zip")
-                put(MediaStore.Downloads.RELATIVE_PATH, Environment.DIRECTORY_DOWNLOADS)
-                put(MediaStore.Downloads.IS_PENDING, 1)
-            }
-            val uri = resolver.insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, values)
-                ?: error("无法在 Downloads 创建文件")
-            resolver.openOutputStream(uri)?.use { it.write(zipBytes) }
-                ?: error("无法打开输出流")
-            values.clear()
-            values.put(MediaStore.Downloads.IS_PENDING, 0)
-            resolver.update(uri, values, null, null)
-            "Downloads/$displayName"
-        } else {
-            @Suppress("DEPRECATION")
-            val downloads = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS)
-            downloads.mkdirs()
-            val dest = File(downloads, displayName)
-            dest.outputStream().use { it.write(zipBytes) }
-            dest.absolutePath
+        val resolver = context.contentResolver
+        val values = ContentValues().apply {
+            put(MediaStore.Downloads.DISPLAY_NAME, displayName)
+            put(MediaStore.Downloads.MIME_TYPE, "application/zip")
+            put(MediaStore.Downloads.RELATIVE_PATH, Environment.DIRECTORY_DOWNLOADS)
+            put(MediaStore.Downloads.IS_PENDING, 1)
         }
+        val uri = resolver.insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, values)
+            ?: error("无法在 Downloads 创建文件")
+        resolver.openOutputStream(uri)?.use { it.write(zipBytes) }
+            ?: error("无法打开输出流")
+        values.clear()
+        values.put(MediaStore.Downloads.IS_PENDING, 0)
+        resolver.update(uri, values, null, null)
+        "Downloads/$displayName"
     }
 
     /**
@@ -146,10 +138,9 @@ class LogExporter @Inject constructor(
         sb.appendLine()
         logs.forEach { log ->
             sb.appendLine("[${fmt.format(Date(log.timestamp))}] ${log.apiName}  ${log.method}  HTTP ${log.responseCode}  ${log.durationMs}ms")
-            sb.appendLine("  URL: ${log.url}")
-            log.requestBody?.let { sb.appendLine("  Request: ${LogSanitizer.body(it, 2000)}") }
-            log.responseBody?.let { sb.appendLine("  Response: ${LogSanitizer.body(it, 4000)}") }
-            log.errorMessage?.let { sb.appendLine("  Error: ${LogSanitizer.message(it)}") }
+            sb.appendLine("  URL: ${ApiLogCapturePolicy.sanitizeUrl(log.url)}")
+            // Never export legacy body/error columns even if an old or externally modified
+            // database still contains them. Current rows retain only method/host/status/timing.
             sb.appendLine()
         }
         return sb.toString()

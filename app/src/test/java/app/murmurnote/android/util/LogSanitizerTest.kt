@@ -31,4 +31,34 @@ class LogSanitizerTest {
         assertTrue(sanitized.contains("<truncated"))
         assertFalse(sanitized.contains("/data/user/0/app.murmurnote.android"))
     }
+
+    @Test
+    fun throwableDiagnosticsKeepStackMetadataButDropMessages() {
+        val cause = IllegalArgumentException("raw response contained a private transcript")
+        val error = IllegalStateException("user prompt and meeting notes", cause)
+
+        val sanitized = LogSanitizer.throwable(error)
+
+        assertTrue(sanitized.contains("IllegalStateException"))
+        assertTrue(sanitized.contains("IllegalArgumentException"))
+        assertFalse(sanitized.contains("private transcript"))
+        assertFalse(sanitized.contains("user prompt"))
+        assertFalse(sanitized.contains("meeting notes"))
+    }
+
+    @Test
+    fun logcatPayloadNeverIncludesRawThrowableMessages() {
+        val privateBody = "upstream response echoed a private meeting transcript"
+        val error = IllegalStateException(privateBody)
+
+        val payload = LogSanitizer.logcatPayload(
+            message = "request failed",
+            fields = " status=500",
+            throwable = error
+        )
+
+        assertTrue(payload.contains("request failed status=500"))
+        assertTrue(payload.contains("IllegalStateException"))
+        assertFalse(payload.contains(privateBody))
+    }
 }

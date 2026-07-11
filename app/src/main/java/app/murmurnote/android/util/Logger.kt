@@ -52,11 +52,12 @@ class Logger @Inject constructor(
         val cleanTrace = tr?.let { "\n${LogSanitizer.throwable(it)}" }.orEmpty()
         val thread = Thread.currentThread().name
         val full = "$stamp $level [$scope] ($thread) $cleanMsg$fieldText$cleanTrace"
+        val logcatPayload = "[$scope] ${LogSanitizer.logcatPayload(cleanMsg, fieldText, tr)}"
         when (level) {
-            "E" -> Log.e(tag, "[$scope] $cleanMsg$fieldText", tr)
-            "W" -> Log.w(tag, "[$scope] $cleanMsg$fieldText", tr)
-            "D" -> Log.d(tag, "[$scope] $cleanMsg$fieldText")
-            else -> Log.i(tag, "[$scope] $cleanMsg$fieldText")
+            "E" -> Log.e(tag, logcatPayload)
+            "W" -> Log.w(tag, logcatPayload)
+            "D" -> Log.d(tag, logcatPayload)
+            else -> Log.i(tag, logcatPayload)
         }
         runCatching {
             store.appendLine(full)

@@ -4,19 +4,17 @@ import app.murmurnote.android.data.local.dao.ApiLogDao
 import app.murmurnote.android.data.local.entity.ApiLog
 import app.murmurnote.android.di.ApplicationScope
 import app.murmurnote.android.util.Logger
-import app.murmurnote.android.util.LogSanitizer
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.launch
 import okhttp3.Interceptor
 import okhttp3.Response
-import okio.Buffer
 import java.io.IOException
 import javax.inject.Inject
 import javax.inject.Singleton
 
 /**
- * 把所有 GLM/Ollama 的请求/响应都落到 api_logs 表，Debug 页可见。
- * 注意：multipart 请求体可能很大（音频），写入 DB 会用截断。
+ * 把 GLM/Ollama 的请求元数据落到 api_logs 表，Debug 页可见。
+ * 请求和响应正文可能包含录音、转写或提示词，因此不会读取、记录或落库。
  */
 @Singleton
 class ApiLogInterceptor @Inject constructor(
@@ -35,19 +33,39 @@ class ApiLogInterceptor @Inject constructor(
         val request = chain.request()
         val startTime = System.currentTimeMillis()
 
-        val requestBody = LogSanitizer.body(peekRequestBody(request) ?: "", 8 * 1024)
-        val safeUrl = LogSanitizer.message(request.url.toString(), 2_000)
+        val safeUrl = ApiLogCapturePolicy.sanitizeUrl(request.url.toString())
         val apiName = when {
             request.url.host.contains("bigmodel") -> "GLM-ASR"
             request.url.host.contains("ollama") -> "Ollama"
             else -> request.url.host
         }
 
-        logger.i("HTTP", "${request.method} $safeUrl")
+        logger.i(
+            "HTTP",
+            "request started",
+            fields = mapOf(
+                "apiName" to apiName,
+                "method" to request.method,
+                "url" to safeUrl
+            )
+        )
         val response = try {
             chain.proceed(request)
         } catch (e: IOException) {
-            logger.e("HTTP", "${request.method} $safeUrl → IOException", e)
+            val durationMs = System.currentTimeMillis() - startTime
+            val errorMessage = ApiLogCapturePolicy.errorType(e)
+            logger.e(
+                "HTTP",
+                "request failed",
+                fields = mapOf(
+                    "apiName" to apiName,
+                    "method" to request.method,
+                    "url" to safeUrl,
+                    "status" to -1,
+                    "durationMs" to durationMs,
+                    "error" to errorMessage
+                )
+            )
             scope.launch {
                 runCatching {
                     apiLogDao.insert(
@@ -56,11 +74,11 @@ class ApiLogInterceptor @Inject constructor(
                             apiName = apiName,
                             method = request.method,
                             url = safeUrl,
-                            requestBody = requestBody,
+                            requestBody = null,
                             responseCode = -1,
                             responseBody = null,
-                            durationMs = System.currentTimeMillis() - startTime,
-                            errorMessage = e.message?.let { LogSanitizer.message(it) }
+                            durationMs = durationMs,
+                            errorMessage = errorMessage
                         )
                     )
                     apiLogDao.trimToNewest(API_LOG_KEEP)
@@ -69,22 +87,18 @@ class ApiLogInterceptor @Inject constructor(
             throw e
         }
 
-        // 流式响应（SSE）不能 peek 整个 body，会阻塞流。这里只对 application/json 取 body。
-        val ctype = response.body?.contentType()?.toString().orEmpty()
-        val responseBody = if (ctype.startsWith("text/event-stream")) {
-            "<sse stream — body not captured>"
-        } else {
-            runCatching { response.peekBody(256 * 1024).string() }.getOrNull()
-        }?.let { LogSanitizer.body(it, 64 * 1024) }
         val durMs = System.currentTimeMillis() - startTime
+        val fields = mapOf(
+            "apiName" to apiName,
+            "method" to request.method,
+            "url" to safeUrl,
+            "status" to response.code,
+            "durationMs" to durMs
+        )
         if (response.code in 200..399) {
-            logger.i("HTTP", "${request.method} $safeUrl → ${response.code} (${durMs}ms)")
+            logger.i("HTTP", "request completed", fields = fields)
         } else {
-            // 错误响应把 body 摘要也写进文件日志，方便用户导出后排查
-            logger.e(
-                "HTTP",
-                "${request.method} $safeUrl → ${response.code} (${durMs}ms) body=${responseBody?.take(800).orEmpty()}"
-            )
+            logger.e("HTTP", "request completed with HTTP error", fields = fields)
         }
 
         scope.launch {
@@ -95,10 +109,10 @@ class ApiLogInterceptor @Inject constructor(
                             apiName = apiName,
                             method = request.method,
                             url = safeUrl,
-                            requestBody = requestBody,
+                            requestBody = null,
                             responseCode = response.code,
-                            responseBody = responseBody,
-                            durationMs = System.currentTimeMillis() - startTime,
+                            responseBody = null,
+                            durationMs = durMs,
                             errorMessage = null
                         )
                 )
@@ -106,17 +120,5 @@ class ApiLogInterceptor @Inject constructor(
             }
         }
         return response
-    }
-
-    private fun peekRequestBody(request: okhttp3.Request): String? {
-        val body = request.body ?: return null
-        // 跳过太大的 multipart（音频）
-        val ctype = body.contentType()?.toString().orEmpty()
-        if (ctype.startsWith("multipart/")) return "<multipart — body not captured>"
-        return runCatching {
-            val buf = Buffer()
-            body.writeTo(buf)
-            buf.readUtf8()
-        }.getOrNull()
     }
 }

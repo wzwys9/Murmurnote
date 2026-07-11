@@ -52,6 +52,7 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import app.murmurnote.android.data.remote.interceptor.ApiLogCapturePolicy
 
 @Composable
 fun DebugScreen(
@@ -156,20 +157,14 @@ private fun ApiLogTab(vm: DebugViewModel) {
                                         else MaterialTheme.colorScheme.error
                             )
                         }
-                        Text(log.url, style = MaterialTheme.typography.bodySmall, maxLines = 1)
+                        Text(
+                            ApiLogCapturePolicy.sanitizeUrl(log.url),
+                            style = MaterialTheme.typography.bodySmall,
+                            maxLines = 1
+                        )
                         if (expanded) {
                             Spacer(Modifier.height(8.dp))
-                            log.requestBody?.let {
-                                Text("Request:", style = MaterialTheme.typography.labelMedium)
-                                Text(it, style = MaterialTheme.typography.bodySmall, fontFamily = FontFamily.Monospace, maxLines = 20)
-                            }
-                            log.responseBody?.let {
-                                Text("Response:", style = MaterialTheme.typography.labelMedium)
-                                Text(it, style = MaterialTheme.typography.bodySmall, fontFamily = FontFamily.Monospace, maxLines = 40)
-                            }
-                            log.errorMessage?.let {
-                                Text("Error: $it", color = MaterialTheme.colorScheme.error)
-                            }
+                            Text("仅保留请求元数据，不保存正文或异常消息。")
                         }
                     }
                 }

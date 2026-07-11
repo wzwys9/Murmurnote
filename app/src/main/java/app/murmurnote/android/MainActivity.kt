@@ -41,7 +41,7 @@ class MainActivity : ComponentActivity() {
         if (intent?.action == Intent.ACTION_VIEW || intent?.action == Intent.ACTION_SEND) {
             // 记录"App 接到外部 Intent"这件事本身——AudioImporter 只在抽到 Uri 时才落日志，
             // 所以单纯的"分享给本 App 但 Uri 抽不到"这种坑这里能看见。
-            logger.i("Import", "incoming intent action=${intent.action} type=${intent.type} data=${intent.data}")
+            logger.i("Import", "incoming intent action=${intent.action} hasType=${intent.type != null}")
         }
         val uri = audioImporter.extractUri(intent) ?: return
         Toast.makeText(this, "正在导入音频…", Toast.LENGTH_SHORT).show()

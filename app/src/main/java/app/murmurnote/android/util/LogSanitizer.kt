@@ -23,8 +23,49 @@ object LogSanitizer {
     fun message(value: String, limit: Int = DEFAULT_LIMIT): String =
         truncate(redact(value), limit)
 
-    fun throwable(value: Throwable): String =
-        message(android.util.Log.getStackTraceString(value), limit = 12_000)
+    /**
+     * Stack metadata without exception messages. Network/parser exceptions frequently embed
+     * response bodies, prompts, or transcript excerpts in [Throwable.message].
+     */
+    fun throwable(value: Throwable): String = buildString {
+        val seen = mutableSetOf<Throwable>()
+        var current: Throwable? = value
+        var depth = 0
+        while (current != null && depth < MAX_CAUSE_DEPTH && seen.add(current)) {
+            if (depth > 0) append("\nCaused by: ")
+            append(current.javaClass.name)
+            current.stackTrace.take(MAX_STACK_FRAMES).forEach { frame ->
+                append("\n  at ")
+                append(frame.className)
+                append('.')
+                append(frame.methodName)
+                append('(')
+                append(frame.fileName ?: "Unknown Source")
+                if (frame.lineNumber >= 0) append(':').append(frame.lineNumber)
+                append(')')
+            }
+            current = current.cause
+            depth++
+        }
+    }.let { truncate(it, 12_000) }
+
+    /**
+     * Builds the complete Logcat payload without handing Android the original [Throwable].
+     * Passing that object to Log.e/Log.w would make Logcat render its unsanitized message even
+     * though the durable runtime log contains only [throwable] metadata.
+     */
+    fun logcatPayload(
+        message: String,
+        fields: String,
+        throwable: Throwable?
+    ): String = buildString {
+        append(message(message))
+        append(message(fields))
+        throwable?.let {
+            append('\n')
+            append(this@LogSanitizer.throwable(it))
+        }
+    }
 
     fun fieldValue(value: Any?, limit: Int = 1_000): String = when (value) {
         null -> "null"
@@ -48,4 +89,7 @@ object LogSanitizer {
 
     private fun truncate(value: String, limit: Int): String =
         if (value.length <= limit) value else value.take(limit) + "...<truncated ${value.length - limit} chars>"
+
+    private const val MAX_CAUSE_DEPTH = 4
+    private const val MAX_STACK_FRAMES = 24
 }

@@ -2,7 +2,6 @@ package app.murmurnote.android.audio
 
 import android.media.MediaPlayer
 import android.media.PlaybackParams
-import android.os.Build
 import app.murmurnote.android.util.Logger
 import java.io.File
 import javax.inject.Inject
@@ -36,14 +35,14 @@ class AudioPlayer @Inject constructor(
                 pendingPlay = false
                 mp.start()
             }
-            logger.i("Player", "prepared ${file.name} dur=${mp.duration}ms")
+            logger.i("Player", "prepared dur=${mp.duration}ms")
         }
         mp.setOnCompletionListener {
-            logger.i("Player", "completed ${file.name}")
+            logger.i("Player", "completed")
             onComplete?.invoke()
         }
         mp.setOnErrorListener { _, what, extra ->
-            logger.e("Player", "MediaPlayer error what=$what extra=$extra file=${file.name}")
+            logger.e("Player", "MediaPlayer error what=$what extra=$extra")
             true
         }
         mp.prepareAsync()
@@ -87,7 +86,6 @@ class AudioPlayer @Inject constructor(
     private fun applySpeedNow(speed: Float) {
         val mp = player ?: return
         if (!prepared) return
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.M) return
         val params = mp.playbackParams ?: PlaybackParams()
         try {
             mp.playbackParams = params.setSpeed(speed)

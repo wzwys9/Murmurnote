@@ -44,12 +44,12 @@ class DebugFlagsInterceptor @Inject constructor(
 
     override fun intercept(chain: Interceptor.Chain): Response {
         if (forceFail) {
-            logger.w("Debug", "force-fail toggle on → throwing IOException for ${chain.request().url}")
+            logger.w("Debug", "force-fail toggle on → throwing IOException")
             throw IOException("Debug: forced network failure")
         }
         val d = simulateDelayMs
         if (d > 0) {
-            logger.d("Debug", "simulate-delay toggle on → sleeping ${d}ms before ${chain.request().url}")
+            logger.d("Debug", "simulate-delay toggle on → sleeping ${d}ms")
             try {
                 Thread.sleep(d)
             } catch (e: InterruptedException) {
