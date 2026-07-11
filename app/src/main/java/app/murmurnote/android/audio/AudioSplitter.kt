@@ -40,7 +40,10 @@ class AudioSplitter @Inject constructor(
         outputDir.mkdirs()
 
         val detection = sileroVadDetector.detect(input)
-        var hardCutProbeCount = 0
+        var hardCutRequestCount = 0
+        var hardCutProbeAttemptCount = 0
+        var fallbackWindowProbeCount = 0
+        var rescueProbeCount = 0
         var refinedHardCutCount = 0
         var hardCutProbeElapsedMs = 0L
         val segments = NeuralVadSegmentPlanner.plan(
@@ -48,42 +51,70 @@ class AudioSplitter @Inject constructor(
             sampleRateHz = detection.sampleRateHz,
             speechRanges = detection.speechRanges,
             hardCutBoundaryRefiner = { request ->
-                val window = HardCutBoundaryProbePolicy.window(
+                hardCutRequestCount += 1
+                val attemptElapsedMs = mutableListOf<Long>()
+                val refinement = HardCutBoundaryProbePolicy.refine(
                     hardLimitEndSample = request.hardLimitEndSample,
                     recordingSampleCount = detection.sampleCount,
                     sampleRateHz = detection.sampleRateHz,
-                )
-                val startedAt = SystemClock.elapsedRealtime()
-                hardCutProbeCount += 1
-                val probe = sileroVadDetector.detectWindow(
-                    file = input,
-                    startSample = window.analysisStartSample,
-                    endSampleExclusive = window.analysisEndSampleExclusive,
-                    preset = HardCutBoundaryProbePolicy.neuralVadPreset(),
-                )
-                val elapsedMs = SystemClock.elapsedRealtime() - startedAt
-                hardCutProbeElapsedMs += elapsedMs
-                check(
-                    probe.recordingSampleCount == detection.sampleCount &&
-                        probe.sampleRateHz == detection.sampleRateHz,
-                ) { "Hard-cut probe observed different source audio metadata" }
-
-                HardCutBoundaryProbePolicy
-                    .selectCutSample(window, probe.speechRanges)
-                    .also { cutSample ->
-                        if (cutSample != null) refinedHardCutCount += 1
-                        logger.d(
-                            "Split",
-                            "hard-cut boundary probe complete",
-                            fields = mapOf(
-                                "deadlineSample" to request.hardLimitEndSample,
-                                "cutSample" to cutSample,
-                                "analysisSamples" to
-                                    (window.analysisEndSampleExclusive - window.analysisStartSample),
-                                "elapsedMs" to elapsedMs,
-                            ),
-                        )
+                ) { window ->
+                    val startedAt = SystemClock.elapsedRealtime()
+                    hardCutProbeAttemptCount += 1
+                    when (window.stage) {
+                        HardCutBoundaryProbePolicy.ProbeStage.PRIMARY -> Unit
+                        HardCutBoundaryProbePolicy.ProbeStage.FALLBACK -> {
+                            fallbackWindowProbeCount += 1
+                        }
+                        HardCutBoundaryProbePolicy.ProbeStage.RESCUE -> {
+                            rescueProbeCount += 1
+                        }
                     }
+                    val probe = sileroVadDetector.detectWindow(
+                        file = input,
+                        startSample = window.analysisStartSample,
+                        endSampleExclusive = window.analysisEndSampleExclusive,
+                        preset = HardCutBoundaryProbePolicy.neuralVadPreset(window),
+                    )
+                    val elapsedMs = SystemClock.elapsedRealtime() - startedAt
+                    attemptElapsedMs += elapsedMs
+                    hardCutProbeElapsedMs += elapsedMs
+                    check(
+                        probe.recordingSampleCount == detection.sampleCount &&
+                            probe.sampleRateHz == detection.sampleRateHz,
+                    ) { "Hard-cut probe observed different source audio metadata" }
+                    probe.speechRanges
+                }
+
+                refinement.attempts.forEachIndexed { index, attempt ->
+                    val selection = attempt.selection
+                    val profile = HardCutBoundaryProbePolicy.profile(attempt.window)
+                    logger.d(
+                        "Split",
+                        "hard-cut boundary probe complete",
+                        fields = mapOf(
+                            "deadlineSample" to request.hardLimitEndSample,
+                            "stage" to attempt.window.stage.name,
+                            "searchWindowMs" to attempt.window.searchWindowMs,
+                            "threshold" to profile.threshold,
+                            "minSilenceMs" to profile.minSilenceMs,
+                            "cutSample" to selection.cutSample,
+                            "outcome" to selection.outcome.name,
+                            "speechRanges" to selection.speechRangeCount,
+                            "boundedPauses" to selection.boundedPauseCount,
+                            "longestBoundedPauseMs" to samplesToMilliseconds(
+                                selection.longestBoundedPauseSamples,
+                                detection.sampleRateHz,
+                            ),
+                            "analysisSamples" to
+                                (attempt.window.analysisEndSampleExclusive -
+                                    attempt.window.analysisStartSample),
+                            "elapsedMs" to attemptElapsedMs[index],
+                        ),
+                    )
+                }
+                refinement.cutSample.also { cutSample ->
+                    if (cutSample != null) refinedHardCutCount += 1
+                }
             },
         )
 
@@ -95,9 +126,16 @@ class AudioSplitter @Inject constructor(
                 "speechRanges" to detection.speechRanges.size,
                 "segments" to segments.size,
                 "hardCuts" to segments.count {
-                    it.cutReason == NeuralVadSegmentPlanner.CutReason.HARD_LIMIT
+                    it.cutReason == NeuralVadSegmentPlanner.CutReason.REFINED_HARD_LIMIT ||
+                        it.cutReason == NeuralVadSegmentPlanner.CutReason.FALLBACK_HARD_LIMIT
                 },
-                "hardCutProbes" to hardCutProbeCount,
+                "fallbackHardCuts" to segments.count {
+                    it.cutReason == NeuralVadSegmentPlanner.CutReason.FALLBACK_HARD_LIMIT
+                },
+                "hardCutRequests" to hardCutRequestCount,
+                "hardCutProbeAttempts" to hardCutProbeAttemptCount,
+                "fallbackWindowProbes" to fallbackWindowProbeCount,
+                "rescueProbes" to rescueProbeCount,
                 "refinedHardCuts" to refinedHardCutCount,
                 "hardCutProbeElapsedMs" to hardCutProbeElapsedMs,
                 "preset" to HardCutBoundaryProbePolicy.canonicalVadVersion,

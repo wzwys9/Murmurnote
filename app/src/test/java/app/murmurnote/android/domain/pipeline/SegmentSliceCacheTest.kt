@@ -88,7 +88,7 @@ class SegmentSliceCacheTest {
             file = sliceFile,
             startMs = 24_500L,
             endMs = 49_500L,
-            cutReason = NeuralVadSegmentPlanner.CutReason.HARD_LIMIT,
+            cutReason = NeuralVadSegmentPlanner.CutReason.REFINED_HARD_LIMIT,
             overlapBeforeMs = 500L
         )
 

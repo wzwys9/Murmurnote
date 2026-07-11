@@ -35,7 +35,8 @@ data class ModelTranscriptBoundary(
 
 enum class ModelSegmentCutReason {
     NATURAL_PAUSE,
-    HARD_LIMIT,
+    REFINED_HARD_LIMIT,
+    FALLBACK_HARD_LIMIT,
     END_OF_AUDIO
 }
 

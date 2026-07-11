@@ -38,7 +38,8 @@ object NeuralVadSegmentPlanner {
 
     enum class CutReason {
         NATURAL_PAUSE,
-        HARD_LIMIT,
+        REFINED_HARD_LIMIT,
+        FALLBACK_HARD_LIMIT,
         END_OF_AUDIO,
     }
 
@@ -98,14 +99,14 @@ object NeuralVadSegmentPlanner {
                     var segmentStart = range.startSample
                     while (range.endSampleExclusive - segmentStart > maxSegmentSamples) {
                         val hardLimitEnd = segmentStart + maxSegmentSamples
-                        var segmentEnd = hardCutBoundaryRefiner
+                        val refinedEnd = hardCutBoundaryRefiner
                             ?.invoke(
                                 HardCutRequest(
                                     segmentStartSample = segmentStart,
                                     hardLimitEndSample = hardLimitEnd,
                                 ),
                             )
-                            ?: hardLimitEnd
+                        var segmentEnd = refinedEnd ?: hardLimitEnd
                         require(segmentEnd <= hardLimitEnd) {
                             "Refined hard-cut boundary exceeds the maximum segment duration"
                         }
@@ -122,7 +123,11 @@ object NeuralVadSegmentPlanner {
                             Segment(
                                 startSample = segmentStart,
                                 endSampleExclusive = segmentEnd,
-                                cutReason = CutReason.HARD_LIMIT,
+                                cutReason = if (refinedEnd != null) {
+                                    CutReason.REFINED_HARD_LIMIT
+                                } else {
+                                    CutReason.FALLBACK_HARD_LIMIT
+                                },
                             ),
                         )
                         segmentStart = segmentEnd - overlapSamples

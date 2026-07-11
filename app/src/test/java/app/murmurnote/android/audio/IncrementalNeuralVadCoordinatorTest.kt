@@ -134,8 +134,16 @@ class IncrementalNeuralVadCoordinatorTest {
 
         assertEquals(
             listOf(
-                NeuralVadSegmentPlanner.Segment(0, 1_000, NeuralVadSegmentPlanner.CutReason.HARD_LIMIT),
-                NeuralVadSegmentPlanner.Segment(800, 1_800, NeuralVadSegmentPlanner.CutReason.HARD_LIMIT),
+                NeuralVadSegmentPlanner.Segment(
+                    0,
+                    1_000,
+                    NeuralVadSegmentPlanner.CutReason.FALLBACK_HARD_LIMIT,
+                ),
+                NeuralVadSegmentPlanner.Segment(
+                    800,
+                    1_800,
+                    NeuralVadSegmentPlanner.CutReason.FALLBACK_HARD_LIMIT,
+                ),
                 NeuralVadSegmentPlanner.Segment(1_600, 2_500, NeuralVadSegmentPlanner.CutReason.NATURAL_PAUSE),
             ),
             published,
@@ -146,8 +154,9 @@ class IncrementalNeuralVadCoordinatorTest {
     }
 
     @Test
-    fun continuingSpeechPublishesAnExactHardLimitBeforeItsPcmCanAgeOut() {
+    fun continuingSpeechWaitsForProbeLookaheadAndPublishesARefinedBoundary() {
         val published = mutableListOf<NeuralVadSegmentPlanner.Segment>()
+        val requestedDeadlines = mutableListOf<Int>()
         val preset = testPreset().copy(
             prePaddingMs = 0,
             postPaddingMs = 0,
@@ -157,6 +166,7 @@ class IncrementalNeuralVadCoordinatorTest {
         val session = ScriptedVadSession(
             emissions = mapOf(
                 1_000 to listOf(NeuralVadSegmentPlanner.SpeechRange(0, 1_000)),
+                1_200 to listOf(NeuralVadSegmentPlanner.SpeechRange(1_000, 1_200)),
             ),
             speechDetected = { accepted -> accepted >= 1_000 },
         )
@@ -165,21 +175,80 @@ class IncrementalNeuralVadCoordinatorTest {
             sampleRateHz = 1_000,
             frameSizeSamples = 100,
             preset = preset,
+            hardCutRefinementLookaheadMs = 200,
+            hardCutBoundaryRefiner = { request ->
+                requestedDeadlines += request.hardLimitEndSample
+                request.hardLimitEndSample - 100
+            },
             onSegment = published::add,
         )
 
         coordinator.acceptPcm(pcm16Silence(sampleCount = 1_000))
+        assertTrue(published.isEmpty())
+        assertTrue(requestedDeadlines.isEmpty())
+        coordinator.acceptPcm(pcm16Silence(sampleCount = 200))
+
+        assertEquals(
+            listOf(
+                NeuralVadSegmentPlanner.Segment(
+                    startSample = 0,
+                    endSampleExclusive = 900,
+                    cutReason = NeuralVadSegmentPlanner.CutReason.REFINED_HARD_LIMIT,
+                ),
+            ),
+            published,
+        )
+        assertEquals(listOf(1_000), requestedDeadlines)
+
+        coordinator.acceptPcm(pcm16Silence(sampleCount = 300))
+        assertEquals(listOf(1_000), requestedDeadlines)
+    }
+
+    @Test
+    fun failedProbeWaitsForLookaheadThenPublishesTheFallbackHardLimit() {
+        val published = mutableListOf<NeuralVadSegmentPlanner.Segment>()
+        val requestedDeadlines = mutableListOf<Int>()
+        val preset = testPreset().copy(
+            prePaddingMs = 0,
+            postPaddingMs = 0,
+            maxSegmentMs = 1_000,
+            hardCutOverlapMs = 200,
+        )
+        val session = ScriptedVadSession(
+            emissions = mapOf(
+                1_000 to listOf(NeuralVadSegmentPlanner.SpeechRange(0, 1_000)),
+                1_200 to listOf(NeuralVadSegmentPlanner.SpeechRange(1_000, 1_200)),
+            ),
+            speechDetected = { accepted -> accepted >= 1_000 },
+        )
+        val coordinator = IncrementalNeuralVadCoordinator(
+            session = session,
+            sampleRateHz = 1_000,
+            frameSizeSamples = 100,
+            preset = preset,
+            hardCutRefinementLookaheadMs = 200,
+            hardCutBoundaryRefiner = { request ->
+                requestedDeadlines += request.hardLimitEndSample
+                null
+            },
+            onSegment = published::add,
+        )
+
+        coordinator.acceptPcm(pcm16Silence(sampleCount = 1_000))
+        assertTrue(published.isEmpty())
+        coordinator.acceptPcm(pcm16Silence(sampleCount = 200))
 
         assertEquals(
             listOf(
                 NeuralVadSegmentPlanner.Segment(
                     startSample = 0,
                     endSampleExclusive = 1_000,
-                    cutReason = NeuralVadSegmentPlanner.CutReason.HARD_LIMIT,
+                    cutReason = NeuralVadSegmentPlanner.CutReason.FALLBACK_HARD_LIMIT,
                 ),
             ),
             published,
         )
+        assertEquals(listOf(1_000), requestedDeadlines)
     }
 
     @Test

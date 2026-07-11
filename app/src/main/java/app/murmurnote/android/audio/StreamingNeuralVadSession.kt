@@ -20,6 +20,8 @@ internal class IncrementalNeuralVadCoordinator(
     private val sampleRateHz: Int,
     private val frameSizeSamples: Int,
     private val preset: NeuralVadSegmentPlanner.Preset = NeuralVadSegmentPlanner.PRESET,
+    private val hardCutRefinementLookaheadMs: Int = 0,
+    private val hardCutBoundaryRefiner: ((NeuralVadSegmentPlanner.HardCutRequest) -> Int?)? = null,
     private val onSegment: (NeuralVadSegmentPlanner.Segment) -> Unit,
 ) : Closeable {
 
@@ -32,6 +34,7 @@ internal class IncrementalNeuralVadCoordinator(
     private var neuralObservedSampleCount = 0
     private var finished = false
     private var closed = false
+    private val hardCutRefinementCache = mutableMapOf<NeuralVadSegmentPlanner.HardCutRequest, Int?>()
 
     var acceptedSampleCount: Int = 0
         private set
@@ -39,6 +42,9 @@ internal class IncrementalNeuralVadCoordinator(
     init {
         require(sampleRateHz > 0) { "Sample rate must be positive" }
         require(frameSizeSamples > 0) { "VAD frame size must be positive" }
+        require(hardCutRefinementLookaheadMs >= 0) {
+            "Hard-cut refinement lookahead cannot be negative"
+        }
     }
 
     fun acceptPcm(pcm16Le: ByteArray) {
@@ -134,11 +140,36 @@ internal class IncrementalNeuralVadCoordinator(
             nextStabilityCheckSample = Int.MAX_VALUE
             return
         }
+        val planningSpeechRanges = if (!finalFlush && session.isSpeechDetected) {
+            val last = speechRanges.last()
+            if (last.endSampleExclusive < acceptedSampleCount) {
+                speechRanges.dropLast(1) + last.copy(endSampleExclusive = acceptedSampleCount)
+            } else {
+                speechRanges
+            }
+        } else {
+            speechRanges
+        }
+        val lookaheadSamples = millisecondsToSamples(hardCutRefinementLookaheadMs)
         val plan = NeuralVadSegmentPlanner.plan(
             sampleCount = acceptedSampleCount,
             sampleRateHz = sampleRateHz,
-            speechRanges = speechRanges,
+            speechRanges = planningSpeechRanges,
             preset = preset,
+            hardCutBoundaryRefiner = hardCutBoundaryRefiner?.let { refiner ->
+                { request ->
+                    val probeReady = finalFlush ||
+                        acceptedSampleCount >= safeAdd(request.hardLimitEndSample, lookaheadSamples)
+                    when {
+                        !probeReady -> null
+                        hardCutRefinementCache.containsKey(request) ->
+                            hardCutRefinementCache[request]
+                        else -> refiner(request).also { result ->
+                            hardCutRefinementCache[request] = result
+                        }
+                    }
+                }
+            },
         )
         check(publishedSegmentCount <= plan.size) {
             "Incremental neural VAD plan invalidated an already published segment"
@@ -164,11 +195,16 @@ internal class IncrementalNeuralVadCoordinator(
                     candidate.cutReason == NeuralVadSegmentPlanner.CutReason.END_OF_AUDIO &&
                     session.isSpeechDetected &&
                     candidate.endSampleExclusive - candidate.startSample >= maxSegmentSamples
+            val hardLimitProbeReady = neuralObservedSampleCount >= safeAdd(
+                safeAdd(candidate.startSample, maxSegmentSamples),
+                lookaheadSamples,
+            )
             val stable = when {
                 finalFlush -> true
-                continuingSpeechHardLimit -> true
-                candidate.cutReason == NeuralVadSegmentPlanner.CutReason.HARD_LIMIT ->
-                    candidate.endSampleExclusive <= neuralObservedSampleCount
+                continuingSpeechHardLimit -> hardLimitProbeReady
+                candidate.cutReason == NeuralVadSegmentPlanner.CutReason.REFINED_HARD_LIMIT ||
+                    candidate.cutReason == NeuralVadSegmentPlanner.CutReason.FALLBACK_HARD_LIMIT ->
+                    hardLimitProbeReady
                 candidate.cutReason == NeuralVadSegmentPlanner.CutReason.NATURAL_PAUSE ->
                     !session.isSpeechDetected &&
                         neuralObservedSampleCount >
@@ -179,7 +215,12 @@ internal class IncrementalNeuralVadCoordinator(
                 else -> false
             }
             if (!stable) {
-                nextStabilityCheckSample = when (candidate.cutReason) {
+                nextStabilityCheckSample = if (continuingSpeechHardLimit) {
+                    safeAdd(
+                        safeAdd(candidate.startSample, maxSegmentSamples),
+                        lookaheadSamples,
+                    )
+                } else when (candidate.cutReason) {
                     NeuralVadSegmentPlanner.CutReason.NATURAL_PAUSE ->
                         safeAdd(
                             safeAdd(
@@ -204,12 +245,19 @@ internal class IncrementalNeuralVadCoordinator(
                             1,
                         )
                     }
-                    NeuralVadSegmentPlanner.CutReason.HARD_LIMIT -> neuralObservedSampleCount
+                    NeuralVadSegmentPlanner.CutReason.REFINED_HARD_LIMIT,
+                    NeuralVadSegmentPlanner.CutReason.FALLBACK_HARD_LIMIT ->
+                        safeAdd(
+                            safeAdd(candidate.startSample, maxSegmentSamples),
+                            lookaheadSamples,
+                        )
                 }
                 break
             }
             val published = if (continuingSpeechHardLimit) {
-                candidate.copy(cutReason = NeuralVadSegmentPlanner.CutReason.HARD_LIMIT)
+                candidate.copy(
+                    cutReason = NeuralVadSegmentPlanner.CutReason.FALLBACK_HARD_LIMIT,
+                )
             } else {
                 candidate
             }

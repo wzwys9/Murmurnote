@@ -142,12 +142,12 @@ class NeuralVadSegmentPlannerTest {
                 NeuralVadSegmentPlanner.Segment(
                     startSample = 250,
                     endSampleExclusive = 25_250,
-                    cutReason = NeuralVadSegmentPlanner.CutReason.HARD_LIMIT,
+                    cutReason = NeuralVadSegmentPlanner.CutReason.FALLBACK_HARD_LIMIT,
                 ),
                 NeuralVadSegmentPlanner.Segment(
                     startSample = 24_750,
                     endSampleExclusive = 49_750,
-                    cutReason = NeuralVadSegmentPlanner.CutReason.HARD_LIMIT,
+                    cutReason = NeuralVadSegmentPlanner.CutReason.FALLBACK_HARD_LIMIT,
                 ),
                 NeuralVadSegmentPlanner.Segment(
                     startSample = 49_250,
@@ -188,12 +188,12 @@ class NeuralVadSegmentPlannerTest {
                 NeuralVadSegmentPlanner.Segment(
                     startSample = 0,
                     endSampleExclusive = 23_000,
-                    cutReason = NeuralVadSegmentPlanner.CutReason.HARD_LIMIT,
+                    cutReason = NeuralVadSegmentPlanner.CutReason.REFINED_HARD_LIMIT,
                 ),
                 NeuralVadSegmentPlanner.Segment(
                     startSample = 22_500,
                     endSampleExclusive = 45_500,
-                    cutReason = NeuralVadSegmentPlanner.CutReason.HARD_LIMIT,
+                    cutReason = NeuralVadSegmentPlanner.CutReason.REFINED_HARD_LIMIT,
                 ),
                 NeuralVadSegmentPlanner.Segment(
                     startSample = 45_000,
@@ -231,7 +231,7 @@ class NeuralVadSegmentPlannerTest {
                 NeuralVadSegmentPlanner.Segment(
                     startSample = 1_000,
                     endSampleExclusive = 3_950,
-                    cutReason = NeuralVadSegmentPlanner.CutReason.HARD_LIMIT,
+                    cutReason = NeuralVadSegmentPlanner.CutReason.FALLBACK_HARD_LIMIT,
                 ),
                 NeuralVadSegmentPlanner.Segment(
                     startSample = 3_850,
