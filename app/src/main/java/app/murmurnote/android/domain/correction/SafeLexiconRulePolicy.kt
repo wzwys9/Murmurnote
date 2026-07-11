@@ -24,19 +24,19 @@ internal object SafeLexiconRulePolicy {
         observedText: String,
         replacementText: String,
     ): SafeLexiconRuleInput {
-        require(!observedText.containsUnsafeCodePoint()) {
+        require(!observedText.containsUnsafeCorrectionCodePoint()) {
             "识别结果不能包含换行、控制或不可见格式字符"
         }
-        require(!replacementText.containsUnsafeCodePoint()) {
+        require(!replacementText.containsUnsafeCorrectionCodePoint()) {
             "正确写法不能包含换行、控制或不可见格式字符"
         }
 
         val normalizedObserved = observedText.trim()
         val normalizedReplacement = replacementText.trim()
-        require(normalizedObserved.codePointLength() in MIN_CODE_POINTS..MAX_CODE_POINTS) {
+        require(normalizedObserved.correctionCodePointLength() in MIN_CODE_POINTS..MAX_CODE_POINTS) {
             "识别结果需要 $MIN_CODE_POINTS-$MAX_CODE_POINTS 个字符"
         }
-        require(normalizedReplacement.codePointLength() in MIN_CODE_POINTS..MAX_CODE_POINTS) {
+        require(normalizedReplacement.correctionCodePointLength() in MIN_CODE_POINTS..MAX_CODE_POINTS) {
             "正确写法需要 $MIN_CODE_POINTS-$MAX_CODE_POINTS 个字符"
         }
         require(normalizedObserved != normalizedReplacement) { "识别结果和正确写法不能相同" }
@@ -84,26 +84,4 @@ internal object SafeLexiconRulePolicy {
         observedText == input.observedText ||
             (observedText == input.replacementText && replacementText == input.observedText)
 
-    private fun String.containsUnsafeCodePoint(): Boolean {
-        var charOffset = 0
-        while (charOffset < length) {
-            val codePoint = Character.codePointAt(this, charOffset)
-            val type = Character.getType(codePoint)
-            if (Character.isISOControl(codePoint) ||
-                type == Character.FORMAT.toInt() ||
-                type == Character.LINE_SEPARATOR.toInt() ||
-                type == Character.PARAGRAPH_SEPARATOR.toInt() ||
-                (type == Character.SPACE_SEPARATOR.toInt() && codePoint != ' '.code) ||
-                type == Character.SURROGATE.toInt() ||
-                type == Character.PRIVATE_USE.toInt() ||
-                type == Character.UNASSIGNED.toInt()
-            ) {
-                return true
-            }
-            charOffset += Character.charCount(codePoint)
-        }
-        return false
-    }
-
-    private fun String.codePointLength(): Int = codePointCount(0, length)
 }
