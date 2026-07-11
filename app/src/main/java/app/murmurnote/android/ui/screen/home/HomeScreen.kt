@@ -9,11 +9,11 @@ import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
-import androidx.compose.foundation.background
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -21,6 +21,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -49,7 +50,6 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
@@ -122,106 +122,40 @@ fun HomeScreen(
             else recordPermLauncher.launch(Manifest.permission.RECORD_AUDIO)
         }
     }
+    val recognitionContentScrollState = rememberScrollState()
+    LaunchedEffect(state.isRecording) {
+        recognitionContentScrollState.scrollTo(0)
+    }
 
-    Box(modifier = modifier.fillMaxSize().padding(16.dp)) {
-        IconButton(onClick = onOpenSearch, modifier = Modifier.align(Alignment.TopEnd)) {
-            Icon(Icons.Filled.Search, contentDescription = "搜索")
-        }
+    BoxWithConstraints(modifier = modifier.fillMaxSize()) {
+        val recordingControlTop = upperGoldenSectionTop(
+            containerHeight = maxHeight.value,
+            elementHeight = RECORDING_CONTROL_SIZE.value,
+        ).dp
+        val recognitionContentTop = recordingControlTop + RECORDING_OPERATION_HEIGHT
 
         Column(
-            modifier = Modifier.align(Alignment.Center).fillMaxWidth(),
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(
+                    top = recognitionContentTop,
+                    start = 16.dp,
+                    end = 16.dp,
+                    bottom = 16.dp,
+                )
+                .verticalScroll(recognitionContentScrollState),
             horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.Center
         ) {
-            Text("声记 Murmurnote", style = MaterialTheme.typography.headlineMedium)
-            Spacer(Modifier.height(8.dp))
-            Text(
-                "今日 ${state.todayCount} 条 · 总计 ${state.totalCount} 条",
-                style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
-            Spacer(Modifier.height(40.dp))
-
-            Surface(
-                modifier = Modifier
-                    .size(160.dp)
-                    .clip(CircleShape)
-                    .semantics {
-                        contentDescription = if (state.isRecording) "停止录音" else "开始录音"
-                    },
-                color = if (state.isRecording) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary,
-                shape = CircleShape,
-                shadowElevation = 6.dp,
-                onClick = onPrimaryClick
-            ) {
-                Box(
-                    modifier = Modifier.fillMaxSize().background(
-                        if (state.isRecording) MaterialTheme.colorScheme.error
-                        else MaterialTheme.colorScheme.primary
-                    ),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Icon(
-                        imageVector = if (state.isRecording) Icons.Filled.Stop else Icons.Filled.Mic,
-                        contentDescription = null,
-                        modifier = Modifier.size(56.dp),
-                        tint = if (state.isRecording) MaterialTheme.colorScheme.onError
-                        else MaterialTheme.colorScheme.onPrimary
-                    )
-                    if (state.isRecording) {
-                        RecordingAmplitudeIndicator(
-                            amplitudeDb = state.amplitudeDb,
-                            isPaused = state.isPaused,
-                            color = MaterialTheme.colorScheme.onError,
-                            modifier = Modifier
-                                .align(Alignment.BottomCenter)
-                                .padding(bottom = 22.dp)
-                                .width(78.dp)
-                                .height(24.dp)
-                        )
-                    }
-                }
-            }
-            Spacer(Modifier.height(16.dp))
-            Text(
-                text = if (state.isRecording) {
-                    val tag = if (state.isPaused) "已暂停" else "正在录音"
-                    "$tag ${formatElapsed(state.elapsedMs)}"
-                } else "点击开始录音",
-                style = MaterialTheme.typography.titleMedium,
-                color = if (state.isRecording) MaterialTheme.colorScheme.error
-                else MaterialTheme.colorScheme.onSurfaceVariant
-            )
-
             if (state.isRecording) {
-                Spacer(Modifier.height(16.dp))
-                Row {
-                    TextButton(onClick = { viewModel.togglePause() }) {
-                        Icon(if (state.isPaused) Icons.Filled.PlayArrow else Icons.Filled.Pause, null)
-                        Spacer(Modifier.width(4.dp))
-                        Text(if (state.isPaused) "继续" else "暂停")
-                    }
-                    Spacer(Modifier.width(16.dp))
-                    TextButton(onClick = { viewModel.cancelRecording() }) {
-                        Icon(Icons.Filled.Close, null)
-                        Spacer(Modifier.width(4.dp))
-                        Text("取消")
-                    }
-                }
-                Spacer(Modifier.height(12.dp))
                 RealtimeTranscriptCard(
-                    active = state.liveTranscriptionActive,
+                    active = shouldAnimateLivePreview(
+                        active = state.liveTranscriptionActive,
+                        isPaused = state.isPaused,
+                    ),
                     message = state.liveTranscriptionMessage,
                     segments = state.liveTranscriptSegments,
                     onRetryFailedSegment = viewModel::retryLiveSegment
                 )
-            } else {
-                Spacer(Modifier.height(20.dp))
-                FilledTonalButton(onClick = { pickAudioLauncher.launch(arrayOf("audio/*")) }) {
-                    Icon(Icons.Filled.FileUpload, null)
-                    Spacer(Modifier.width(6.dp))
-                    Text("导入音频文件")
-                }
             }
 
             // ===== Pipeline 状态卡片：实时显示在干什么 =====
@@ -243,7 +177,158 @@ fun HomeScreen(
 
             state.errorMessage?.let { msg ->
                 Spacer(Modifier.height(12.dp))
-                Text(msg, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
+                Text(
+                    msg,
+                    color = MaterialTheme.colorScheme.error,
+                    style = MaterialTheme.typography.bodySmall,
+                )
+            }
+        }
+
+        Column(
+            // Keep this visual anchor unchanged while the recorder moves independently.
+            modifier = Modifier
+                .align(Alignment.TopCenter)
+                .padding(top = 40.dp, start = 64.dp, end = 64.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+        ) {
+            Text("声记 Murmurnote", style = MaterialTheme.typography.headlineMedium)
+            Spacer(Modifier.height(8.dp))
+            Text(
+                "今日 ${state.todayCount} 条 · 总计 ${state.totalCount} 条",
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
+
+        Column(
+            modifier = Modifier
+                .align(Alignment.TopCenter)
+                .fillMaxWidth()
+                .offset(y = recordingControlTop)
+                .padding(horizontal = 16.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+        ) {
+            PrimaryRecordingControl(
+                isRecording = state.isRecording,
+                isPaused = state.isPaused,
+                amplitudeDb = state.amplitudeDb,
+                onClick = onPrimaryClick,
+            )
+            Spacer(Modifier.height(12.dp))
+            Box(modifier = Modifier.height(28.dp), contentAlignment = Alignment.Center) {
+                Text(
+                    text = if (state.isRecording) {
+                        val tag = if (state.isPaused) "已暂停" else "正在录音"
+                        "$tag ${formatElapsed(state.elapsedMs)}"
+                    } else "点击开始录音",
+                    style = MaterialTheme.typography.titleMedium,
+                    color = if (state.isRecording) MaterialTheme.colorScheme.error
+                    else MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+            Spacer(Modifier.height(8.dp))
+            Box(
+                modifier = Modifier.fillMaxWidth().height(48.dp),
+                contentAlignment = Alignment.Center,
+            ) {
+                if (state.isRecording) {
+                    Row(
+                        horizontalArrangement = Arrangement.spacedBy(4.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        TextButton(onClick = { viewModel.togglePause() }) {
+                            Icon(if (state.isPaused) Icons.Filled.PlayArrow else Icons.Filled.Pause, null)
+                            Spacer(Modifier.width(4.dp))
+                            Text(if (state.isPaused) "继续" else "暂停")
+                        }
+                        TextButton(onClick = { viewModel.stopRecording() }) {
+                            Icon(
+                                Icons.Filled.Stop,
+                                contentDescription = null,
+                                tint = MaterialTheme.colorScheme.error,
+                            )
+                            Spacer(Modifier.width(4.dp))
+                            Text("停止", color = MaterialTheme.colorScheme.error)
+                        }
+                        TextButton(onClick = { viewModel.cancelRecording() }) {
+                            Icon(Icons.Filled.Close, null)
+                            Spacer(Modifier.width(4.dp))
+                            Text("取消")
+                        }
+                    }
+                } else {
+                    FilledTonalButton(onClick = { pickAudioLauncher.launch(arrayOf("audio/*")) }) {
+                        Icon(Icons.Filled.FileUpload, null)
+                        Spacer(Modifier.width(6.dp))
+                        Text("导入音频文件")
+                    }
+                }
+            }
+        }
+
+        IconButton(
+            onClick = onOpenSearch,
+            modifier = Modifier.align(Alignment.TopEnd).padding(top = 16.dp, end = 16.dp),
+        ) {
+            Icon(Icons.Filled.Search, contentDescription = "搜索")
+        }
+    }
+}
+
+internal fun shouldAnimateLivePreview(active: Boolean, isPaused: Boolean): Boolean =
+    active && !isPaused
+
+internal fun upperGoldenSectionTop(containerHeight: Float, elementHeight: Float): Float {
+    require(containerHeight >= 0f) { "Container height must not be negative" }
+    require(elementHeight >= 0f) { "Element height must not be negative" }
+    return (containerHeight * UPPER_GOLDEN_SECTION_RATIO - elementHeight / 2f)
+        .coerceAtLeast(0f)
+}
+
+@Composable
+private fun PrimaryRecordingControl(
+    isRecording: Boolean,
+    isPaused: Boolean,
+    amplitudeDb: Int,
+    onClick: () -> Unit,
+) {
+    if (isRecording) {
+        Surface(
+            modifier = Modifier
+                .size(RECORDING_CONTROL_SIZE)
+                .semantics { contentDescription = "停止录音" },
+            color = Color.Transparent,
+            shape = MaterialTheme.shapes.large,
+            shadowElevation = 0.dp,
+            onClick = onClick,
+        ) {
+            Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                RecordingAmplitudeIndicator(
+                    amplitudeDb = amplitudeDb,
+                    isPaused = isPaused,
+                    color = MaterialTheme.colorScheme.error,
+                    modifier = Modifier.width(124.dp).height(56.dp),
+                )
+            }
+        }
+    } else {
+        Surface(
+            modifier = Modifier
+                .size(RECORDING_CONTROL_SIZE)
+                .semantics { contentDescription = "开始录音" },
+            color = MaterialTheme.colorScheme.primary,
+            shape = CircleShape,
+            shadowElevation = 6.dp,
+            onClick = onClick,
+        ) {
+            Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                Icon(
+                    imageVector = Icons.Filled.Mic,
+                    contentDescription = null,
+                    modifier = Modifier.size(56.dp),
+                    tint = MaterialTheme.colorScheme.onPrimary,
+                )
             }
         }
     }
@@ -272,7 +357,7 @@ private fun RecordingAmplitudeIndicator(
         val barCount = RECORDING_BAR_GAINS.size
         val gap = size.width * 0.055f
         val barWidth = (size.width - gap * (barCount - 1)) / barCount
-        val minimumHeight = 3.dp.toPx()
+        val minimumHeight = 6.dp.toPx()
         val heightRange = (size.height - minimumHeight).coerceAtLeast(0f)
 
         RECORDING_BAR_GAINS.forEachIndexed { index, gain ->
@@ -292,6 +377,9 @@ private fun RecordingAmplitudeIndicator(
 
 private const val RECORDING_NOISE_FLOOR_DB = 35f
 private const val RECORDING_PEAK_DB = 90f
+private const val UPPER_GOLDEN_SECTION_RATIO = 0.38196601125f
+private val RECORDING_CONTROL_SIZE = 160.dp
+private val RECORDING_OPERATION_HEIGHT = 268.dp
 private val RECORDING_BAR_GAINS = floatArrayOf(0.45f, 0.72f, 1f, 0.82f, 1f, 0.72f, 0.45f)
 
 @Composable
