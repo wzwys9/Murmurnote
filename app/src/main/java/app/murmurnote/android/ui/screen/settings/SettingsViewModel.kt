@@ -88,6 +88,8 @@ class SettingsViewModel @Inject constructor(
         val lowBatteryProtection: Boolean = true,
         val aiExtractionEnabled: Boolean = false,
         val safeLexiconEnabled: Boolean = false,
+        val personalCorrectionEnabled: Boolean = false,
+        val personalCorrectionDisclosureAccepted: Boolean = false,
         val appUpdateStatus: AppUpdateStatus = AppUpdateStatus.Idle
     )
 
@@ -145,6 +147,16 @@ class SettingsViewModel @Inject constructor(
                 _uiState.update { it.copy(safeLexiconEnabled = enabled) }
             }
         }
+        viewModelScope.launch {
+            appPreferences.personalCorrectionEnabled.collect { enabled ->
+                _uiState.update { it.copy(personalCorrectionEnabled = enabled) }
+            }
+        }
+        viewModelScope.launch {
+            appPreferences.personalCorrectionDisclosureAccepted.collect { accepted ->
+                _uiState.update { it.copy(personalCorrectionDisclosureAccepted = accepted) }
+            }
+        }
         // 进设置页只算一次"模型在不在"，不自动拷贝 assets 内置模型；大模型安装只响应用户点击。
         viewModelScope.launch {
             asrModelManager.refreshStatus()
@@ -165,7 +177,7 @@ class SettingsViewModel @Inject constructor(
         _uiState.update { it.copy(llmApiKey = key, llmTestStatus = TestStatus.Idle) }
         llmApiKeySaveJob?.cancel()
         llmApiKeySaveJob = viewModelScope.launch {
-            delay(API_KEY_SAVE_DEBOUNCE_MS)
+            if (key.isNotBlank()) delay(API_KEY_SAVE_DEBOUNCE_MS)
             appPreferences.setLlmApiKey(provider, key)
         }
     }
@@ -208,6 +220,30 @@ class SettingsViewModel @Inject constructor(
         }
         val applied = appPreferences.setSafeLexiconEnabled(enabled)
         _uiState.update { it.copy(safeLexiconEnabled = applied) }
+    }
+
+    fun setPersonalCorrectionEnabled(enabled: Boolean) = viewModelScope.launch {
+        if (enabled) persistCurrentLlmApiKey()
+        val applied = appPreferences.setPersonalCorrectionEnabled(enabled)
+        _uiState.update { it.copy(personalCorrectionEnabled = applied) }
+    }
+
+    fun acceptDisclosureAndEnablePersonalCorrection() = viewModelScope.launch {
+        persistCurrentLlmApiKey()
+        appPreferences.acceptPersonalCorrectionDisclosure()
+        val applied = appPreferences.setPersonalCorrectionEnabled(true)
+        _uiState.update {
+            it.copy(
+                personalCorrectionDisclosureAccepted = true,
+                personalCorrectionEnabled = applied,
+            )
+        }
+    }
+
+    private suspend fun persistCurrentLlmApiKey() {
+        llmApiKeySaveJob?.cancel()
+        val provider = LlmProvider.parse(_uiState.value.llmProvider)
+        appPreferences.setLlmApiKey(provider, _uiState.value.llmApiKey)
     }
 
     fun refreshLlmModels() = viewModelScope.launch {

@@ -13,13 +13,19 @@ import androidx.compose.foundation.selection.toggleable
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material3.Card
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.semantics.Role
@@ -70,11 +76,17 @@ internal fun LaboratoryDirectoryCard(
 internal fun LaboratoryScreen(
     modifier: Modifier,
     safeLexiconEnabled: Boolean,
+    personalCorrectionEnabled: Boolean,
+    personalCorrectionDisclosureAccepted: Boolean,
     llmApiConfigured: Boolean,
     onSafeLexiconEnabledChange: (Boolean) -> Unit,
     onManageSafeLexicon: () -> Unit,
+    onPersonalCorrectionEnabledChange: (Boolean) -> Unit,
+    onAcceptPersonalCorrectionDisclosure: () -> Unit,
+    onManagePersonalCorrection: () -> Unit,
     onBack: () -> Unit,
 ) {
+    var showPersonalCorrectionDisclosure by rememberSaveable { mutableStateOf(false) }
     LazyColumn(
         modifier = modifier.fillMaxWidth(),
         contentPadding = PaddingValues(bottom = 12.dp),
@@ -103,6 +115,111 @@ internal fun LaboratoryScreen(
                 onEnabledChange = onSafeLexiconEnabledChange,
                 onManage = onManageSafeLexicon,
             )
+        }
+        item {
+            PersonalCorrectionMasterSwitchCard(
+                enabled = personalCorrectionEnabled,
+                llmApiConfigured = llmApiConfigured,
+                onEnabledChange = { requested ->
+                    when {
+                        !requested -> onPersonalCorrectionEnabledChange(false)
+                        personalCorrectionDisclosureAccepted ->
+                            onPersonalCorrectionEnabledChange(true)
+                        else -> showPersonalCorrectionDisclosure = true
+                    }
+                },
+                onManage = onManagePersonalCorrection,
+            )
+        }
+    }
+
+    if (showPersonalCorrectionDisclosure) {
+        AlertDialog(
+            onDismissRequest = { showPersonalCorrectionDisclosure = false },
+            title = { Text("开启个性化自学习纠错？") },
+            text = {
+                Text(
+                    "开启后，你手动修改转写时，系统会把修改词对和附近最多 240 个字符" +
+                        "发送给当前配置的大模型，用于判断是否值得学习。\n\n" +
+                        "未来命中已学词条时，也只发送候选附近的局部文字；不会发送音频、" +
+                        "标题、总结或整段录音。所有自动替换都可以停用或删除。",
+                )
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        showPersonalCorrectionDisclosure = false
+                        onAcceptPersonalCorrectionDisclosure()
+                    },
+                ) {
+                    Text("同意并开启")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showPersonalCorrectionDisclosure = false }) {
+                    Text("暂不开启")
+                }
+            },
+        )
+    }
+}
+
+@Composable
+private fun PersonalCorrectionMasterSwitchCard(
+    enabled: Boolean,
+    llmApiConfigured: Boolean,
+    onEnabledChange: (Boolean) -> Unit,
+    onManage: () -> Unit,
+) {
+    Card(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 16.dp, vertical = 4.dp),
+    ) {
+        Column(modifier = Modifier.padding(16.dp)) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .toggleable(
+                        value = enabled,
+                        enabled = llmApiConfigured,
+                        role = Role.Switch,
+                        onValueChange = onEnabledChange,
+                    )
+                    .semantics { contentDescription = "个性化自学习纠错总开关" },
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Column(
+                    modifier = Modifier.weight(1f),
+                    verticalArrangement = Arrangement.spacedBy(4.dp),
+                ) {
+                    Text("个性化自学习纠错（实验）", style = MaterialTheme.typography.titleMedium)
+                    Text(
+                        text = when {
+                            !llmApiConfigured ->
+                                "不可开启：请先配置当前大模型的 API Key。"
+                            enabled ->
+                                "已开启：从你的转写修改中学习，未来按上下文谨慎纠错。"
+                            else ->
+                                "已关闭：不采集、不调用纠错模型，也不应用已学词条。"
+                        },
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+                Spacer(Modifier.width(12.dp))
+                Switch(
+                    checked = enabled && llmApiConfigured,
+                    onCheckedChange = null,
+                    enabled = llmApiConfigured,
+                )
+            }
+            OutlinedButton(
+                onClick = onManage,
+                modifier = Modifier.padding(top = 12.dp),
+            ) {
+                Text("管理学习记录")
+            }
         }
     }
 }

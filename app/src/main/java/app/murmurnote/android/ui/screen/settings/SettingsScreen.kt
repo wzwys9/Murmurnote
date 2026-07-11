@@ -93,15 +93,26 @@ fun SettingsScreen(
     }
     var showLaboratory by rememberSaveable { mutableStateOf(false) }
     var showSafeLexicon by rememberSaveable { mutableStateOf(false) }
+    var showPersonalCorrection by rememberSaveable { mutableStateOf(false) }
 
     BackHandler(
-        enabled = showSafeLexicon || showLaboratory || asrSettingsDetail != null,
+        enabled = showPersonalCorrection || showSafeLexicon || showLaboratory ||
+            asrSettingsDetail != null,
     ) {
         when {
+            showPersonalCorrection -> showPersonalCorrection = false
             showSafeLexicon -> showSafeLexicon = false
             showLaboratory -> showLaboratory = false
             else -> asrSettingsDetail = null
         }
+    }
+    if (showPersonalCorrection) {
+        PersonalCorrectionScreen(
+            modifier = modifier,
+            masterEnabled = state.personalCorrectionEnabled && state.llmApiKey.isNotBlank(),
+            onBack = { showPersonalCorrection = false },
+        )
+        return
     }
     if (showSafeLexicon) {
         SafeLexiconScreen(
@@ -117,9 +128,17 @@ fun SettingsScreen(
         LaboratoryScreen(
             modifier = modifier,
             safeLexiconEnabled = state.safeLexiconEnabled && state.llmApiKey.isNotBlank(),
+            personalCorrectionEnabled =
+                state.personalCorrectionEnabled && state.llmApiKey.isNotBlank(),
+            personalCorrectionDisclosureAccepted =
+                state.personalCorrectionDisclosureAccepted,
             llmApiConfigured = state.llmApiKey.isNotBlank(),
             onSafeLexiconEnabledChange = viewModel::setSafeLexiconEnabled,
             onManageSafeLexicon = { showSafeLexicon = true },
+            onPersonalCorrectionEnabledChange = viewModel::setPersonalCorrectionEnabled,
+            onAcceptPersonalCorrectionDisclosure =
+                viewModel::acceptDisclosureAndEnablePersonalCorrection,
+            onManagePersonalCorrection = { showPersonalCorrection = true },
             onBack = { showLaboratory = false },
         )
         return
