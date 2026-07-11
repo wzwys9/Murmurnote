@@ -425,7 +425,6 @@ private fun AsrSettingsDetailScreen(
                         onConcurrencyChanged = viewModel::setAsrLocalConcurrency,
                         onInstallBundledModel = viewModel::installBundledAsrModel,
                         onRequestDownload = viewModel::requestAsrDownloadConfirm,
-                        onRequestInstallHashMismatch = viewModel::requestInstallHashMismatchModel,
                         onCheckModelUpdate = viewModel::checkAsrModelUpdate,
                         onCancelDownload = { viewModel.cancelAsrDownload(context) },
                         onDeleteModel = viewModel::deleteAsrModel,
@@ -437,19 +436,6 @@ private fun AsrSettingsDetailScreen(
                             model = AsrModelUrls.modelById(state.asrLocalModelId),
                             onDismiss = viewModel::dismissAsrDownloadConfirm,
                             onConfirm = { viewModel.startAsrDownload(it) },
-                        )
-                    }
-                }
-                if (
-                    state.showAsrHashMismatchConfirm &&
-                    state.asrModelStatus is AsrModelManager.ModelStatus.HashMismatch
-                ) {
-                    item {
-                        AsrHashMismatchConfirmDialog(
-                            model = AsrModelUrls.modelById(state.asrLocalModelId),
-                            status = state.asrModelStatus,
-                            onDismiss = viewModel::dismissInstallHashMismatchModel,
-                            onConfirm = { viewModel.installHashMismatchModel(it) },
                         )
                     }
                 }

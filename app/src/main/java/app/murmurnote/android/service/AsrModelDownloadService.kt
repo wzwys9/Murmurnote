@@ -34,7 +34,6 @@ class AsrModelDownloadService : Service() {
     companion object {
         const val NOTIFICATION_ID = 1002
         const val ACTION_START = "app.murmurnote.android.action.ASR_DOWNLOAD_START"
-        const val ACTION_INSTALL_UNVERIFIED = "app.murmurnote.android.action.ASR_INSTALL_UNVERIFIED"
         const val ACTION_CANCEL = "app.murmurnote.android.action.ASR_DOWNLOAD_CANCEL"
 
         fun start(context: Context) {
@@ -47,10 +46,6 @@ class AsrModelDownloadService : Service() {
             context.startService(i)
         }
 
-        fun installUnverified(context: Context) {
-            val i = Intent(context, AsrModelDownloadService::class.java).setAction(ACTION_INSTALL_UNVERIFIED)
-            context.startForegroundService(i)
-        }
     }
 
     @Inject lateinit var modelManager: AsrModelManager
@@ -89,27 +84,6 @@ class AsrModelDownloadService : Service() {
                         modelManager.downloadAndInstall()
                             .onFailure { logger.e("AsrDl", "downloadAndInstall failed", it) }
                             .onSuccess { logger.i("AsrDl", "downloadAndInstall success") }
-                        collector.cancel()
-                    } finally {
-                        stopForegroundSelf()
-                        stopSelf(startId)
-                    }
-                }
-                return START_NOT_STICKY
-            }
-            ACTION_INSTALL_UNVERIFIED -> {
-                if (job?.isActive == true) {
-                    logger.w("AsrDl", "已有任务在跑，忽略本次 INSTALL_UNVERIFIED")
-                    return START_NOT_STICKY
-                }
-                job = scope.launch {
-                    try {
-                        val collector = launch {
-                            modelManager.status.collect { st -> updateNotification(st) }
-                        }
-                        modelManager.installDownloadedWithoutHashCheck()
-                            .onFailure { logger.e("AsrDl", "install unverified failed", it) }
-                            .onSuccess { logger.i("AsrDl", "install unverified success") }
                         collector.cancel()
                     } finally {
                         stopForegroundSelf()

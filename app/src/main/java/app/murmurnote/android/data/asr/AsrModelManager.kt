@@ -3,6 +3,7 @@ package app.murmurnote.android.data.asr
 import android.content.Context
 import app.murmurnote.android.data.preference.AppPreferences
 import app.murmurnote.android.di.ApplicationScope
+import app.murmurnote.android.util.BoundedStreams
 import app.murmurnote.android.util.Logger
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.CancellationException
@@ -231,6 +232,7 @@ class AsrModelManager @Inject constructor(
             val actual = sha256(tarball)
             if (!actual.equals(expected, ignoreCase = true)) {
                 val msg = "SHA256 校验失败：期望=$expected 实际=$actual"
+                tarball.delete()
                 _status.value = ModelStatus.HashMismatch(expected, actual)
                 error(msg)
             }
@@ -242,32 +244,6 @@ class AsrModelManager @Inject constructor(
             if (e is CancellationException) {
                 _status.value = ModelStatus.NotDownloaded
             } else if (_status.value !is ModelStatus.HashMismatch) {
-                _status.value = ModelStatus.Failed(e.message ?: e.javaClass.simpleName)
-            }
-        }
-    }
-
-    /**
-     * 用户明确选择忽略 SHA256 不匹配时调用。仍会做解压后的运行文件完整性检查；
-     * 只有模型目录检查通过后才删除 tarball。
-     */
-    suspend fun installDownloadedWithoutHashCheck(): Result<Unit> = withContext(Dispatchers.IO) {
-        cancelRequested = false
-        runCatching {
-            syncSelectedModelFromPreferences()
-            val model = selectedModel()
-            val tarball = tarballFile(model)
-            if (!tarball.exists() || tarball.length() <= 0L) {
-                error("找不到已下载的模型包，请重新下载")
-            }
-            logger.w("ModelMgr", "user accepted SHA256 mismatch; installing unverified tarball for ${model.id}")
-            installVerifiedTarball(model, tarball)
-            refreshStatus()
-        }.onFailure { e ->
-            logger.e("ModelMgr", "installDownloadedWithoutHashCheck failed type=${e.javaClass.simpleName}", e)
-            if (e is CancellationException) {
-                _status.value = ModelStatus.NotDownloaded
-            } else {
                 _status.value = ModelStatus.Failed(e.message ?: e.javaClass.simpleName)
             }
         }
@@ -511,15 +487,25 @@ class AsrModelManager @Inject constructor(
                 throw IOException("HTTP 416 Range Not Satisfiable; 已清理本地断点文件，请重试从头下载")
             }
             if (resp.code !in setOf(200, 206)) {
-                val body = runCatching { resp.body?.string()?.take(200) }.getOrNull().orEmpty()
+                val body = runCatching {
+                    resp.body?.byteStream()?.use { BoundedStreams.readUtf8(it, 200L) }
+                }.getOrNull().orEmpty()
                 throw IOException("HTTP ${resp.code} $body")
             }
             val body = resp.body ?: throw IOException("空响应体")
             val totalContent = body.contentLength()
             // Content-Length 在 206 是"剩余字节数"，要加上 existing 才是文件总长
-            val totalBytes = if (resp.code == 206 && totalContent > 0) existing + totalContent
-                else if (totalContent > 0) totalContent
-                else model.tarballBytes
+            val declaredTotal = when {
+                totalContent <= 0L -> null
+                resp.code == 206 -> existing + totalContent
+                else -> totalContent
+            }
+            if (declaredTotal != null && declaredTotal != model.tarballBytes) {
+                throw IOException(
+                    "远端模型包大小异常：$declaredTotal != ${model.tarballBytes}"
+                )
+            }
+            val totalBytes = model.tarballBytes
 
             // 200 表示服务器忽略 Range，从头开始 → 截断重写
             val raf = RandomAccessFile(dest, "rw")
@@ -534,13 +520,34 @@ class AsrModelManager @Inject constructor(
                     var lastSampleBytes = written
                     var slowSinceMs: Long? = null
                     var emittedAt = 0L
+                    var consecutiveEmptyReads = 0
 
                     while (true) {
                         if (cancelRequested) throw CancellationException("下载已取消")
                         val n = input.read(buf)
                         if (n < 0) break
+                        if (n == 0) {
+                            if (++consecutiveEmptyReads >= MAX_EMPTY_READS) {
+                                throw IOException("模型下载流连续返回空数据")
+                            }
+                            continue
+                        }
+                        consecutiveEmptyReads = 0
+                        val nextWritten = try {
+                            ModelDownloadSizePolicy.accountRead(
+                                writtenBytes = written,
+                                incomingBytes = n,
+                                expectedBytes = model.tarballBytes,
+                            )
+                        } catch (error: IOException) {
+                            raf.setLength(0L)
+                            throw IOException(
+                                "远端模型包超过预期大小，已丢弃断点文件",
+                                error,
+                            )
+                        }
                         raf.write(buf, 0, n)
-                        written += n
+                        written = nextWritten
 
                         val now = System.currentTimeMillis()
                         val sampleElapsed = now - lastSampleTime
@@ -577,6 +584,11 @@ class AsrModelManager @Inject constructor(
                 runCatching { raf.close() }
             }
         }
+        if (!isCompleteTarball(model, dest)) {
+            throw IOException(
+                "模型包下载不完整：${dest.length()} / ${model.tarballBytes} 字节"
+            )
+        }
         logger.i("ModelMgr", "download done url=$url size=${dest.length()}")
     }
 
@@ -612,65 +624,106 @@ class AsrModelManager @Inject constructor(
         }
         val tarSize = tarball.length().coerceAtLeast(1)
         var processed = 0L
+        val maxExtractedBytes = maxOf(
+            model.tarballBytes * 2L,
+            model.minOnnxTotalBytes + 256L * 1024L * 1024L,
+        )
+        val budget = ArchiveExtractionBudget(
+            maxEntries = MAX_ARCHIVE_ENTRIES,
+            maxEntryBytes = maxExtractedBytes,
+            maxTotalBytes = maxExtractedBytes,
+        )
+        val seenTargets = HashSet<String>()
 
         // 解压阶段按字节进度刷新，避免大文件 entry 期间 UI 长时间卡在 85%。
         // 改成每 ~1MB 或 500ms 节流刷一次，UI 持续动起来。
         var lastEmittedAt = 0L
         var lastEmittedBytes = 0L
-        FileInputStream(tarball).use { fin ->
-            BZip2CompressorInputStream(fin.buffered()).use { bz2 ->
-                TarArchiveInputStream(bz2).use { tar ->
-                    var entry = tar.nextEntry
-                    while (entry != null) {
-                        if (cancelRequested) throw CancellationException("解压已取消")
-                        val target = File(staging, entry.name)
-                        if (entry.isDirectory) {
-                            target.mkdirs()
-                        } else {
-                            target.parentFile?.mkdirs()
-                            FileOutputStream(target).use { out ->
-                                val buf = ByteArray(64 * 1024)
-                                while (true) {
-                                    if (cancelRequested) throw CancellationException("解压已取消")
-                                    val n = tar.read(buf)
-                                    if (n <= 0) break
-                                    out.write(buf, 0, n)
-                                    processed += n
+        try {
+            FileInputStream(tarball).use { fin ->
+                BZip2CompressorInputStream(fin.buffered()).use { bz2 ->
+                    TarArchiveInputStream(bz2).use { tar ->
+                        var entry = tar.nextEntry
+                        while (entry != null) {
+                            if (cancelRequested) throw CancellationException("解压已取消")
+                            val regularFile = entry.isFile &&
+                                !entry.isSymbolicLink &&
+                                !entry.isLink
+                            if (!entry.isDirectory && !regularFile) {
+                                throw IOException("模型包包含链接或特殊文件：${entry.name}")
+                            }
+                            val target = ArchiveExtractionPolicy.resolveTarget(
+                                root = staging,
+                                entryName = entry.name,
+                                expectedTopDirectory = expectedTopDir,
+                            )
+                            if (!seenTargets.add(target.path)) {
+                                throw IOException("模型包包含重复路径：${entry.name}")
+                            }
+                            budget.beginEntry(entry.size, writesData = regularFile)
+                            if (entry.isDirectory) {
+                                check(target.isDirectory || target.mkdirs()) {
+                                    "无法创建模型解压目录"
+                                }
+                            } else {
+                                target.parentFile?.let { parent ->
+                                    check(parent.isDirectory || parent.mkdirs()) {
+                                        "无法创建模型解压目录"
+                                    }
+                                }
+                                FileOutputStream(target).use { out ->
+                                    val buf = ByteArray(64 * 1024)
+                                    var consecutiveEmptyReads = 0
+                                    while (true) {
+                                        if (cancelRequested) throw CancellationException("解压已取消")
+                                        val n = tar.read(buf)
+                                        if (n < 0) break
+                                        if (n == 0) {
+                                            if (++consecutiveEmptyReads >= MAX_EMPTY_READS) {
+                                                throw IOException("模型解压流连续返回空数据")
+                                            }
+                                            continue
+                                        }
+                                        consecutiveEmptyReads = 0
+                                        budget.recordExtractedBytes(n)
+                                        out.write(buf, 0, n)
+                                        processed += n
 
-                                    val now = System.currentTimeMillis()
-                                    if (processed - lastEmittedBytes >= 1024 * 1024 || now - lastEmittedAt >= 500) {
-                                        // tarball 是压缩后大小，processed 是解压后字节，二者比值通常 1.0–1.2，
-                                        // coerceIn 兜底防止超过 0.99。
-                                        val rough = (processed.toFloat() / tarSize).coerceIn(0f, 0.99f)
-                                        _status.value = ModelStatus.Extracting(0.85f + rough * 0.15f)
-                                        lastEmittedAt = now
-                                        lastEmittedBytes = processed
-                                        yield()
+                                        val now = System.currentTimeMillis()
+                                        if (processed - lastEmittedBytes >= 1024 * 1024 || now - lastEmittedAt >= 500) {
+                                            // tarball 是压缩后大小，processed 是解压后字节，二者比值通常 > 1。
+                                            val rough = (processed.toFloat() / tarSize).coerceIn(0f, 0.99f)
+                                            _status.value = ModelStatus.Extracting(0.85f + rough * 0.15f)
+                                            lastEmittedAt = now
+                                            lastEmittedBytes = processed
+                                            yield()
+                                        }
                                     }
                                 }
                             }
+                            budget.finishEntry()
+                            entry = tar.nextEntry
                         }
-                        entry = tar.nextEntry
                     }
                 }
             }
-        }
 
-        // 把 staging/<expectedTopDir>/* rename 到当前模型目录。
-        val src = File(staging, expectedTopDir).takeIf { it.exists() }
-            ?: staging.listFiles()?.firstOrNull { it.isDirectory }
-            ?: error("解压后找不到模型顶层目录")
-        val dest = modelDir(model)
-        dest.deleteRecursively()
-        dest.parentFile?.mkdirs()
-        if (!src.renameTo(dest)) {
-            // rename 失败（跨设备等）→ 复制
-            src.copyRecursively(dest, overwrite = true)
-            src.deleteRecursively()
+            // 只接受规格中明确固定的顶层目录，不能从不可信归档猜测第一个目录。
+            val src = File(staging, expectedTopDir).takeIf { it.isDirectory }
+                ?: error("解压后找不到预期的模型顶层目录")
+            val dest = modelDir(model)
+            dest.deleteRecursively()
+            dest.parentFile?.mkdirs()
+            if (!src.renameTo(dest)) {
+                // rename 失败（跨设备等）→ 复制
+                src.copyRecursively(dest, overwrite = true)
+                src.deleteRecursively()
+            }
+            deleteNonRuntimeModelFiles(dest)
+            logger.i("ModelMgr", "extract done → ${dest.absolutePath}")
+        } finally {
+            staging.deleteRecursively()
         }
-        deleteNonRuntimeModelFiles(dest)
-        staging.deleteRecursively()
-        logger.i("ModelMgr", "extract done → ${dest.absolutePath}")
     }
 
     private fun onnxTotalBytes(dir: File): Long =
@@ -703,5 +756,10 @@ class AsrModelManager @Inject constructor(
             ?.toList()
             .orEmpty()
             .flatMap { child -> walk("$assetRoot/$child", child) }
+    }
+
+    private companion object {
+        const val MAX_ARCHIVE_ENTRIES = 20_000
+        const val MAX_EMPTY_READS = 16
     }
 }

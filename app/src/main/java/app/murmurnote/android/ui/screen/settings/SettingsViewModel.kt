@@ -77,7 +77,6 @@ class SettingsViewModel @Inject constructor(
         val asrModelUpdateChecking: Boolean = false,
         val asrBundledAssetsAvailable: Boolean = false,
         val showAsrDownloadConfirm: Boolean = false,
-        val showAsrHashMismatchConfirm: Boolean = false,
         // sherpa-onnx Kotlin/JNI 类是否能加载（即 app/libs/ 下的 AAR 是否打进了 APK）。
         // 跟模型文件状态正交：模型文件可以在线下，但 AAR 必须编译期就绪。
         val asrNativeLibReady: Boolean = false,
@@ -129,8 +128,7 @@ class SettingsViewModel @Inject constructor(
                     it.copy(
                         asrModelStatus = v,
                         asrModelUpdateCheck = if (v is AsrModelManager.ModelStatus.Ready) it.asrModelUpdateCheck else null,
-                        asrModelUpdateChecking = if (v is AsrModelManager.ModelStatus.Ready) it.asrModelUpdateChecking else false,
-                        showAsrHashMismatchConfirm = v is AsrModelManager.ModelStatus.HashMismatch
+                        asrModelUpdateChecking = if (v is AsrModelManager.ModelStatus.Ready) it.asrModelUpdateChecking else false
                     )
                 }
             }
@@ -356,24 +354,10 @@ class SettingsViewModel @Inject constructor(
         _uiState.update { it.copy(showAsrDownloadConfirm = false) }
     }
 
-    fun requestInstallHashMismatchModel() {
-        _uiState.update { it.copy(showAsrHashMismatchConfirm = true) }
-    }
-
-    fun dismissInstallHashMismatchModel() {
-        _uiState.update { it.copy(showAsrHashMismatchConfirm = false) }
-    }
-
     fun startAsrDownload(activityContext: Context) {
         _uiState.update { it.copy(showAsrDownloadConfirm = false, asrModelUpdateCheck = null) }
         logger.i("Settings", "asr download start requested")
         AsrModelDownloadService.start(activityContext)
-    }
-
-    fun installHashMismatchModel(activityContext: Context) {
-        _uiState.update { it.copy(showAsrHashMismatchConfirm = false) }
-        logger.w("Settings", "user confirmed installing ASR model with SHA256 mismatch")
-        AsrModelDownloadService.installUnverified(activityContext)
     }
 
     fun setAsrLocalConcurrency(v: Int) = viewModelScope.launch {
