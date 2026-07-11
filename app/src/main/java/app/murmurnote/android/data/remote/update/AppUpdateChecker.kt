@@ -1,6 +1,7 @@
 package app.murmurnote.android.data.remote.update
 
 import app.murmurnote.android.util.Logger
+import app.murmurnote.android.util.BoundedStreams
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.Serializable
@@ -9,6 +10,7 @@ import okhttp3.OkHttpClient
 import okhttp3.Request
 import javax.inject.Inject
 import javax.inject.Singleton
+import java.util.concurrent.TimeUnit
 
 @Singleton
 class AppUpdateChecker @Inject constructor(
@@ -23,11 +25,15 @@ class AppUpdateChecker @Inject constructor(
             .header("X-GitHub-Api-Version", "2022-11-28")
             .build()
 
-        okHttpClient.newCall(request).execute().use { response ->
-            val body = response.body?.string().orEmpty()
+        okHttpClient.newCall(request).also { call ->
+            call.timeout().timeout(UPDATE_CALL_TIMEOUT_SECONDS, TimeUnit.SECONDS)
+        }.execute().use { response ->
             if (!response.isSuccessful) {
                 error("GitHub Release 检查失败：HTTP ${response.code}")
             }
+            val body = response.body?.byteStream()?.use { input ->
+                BoundedStreams.readUtf8(input, MAX_UPDATE_RESPONSE_BYTES)
+            }.orEmpty()
 
             val release = json.decodeFromString(GitHubRelease.serializer(), body)
             val latestTag = release.tagName.ifBlank { release.name.orEmpty() }
@@ -47,6 +53,8 @@ class AppUpdateChecker @Inject constructor(
 
     companion object {
         private const val LATEST_RELEASE_URL = "https://api.github.com/repos/wzwys9/Murmurnote/releases/latest"
+        private const val UPDATE_CALL_TIMEOUT_SECONDS = 30L
+        private const val MAX_UPDATE_RESPONSE_BYTES = 512L * 1024L
 
         fun isNewerVersion(candidate: String, current: String): Boolean {
             val next = candidate.normalizedVersionParts()

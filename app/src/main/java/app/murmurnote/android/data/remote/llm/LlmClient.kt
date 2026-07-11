@@ -8,6 +8,7 @@ import app.murmurnote.android.data.remote.llm.dto.ChatCompletionResponse
 import app.murmurnote.android.data.remote.llm.dto.ExtractedItemDto
 import app.murmurnote.android.data.remote.llm.dto.ExtractionResult
 import app.murmurnote.android.util.Logger
+import app.murmurnote.android.util.SizeLimitExceededException
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.CancellationException
@@ -19,6 +20,8 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.suspendCancellableCoroutine
+import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeout
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
@@ -42,6 +45,7 @@ import java.io.IOException
 import javax.inject.Inject
 import javax.inject.Singleton
 import kotlin.math.min
+import java.util.concurrent.TimeUnit
 
 @Singleton
 class LlmClient @Inject constructor(
@@ -58,10 +62,6 @@ class LlmClient @Inject constructor(
         const val MAX_BACKOFF_MS = 8_000L
         // 长转写 map-reduce:超过这个字数就分块抽取再合并,避免单次 LLM 在中间段丢细节或截断。
         const val LONG_TRANSCRIPT_THRESHOLD = 3_000
-        // 每个分块的目标字数(贪心按句号拼,不会精确到字符,允许 +/- 几百字)。
-        const val CHUNK_TARGET_CHARS = 1_400
-        // 上限保护:无论多长都不超过这个块数,超出部分合并到最后一块。
-        const val MAX_CHUNKS = 6
         // 同时跑的分块抽取数:OkHttp dispatcher 默认每 host 5 并发,3 留余地给同时跑的 ASR。
         const val CHUNK_CONCURRENCY = 3
 
@@ -90,6 +90,7 @@ class LlmClient @Inject constructor(
      * 对可重试错误（5xx / 429 / 网络异常）做指数退避；4xx（鉴权 / 请求格式）即时失败不重试，省得浪费配额。
      */
     suspend fun extractItems(transcript: String, isChunk: Boolean = false): Result<ExtractionResult> = runCatching {
+        LlmResourceLimits.requireTranscriptSize(transcript)
         val config = currentConfig()
         if (config.provider.requiresApiKey && config.apiKey.isBlank()) {
             error("${config.provider.displayName} API Key 未配置")
@@ -257,53 +258,9 @@ class LlmClient @Inject constructor(
         logger.e("LLM", "updateDraftSummary failed type=${e.javaClass.simpleName}", e)
     }
 
-    /** 按句末标点切句,贪心拼成 ~CHUNK_TARGET_CHARS 字的块,相邻块之间重叠 1–2 句以保持上下文连续。最多 MAX_CHUNKS 块,超出部分合并到末块。 */
-    internal fun chunkTranscript(text: String): List<String> {
-        val sentenceEnd = setOf('。', '！', '？', '.', '!', '?', '\n')
-        val sentences = mutableListOf<String>()
-        val sb = StringBuilder()
-        for (c in text) {
-            sb.append(c)
-            if (c in sentenceEnd) {
-                sentences += sb.toString()
-                sb.clear()
-            }
-        }
-        if (sb.isNotEmpty()) sentences += sb.toString()
-
-        // 先把句子按 CHUNK_TARGET_CHARS 贪心分组（句子级，不重叠）
-        val groups = mutableListOf<MutableList<String>>()
-        var curLen = 0
-        for (s in sentences) {
-            if (groups.isEmpty() || (curLen > 0 && curLen + s.length > CHUNK_TARGET_CHARS)) {
-                groups += mutableListOf<String>()
-                curLen = 0
-            }
-            groups.last() += s
-            curLen += s.length
-        }
-
-        // 上限保护：超出 MAX_CHUNKS 的尾部全并到最后一组
-        if (groups.size > MAX_CHUNKS) {
-            val head = groups.take(MAX_CHUNKS - 1)
-            val tail = groups.drop(MAX_CHUNKS - 1).flatten()
-            groups.clear()
-            groups.addAll(head)
-            groups += tail.toMutableList()
-        }
-
-        // 相邻块之间重叠最后 2 句，让 LLM 看到跨边界的上下文
-        val chunks = groups.mapIndexed { i, group ->
-            if (i == 0) {
-                group.joinToString("")
-            } else {
-                val prev = groups[i - 1]
-                val overlap = prev.takeLast(2).joinToString("")
-                overlap + group.joinToString("")
-            }
-        }
-        return chunks
-    }
+    /** Produces at most six bounded chunks; no untrusted tail can be merged without a hard cap. */
+    internal fun chunkTranscript(text: String): List<String> =
+        LlmResourceLimits.chunkTranscript(text)
 
     /** 合并多份分块抽取结果:items 去重拼接,summary 通过 merger LLM 整合。 */
     private suspend fun mergeExtractions(parts: List<ExtractionResult>): ExtractionResult {
@@ -599,15 +556,23 @@ class LlmClient @Inject constructor(
         url: String,
         body: String,
         headers: Map<String, String>
-    ): String = withRetry(label) {
-        val builder = Request.Builder()
-            .url(url)
-            .post(body.toRequestBody("application/json".toMediaType()))
-        headers.forEach { (k, v) -> if (v.isNotBlank()) builder.header(k, v) }
-        okHttpClient.newCall(builder.build()).awaitResponse().use { resp ->
-            val responseBody = resp.body?.string().orEmpty()
-            if (!resp.isSuccessful) throw LlmHttpException(resp.code)
-            responseBody
+    ): String {
+        LlmResourceLimits.requireJsonRequestSize(body)
+        return withRetry(label) {
+            withContext(Dispatchers.IO) {
+                withTimeout(LlmResourceLimits.JSON_CALL_TIMEOUT_MS) {
+                    val builder = Request.Builder()
+                        .url(url)
+                        .post(body.toRequestBody("application/json".toMediaType()))
+                    headers.forEach { (k, v) ->
+                        if (v.isNotBlank()) builder.header(k, v)
+                    }
+                    okHttpClient.newJsonCall(builder.build()).awaitResponse().use { resp ->
+                        if (!resp.isSuccessful) throw LlmHttpException(resp.code)
+                        resp.readBodyWithinLimit()
+                    }
+                }
+            }
         }
     }
 
@@ -702,6 +667,7 @@ class LlmClient @Inject constructor(
 
     private fun isRetryable(t: Throwable): Boolean = when (t) {
         is LlmHttpException -> t.code == 429 || t.code in 500..599
+        is SizeLimitExceededException -> false
         is IOException -> true                     // 网络中断 / 超时 / 连接重置
         else -> false
     }
@@ -781,11 +747,25 @@ class LlmClient @Inject constructor(
             .orEmpty()
     }
 
-    private suspend fun getJson(req: Request): JsonElement =
-        okHttpClient.newCall(req).awaitResponse().use { resp ->
-            val body = resp.body?.string().orEmpty()
-            if (!resp.isSuccessful) throw LlmHttpException(resp.code)
-            json.parseToJsonElement(body)
+    private suspend fun getJson(req: Request): JsonElement = withContext(Dispatchers.IO) {
+        withTimeout(LlmResourceLimits.JSON_CALL_TIMEOUT_MS) {
+            okHttpClient.newJsonCall(req).awaitResponse().use { resp ->
+                if (!resp.isSuccessful) throw LlmHttpException(resp.code)
+                json.parseToJsonElement(resp.readBodyWithinLimit())
+            }
+        }
+    }
+
+    private fun Response.readBodyWithinLimit(): String {
+        return LlmResourceLimits.readJsonResponse(body)
+    }
+
+    private fun OkHttpClient.newJsonCall(request: Request): Call =
+        newCall(request).also { call ->
+            call.timeout().timeout(
+                LlmResourceLimits.JSON_CALL_TIMEOUT_MS,
+                TimeUnit.MILLISECONDS,
+            )
         }
 
     private fun List<String>.filterModelIds(): List<String> =
