@@ -1,5 +1,62 @@
 # Implementation Plan: Local ASR and deterministic correction
 
+## Current Slice: 安全与架构加固（2026-07-11）
+
+本轮修复全量代码审计中已确认的阻塞项，不改变用户数据语义。
+按“先失败测试、再最小修复、最后真机验证”推进，并按用户后续要求拆分为独立 Git 提交。
+
+### Task A: 不可信文件与归档边界
+
+- 模型 tar.bz2 解压拒绝绝对路径、目录穿越、符号/硬链接和特殊条目。
+- 限制下载字节、归档条目数量、单条目大小和总解压大小；失败时只留下可清理的暂存区。
+- SHA256 不一致时删除下载文件并拒绝安装，不保留任何“忽略校验”旁路。
+- 外部音频导入统一在 IO 调度器执行，并限制实际读取字节及并发导入数量。
+
+### Task B: 词本仓库边界
+
+- 录音级规则 API 只查询和修改当前录音规则，不能创建、复用或切换全局规则。
+- 全局词本只允许通过带策略校验的专用 API 修改；总开关关闭时不影响录音级流程。
+- 拒绝词条中的 Unicode 控制、格式化和双向文本控制字符。
+
+### Task C: 原生任务与远端响应资源上限
+
+- FFmpeg 调用统一为可取消挂起接口，协程取消时同步取消对应原生会话。
+- LLM JSON 请求设置每次调用时限，限制响应体和可发送转录文本规模，避免尾块无限合并。
+
+### Task D: 配置与发布保护
+
+- 用真实 DataStore 集成测试覆盖“无 API 不可开启、清 Key/换未配置服务自动关闭”。
+- Release 缺少发布证书时不再静默回退到 debug 签名。
+- 完成 JVM、Android instrumentation、Lint、Release 构建和真机安装验证。
+
+## Current Slice: 稳妥词本 MVP（2026-07-11）
+
+本轮实现以 `SAFE_LEXICON_SPEC.md` 为准，只管理用户明确创建的全局 `EXACT_TEXT` 规则，
+复用现有 Room 表、Repository、修订和审计机制，不启用模型热词、拼音或历史重写。
+总开关默认关闭；关闭时全局词条不进入定稿规则查询，不改变既有处理链路。
+当前 LLM 供应商还必须配置 API Key，否则开关不可用且运行时强制按关闭处理。
+
+### Task A: 词条安全策略
+
+- 用纯 Kotlin 策略规范化并校验 2–32 个 Unicode code point 的精确映射。
+- 拒绝空值、相同映射、控制字符；先写失败测试。
+
+### Task B: 全局规则事务 API
+
+- 增加全局规则查询、创建、启停和删除。
+- 重复映射幂等复用；冲突和反向映射明确失败；不允许词本操作录音级规则。
+
+### Task C: 设置页管理体验
+
+- 增加“实验室功能”目录；实验室页承载默认关闭的词本总开关和管理入口。
+- 词本管理页提供空态、添加表单、启停操作和删除确认。
+- 页面明确说明只影响未来最终转录，不修改 raw 或历史内容。
+
+### Checkpoint
+
+- 相关测试逐片通过；完整 JVM 测试、Lint、Release 构建和 arm64 真机检查通过。
+- 已按用户后续要求分笔提交 Git。
+
 ## Overview
 
 Implement the confirmed Phase 0–3 slice: SenseVoice-first local ASR, versioned Silero VAD, immutable model transcripts, derived corrected revisions, user-confirmed exact rules, revision-aware summaries, and privacy-safe retention/diagnostics. Phase 4+ pinyin, Qwen hotwords, native homophone replacement, and re-recognition remain disabled until measured separately.
