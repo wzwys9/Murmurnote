@@ -21,6 +21,8 @@ internal class LiveNeuralVadPcmProcessor(
     outputDirectory: File,
     private val sampleRateHz: Int = SileroVadDetector.SAMPLE_RATE_HZ,
     private val preset: NeuralVadSegmentPlanner.Preset = NeuralVadSegmentPlanner.PRESET,
+    hardCutSessionFactory: ((NeuralVadSegmentPlanner.Preset) -> StreamingVadSession)? = null,
+    private val onHardCutRefinement: (HardCutBoundaryProbePolicy.Refinement) -> Unit = {},
     private val onSegment: (LiveVadAudioSegment) -> Unit,
 ) : LivePcmProcessor {
     private val store = LivePcmSegmentStore(
@@ -31,11 +33,28 @@ internal class LiveNeuralVadPcmProcessor(
     private var sequence = 0
     private var previousEndSample = 0
     private var finished = false
+    private val hardCutRefiner = hardCutSessionFactory?.let { sessionFactory ->
+        LiveHardCutBoundaryRefiner(
+            store = store,
+            sampleRateHz = sampleRateHz,
+            sessionFactory = sessionFactory,
+        )
+    }
     private val coordinator = IncrementalNeuralVadCoordinator(
         session = session,
         sampleRateHz = sampleRateHz,
         frameSizeSamples = SileroVadDetector.WINDOW_SIZE_SAMPLES,
         preset = preset,
+        hardCutRefinementLookaheadMs = if (hardCutRefiner != null) {
+            HardCutBoundaryProbePolicy.PRESET.lookaheadMs
+        } else {
+            0
+        },
+        hardCutBoundaryRefiner = hardCutRefiner?.let { refiner ->
+            { request ->
+                refiner.refine(request).also(onHardCutRefinement).cutSample
+            }
+        },
         onSegment = ::materialize,
     )
 
@@ -80,7 +99,11 @@ internal class LiveNeuralVadPcmProcessor(
             endMs = samplesToMilliseconds(segment.endSampleExclusive),
             cutReason = segment.cutReason,
             overlapBeforeMs = samplesToMilliseconds(overlapSamples),
-            vadPresetVersion = preset.version,
+            vadPresetVersion = if (hardCutRefiner != null) {
+                HardCutBoundaryProbePolicy.canonicalVadVersion
+            } else {
+                preset.version
+            },
         )
         check(preview.endMs > preview.startMs) { "Live neural VAD emitted a zero-duration segment" }
         onSegment(preview)
@@ -99,6 +122,7 @@ internal class LiveNeuralVadPcmProcessor(
             val publicationDelayMs = maxOf(
                 preset.minSilenceMs,
                 preset.postPaddingMs + preset.prePaddingMs + preset.minSpeechMs,
+                HardCutBoundaryProbePolicy.PRESET.lookaheadMs,
             )
             val frameGuardMs =
                 (2L * SileroVadDetector.WINDOW_SIZE_SAMPLES * 1_000L + sampleRateHz - 1L) /

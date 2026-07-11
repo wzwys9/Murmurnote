@@ -126,6 +126,8 @@ class AudioRecorder @Inject constructor(
                 LiveNeuralVadPcmProcessor(
                     session = sileroVadDetector.openStreamingSession(),
                     outputDirectory = previewDirectory,
+                    hardCutSessionFactory = sileroVadDetector::openStreamingSession,
+                    onHardCutRefinement = ::logLiveHardCutRefinement,
                     onSegment = { segment -> acceptLiveVadSegment(liveToken, segment) }
                 )
             }
@@ -174,7 +176,7 @@ class AudioRecorder @Inject constructor(
             "start lossless wav capture",
             fields = mapOf(
                 "sampleRateHz" to SAMPLE_RATE_HZ,
-                "vadPreset" to NeuralVadSegmentPlanner.PRESET.version,
+                "vadPreset" to HardCutBoundaryProbePolicy.canonicalVadVersion,
             ),
         )
         return target
@@ -379,6 +381,32 @@ class AudioRecorder @Inject constructor(
         if (overflowWorker != null) {
             runCatching { segment.file.delete() }
             overflowWorker?.disableForBackpressure()
+        }
+    }
+
+    private fun logLiveHardCutRefinement(
+        refinement: HardCutBoundaryProbePolicy.Refinement,
+    ) {
+        refinement.attempts.forEach { attempt ->
+            val selection = attempt.selection
+            val profile = HardCutBoundaryProbePolicy.profile(attempt.window)
+            logger.d(
+                "Rec",
+                "live hard-cut boundary probe complete",
+                fields = mapOf(
+                    "stage" to attempt.window.stage.name,
+                    "searchWindowMs" to attempt.window.searchWindowMs,
+                    "threshold" to profile.threshold,
+                    "minSilenceMs" to profile.minSilenceMs,
+                    "cutSample" to selection.cutSample,
+                    "outcome" to selection.outcome.name,
+                    "speechRanges" to selection.speechRangeCount,
+                    "boundedPauses" to selection.boundedPauseCount,
+                    "longestBoundedPauseMs" to
+                        selection.longestBoundedPauseSamples.toLong() * 1_000L /
+                        SAMPLE_RATE_HZ,
+                ),
+            )
         }
     }
 
