@@ -53,29 +53,44 @@ class OnboardingViewModel @Inject constructor(
         appPreferences.setLlmApiKey(k)
     }
 
-    fun testBothConnections() = viewModelScope.launch {
-        logger.i("Onboard", "test both connections requested")
+    fun testConfiguredConnections() = viewModelScope.launch {
+        val testGlm = _uiState.value.glmApiKey.isNotBlank()
+        val testLlm = _uiState.value.llmApiKey.isNotBlank()
+        if (!testGlm && !testLlm) {
+            _uiState.update {
+                it.copy(
+                    testResult = "云服务均未配置；可以直接继续使用本地转写。",
+                    testSuccess = true
+                )
+            }
+            return@launch
+        }
+
+        logger.i("Onboard", "test optional cloud connections requested glm=$testGlm llm=$testLlm")
         _uiState.update { it.copy(testing = true) }
-        // 两次网络往返并发跑：用户在 onboarding 页等到的时间 = max(GLM, LLM)，不再是相加。
         val (g, o) = coroutineScope {
-            val gd = async { glmAsrClient.testConnection() }
-            val od = async { llmClient.testConnection() }
-            gd.await() to od.await()
+            val gd = if (testGlm) async { glmAsrClient.testConnection() } else null
+            val od = if (testLlm) async { llmClient.testConnection() } else null
+            gd?.await() to od?.await()
         }
-        logger.i(
-            "Onboard",
-            "test result GLM=${g.isSuccess} LLM=${o.isSuccess} glmErr=${g.exceptionOrNull()?.message?.take(120) ?: "-"} llmErr=${o.exceptionOrNull()?.message?.take(120) ?: "-"}"
-        )
-        val (ok, msg) = when {
-            g.isSuccess && o.isSuccess -> true to "✓ 两个连接都正常"
-            g.isFailure -> false to "GLM 连接失败：${g.exceptionOrNull()?.message ?: ""}"
-            else -> false to "LLM 连接失败：${o.exceptionOrNull()?.message ?: ""}"
+        val failures = buildList {
+            if (g?.isFailure == true) add("GLM")
+            if (o?.isFailure == true) add("LLM")
         }
+        val testedNames = listOfNotNull("GLM".takeIf { testGlm }, "LLM".takeIf { testLlm })
+        val ok = failures.isEmpty()
+        val msg = if (ok) {
+            "✓ ${testedNames.joinToString("、")} 连接正常"
+        } else {
+            "${failures.joinToString("、")} 连接失败；可稍后在设置中重试"
+        }
+        logger.i("Onboard", "optional cloud connection result success=$ok")
         _uiState.update { it.copy(testing = false, testSuccess = ok, testResult = msg) }
     }
 
-    fun completeOnboarding() = viewModelScope.launch {
-        logger.i("Onboard", "onboarding completed")
-        appPreferences.setOnboardingCompleted(true)
+    fun completeOnboarding(onComplete: () -> Unit) = viewModelScope.launch {
+        appPreferences.completeOnboarding()
+        logger.i("Onboard", "onboarding completed with local-first defaults persisted")
+        onComplete()
     }
 }

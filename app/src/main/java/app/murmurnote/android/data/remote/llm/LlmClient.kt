@@ -3,13 +3,14 @@ package app.murmurnote.android.data.remote.llm
 import android.content.Context
 import app.murmurnote.android.R
 import app.murmurnote.android.data.preference.AppPreferences
-import app.murmurnote.android.data.remote.llm.ExtractionJsonParser
+import app.murmurnote.android.data.remote.interceptor.ApiLogCapturePolicy
 import app.murmurnote.android.data.remote.llm.dto.ChatCompletionResponse
 import app.murmurnote.android.data.remote.llm.dto.ExtractedItemDto
 import app.murmurnote.android.data.remote.llm.dto.ExtractionResult
 import app.murmurnote.android.util.Logger
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
@@ -17,7 +18,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withPermit
-import kotlinx.coroutines.withContext
+import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
@@ -31,7 +32,10 @@ import kotlinx.serialization.json.putJsonArray
 import kotlinx.serialization.json.putJsonObject
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
+import okhttp3.Call
+import okhttp3.Callback
 import okhttp3.Request
+import okhttp3.Response
 import okhttp3.RequestBody.Companion.toRequestBody
 import android.os.SystemClock
 import java.io.IOException
@@ -118,7 +122,11 @@ class LlmClient @Inject constructor(
         val parsedResult = runCatching {
             ExtractionJsonParser.parse(rawContent, json)
         }.getOrElse { e ->
-            logger.e("LLM", "extractItems: failed to parse ExtractionResult raw=${rawContent.take(300)}", e)
+            logger.e(
+                "LLM",
+                "extractItems parse failed type=${e.javaClass.simpleName} responseChars=${rawContent.length}",
+                e
+            )
             // 降级：summary 用全文摘要，items 为空，让用户至少能看到转写内容
             ExtractionResult(summary = "", items = emptyList())
         }
@@ -137,8 +145,8 @@ class LlmClient @Inject constructor(
             "extractItems ok items=${finalResult.items.size} summaryChars=${finalResult.summary.length} elapsed=${SystemClock.elapsedRealtime() - started}ms"
         )
         finalResult
-    }.onFailure { e ->
-        logger.e("LLM", "extractItems failed: ${e.message?.take(200)}", e)
+    }.rethrowCancellation().onFailure { e ->
+        logger.e("LLM", "extractItems failed type=${e.javaClass.simpleName}", e)
     }
 
     /**
@@ -180,8 +188,8 @@ class LlmClient @Inject constructor(
                 "extractItemsAuto merged items=${merged.items.size} summaryChars=${merged.summary.length} elapsed=${SystemClock.elapsedRealtime() - started}ms"
             )
             merged
-        }.onFailure { e ->
-            logger.e("LLM", "extractItemsAuto failed: ${e.message?.take(200)}", e)
+        }.rethrowCancellation().onFailure { e ->
+            logger.e("LLM", "extractItemsAuto failed type=${e.javaClass.simpleName}", e)
         }
     }
 
@@ -245,8 +253,8 @@ class LlmClient @Inject constructor(
             "updateDraftSummary ok summaryChars=${summary.length} elapsed=${SystemClock.elapsedRealtime() - started}ms"
         )
         summary
-    }.onFailure { e ->
-        logger.e("LLM", "updateDraftSummary failed: ${e.message?.take(200)}", e)
+    }.rethrowCancellation().onFailure { e ->
+        logger.e("LLM", "updateDraftSummary failed type=${e.javaClass.simpleName}", e)
     }
 
     /** 按句末标点切句,贪心拼成 ~CHUNK_TARGET_CHARS 字的块,相邻块之间重叠 1–2 句以保持上下文连续。最多 MAX_CHUNKS 块,超出部分合并到末块。 */
@@ -310,7 +318,7 @@ class LlmClient @Inject constructor(
         }
 
         val unifiedSummary = mergeSummariesViaLLM(parts.map { it.summary }).getOrElse { e ->
-            logger.w("LLM", "merge LLM failed, fallback to dedup-concat: ${e.message?.take(120)}")
+            logger.w("LLM", "merge LLM failed, fallback to dedup-concat type=${e.javaClass.simpleName}")
             // 兜底:直接拼接去重 bullet 行,确保用户至少能看到所有要点。
             parts.flatMap { it.summary.lines() }
                 .map { it.trim() }
@@ -367,7 +375,7 @@ class LlmClient @Inject constructor(
         )
         ExtractionJsonParser.stripThink(raw).trim().takeIf { it.isNotBlank() }
             ?: error("merge: 响应为空")
-    }
+    }.rethrowCancellation()
 
     private data class LlmConfig(
         val provider: LlmProvider,
@@ -596,12 +604,10 @@ class LlmClient @Inject constructor(
             .url(url)
             .post(body.toRequestBody("application/json".toMediaType()))
         headers.forEach { (k, v) -> if (v.isNotBlank()) builder.header(k, v) }
-        withContext(Dispatchers.IO) {
-            okHttpClient.newCall(builder.build()).execute().use { resp ->
-                val responseBody = resp.body?.string().orEmpty()
-                if (!resp.isSuccessful) throw LlmHttpException(resp.code, responseBody.take(400))
-                responseBody
-            }
+        okHttpClient.newCall(builder.build()).awaitResponse().use { resp ->
+            val responseBody = resp.body?.string().orEmpty()
+            if (!resp.isSuccessful) throw LlmHttpException(resp.code)
+            responseBody
         }
     }
 
@@ -675,13 +681,18 @@ class LlmClient @Inject constructor(
             try {
                 return block()
             } catch (t: Throwable) {
+                if (t is CancellationException) throw t
                 lastError = t
                 if (!isRetryable(t) || attempt == MAX_ATTEMPTS - 1) {
-                    logger.e("LLM", "$label give up after ${attempt + 1} attempt(s): ${t.message?.take(120)}")
+                    logger.e("LLM", "$label give up after ${attempt + 1} attempt(s) type=${t.javaClass.simpleName}")
                     throw t
                 }
                 val backoff = min(BASE_BACKOFF_MS shl attempt, MAX_BACKOFF_MS)
-                logger.w("LLM", "$label retry ${attempt + 1}/${MAX_ATTEMPTS - 1} after ${backoff}ms: ${t.message?.take(120)}")
+                logger.w(
+                    "LLM",
+                    "$label retry ${attempt + 1}/${MAX_ATTEMPTS - 1} after ${backoff}ms " +
+                        "type=${t.javaClass.simpleName}"
+                )
                 delay(backoff)
             }
         }
@@ -695,14 +706,17 @@ class LlmClient @Inject constructor(
         else -> false
     }
 
-    private class LlmHttpException(val code: Int, body: String) :
-        RuntimeException("LLM HTTP $code: $body")
+    private class LlmHttpException(val code: Int) : RuntimeException("LLM HTTP $code")
 
     /** 按当前 provider 从官方模型接口拉取模型列表，过滤出适合做文本处理的模型。 */
     suspend fun fetchAvailableModels(): Result<List<String>> = runCatching {
         val config = currentConfig()
         if (config.provider.requiresApiKey && config.apiKey.isBlank()) error("${config.provider.displayName} API Key 未配置")
-        logger.i("LLM", "fetchAvailableModels begin provider=${config.provider.name} base=${config.baseUrl}")
+        logger.i(
+            "LLM",
+            "fetchAvailableModels begin provider=${config.provider.name} " +
+                "endpoint=${ApiLogCapturePolicy.sanitizeUrl(config.baseUrl)}"
+        )
         val filtered = when (config.provider) {
             LlmProvider.ANTHROPIC -> fetchAnthropicModels(config)
             LlmProvider.GEMINI -> fetchGeminiModels(config)
@@ -711,8 +725,8 @@ class LlmClient @Inject constructor(
         }.filterModelIds()
         logger.i("LLM", "fetchAvailableModels ok provider=${config.provider.name} filtered=${filtered.size}")
         filtered
-    }.onFailure { e ->
-        logger.e("LLM", "fetchAvailableModels failed: ${e.message?.take(200)}", e)
+    }.rethrowCancellation().onFailure { e ->
+        logger.e("LLM", "fetchAvailableModels failed type=${e.javaClass.simpleName}", e)
     }
 
     private suspend fun fetchOpenAiModels(config: LlmConfig): Result<List<String>> = runCatching {
@@ -722,7 +736,7 @@ class LlmClient @Inject constructor(
             .get()
             .build()
         getModelIdsFromDataArray(req)
-    }
+    }.rethrowCancellation()
 
     private suspend fun fetchAnthropicModels(config: LlmConfig): List<String> {
         val req = Request.Builder()
@@ -767,13 +781,12 @@ class LlmClient @Inject constructor(
             .orEmpty()
     }
 
-    private suspend fun getJson(req: Request): JsonElement = withContext(Dispatchers.IO) {
-        okHttpClient.newCall(req).execute().use { resp ->
+    private suspend fun getJson(req: Request): JsonElement =
+        okHttpClient.newCall(req).awaitResponse().use { resp ->
             val body = resp.body?.string().orEmpty()
-            if (!resp.isSuccessful) throw LlmHttpException(resp.code, body.take(400))
+            if (!resp.isSuccessful) throw LlmHttpException(resp.code)
             json.parseToJsonElement(body)
         }
-    }
 
     private fun List<String>.filterModelIds(): List<String> =
         filter {
@@ -785,6 +798,25 @@ class LlmClient @Inject constructor(
     suspend fun testConnection(): Result<Unit> = runCatching {
         val res = fetchAvailableModels().getOrThrow()
         if (res.isEmpty()) error("无可用模型")
-    }
+    }.rethrowCancellation()
 
+}
+
+private fun <T> Result<T>.rethrowCancellation(): Result<T> = onFailure { error ->
+    if (error is CancellationException) throw error
+}
+
+private suspend fun Call.awaitResponse(): Response = suspendCancellableCoroutine { continuation ->
+    continuation.invokeOnCancellation { cancel() }
+    enqueue(
+        object : Callback {
+            override fun onFailure(call: Call, error: IOException) {
+                continuation.resumeWith(Result.failure(error))
+            }
+
+            override fun onResponse(call: Call, response: Response) {
+                continuation.resume(response) { response.close() }
+            }
+        }
+    )
 }

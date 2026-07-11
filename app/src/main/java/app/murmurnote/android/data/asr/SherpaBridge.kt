@@ -7,6 +7,148 @@ import kotlin.reflect.KClass
 import kotlin.reflect.KParameter
 import kotlin.reflect.full.primaryConstructor
 
+internal enum class SherpaModelKind {
+    SENSE_VOICE,
+    QWEN3_ASR
+}
+
+internal data class SherpaBridgeParameters(
+    val modelKind: SherpaModelKind,
+    val modelArguments: Map<String, Any?>,
+    val offlineModelArguments: Map<String, Any?>,
+    val metadataForLogging: String
+)
+
+/** Builds sherpa constructor parameters without loading the AAR or JNI. */
+internal object SherpaBridgeParameterResolver {
+
+    fun resolve(
+        modelDir: File,
+        config: LocalAsrSessionConfig,
+        requestedThreads: Int
+    ): SherpaBridgeParameters = when (config.engineType) {
+        AsrEngineType.LOCAL_SENSE_VOICE -> resolveSenseVoice(modelDir, config, requestedThreads)
+        AsrEngineType.LOCAL_QWEN3_ASR -> resolveQwen(modelDir, config)
+        AsrEngineType.CLOUD_GLM -> throw IllegalArgumentException(
+            "Cloud ASR cannot initialize a local sherpa bridge"
+        )
+    }
+
+    private fun resolveSenseVoice(
+        modelDir: File,
+        config: LocalAsrSessionConfig,
+        requestedThreads: Int
+    ): SherpaBridgeParameters {
+        require(config.modelId == AsrModelUrls.SENSE_VOICE_ID) {
+            "SenseVoice engine requires the SenseVoice model"
+        }
+        val options = config.options as? LocalModelOptions.SenseVoice
+            ?: throw IllegalArgumentException("SenseVoice engine requires SenseVoice options")
+        val model = requireRegularFile(modelDir, "model.int8.onnx")
+        val tokens = requireRegularFile(modelDir, "tokens.txt")
+        val threads = requestedThreads.coerceIn(1, MAX_SENSE_VOICE_THREADS)
+        return SherpaBridgeParameters(
+            modelKind = SherpaModelKind.SENSE_VOICE,
+            modelArguments = linkedMapOf(
+                "model" to model.absolutePath,
+                "language" to options.language,
+                "useInverseTextNormalization" to options.useItn
+            ),
+            offlineModelArguments = linkedMapOf(
+                "tokens" to tokens.absolutePath,
+                "numThreads" to threads,
+                "provider" to "cpu"
+            ),
+            metadataForLogging = buildString {
+                append("fingerprint=")
+                append(config.configFingerprint.take(FINGERPRINT_LOG_PREFIX_LENGTH))
+                append(" model=")
+                append(config.modelId)
+                append(" engine=")
+                append(config.engineType.name)
+                append(" language=")
+                append(options.language)
+                append(" itn=")
+                append(options.useItn)
+            }
+        )
+    }
+
+    private fun resolveQwen(
+        modelDir: File,
+        config: LocalAsrSessionConfig
+    ): SherpaBridgeParameters {
+        require(config.modelId == AsrModelUrls.QWEN3_ASR_ID) {
+            "Qwen3-ASR engine requires the Qwen3-ASR model"
+        }
+        val options = config.options as? LocalModelOptions.Qwen3Asr
+            ?: throw IllegalArgumentException("Qwen3-ASR engine requires Qwen3-ASR options")
+        val convFrontend = requireRegularFile(modelDir, "conv_frontend.onnx")
+        val encoder = requireRegularFile(modelDir, "encoder.int8.onnx")
+        val decoder = requireRegularFile(modelDir, "decoder.int8.onnx")
+        val tokenizer = File(modelDir, "tokenizer")
+        require(tokenizer.isDirectory && !tokenizer.list().isNullOrEmpty()) {
+            "Qwen3-ASR tokenizer directory is missing or empty"
+        }
+        val serializedHotwords = serializeQwenHotwords(options.hotwordSnapshot)
+        return SherpaBridgeParameters(
+            modelKind = SherpaModelKind.QWEN3_ASR,
+            modelArguments = linkedMapOf(
+                "convFrontend" to convFrontend.absolutePath,
+                "encoder" to encoder.absolutePath,
+                "decoder" to decoder.absolutePath,
+                "tokenizer" to tokenizer.absolutePath,
+                "maxTotalLen" to 512,
+                "maxNewTokens" to 512,
+                "temperature" to 1e-6f,
+                "topP" to 0.8f,
+                "seed" to 42,
+                "hotwords" to serializedHotwords
+            ),
+            offlineModelArguments = linkedMapOf(
+                // Qwen's memory footprint requires one recognizer/decode at a time.
+                "numThreads" to 1,
+                "provider" to "cpu"
+            ),
+            metadataForLogging = buildString {
+                append("fingerprint=")
+                append(config.configFingerprint.take(FINGERPRINT_LOG_PREFIX_LENGTH))
+                append(" model=")
+                append(config.modelId)
+                append(" engine=")
+                append(config.engineType.name)
+                append(" language=auto hotwordsConfigured=")
+                append(options.hotwordSnapshot != null)
+            }
+        )
+    }
+
+    /**
+     * sherpa-onnx 1.12.39 documents Qwen hotwords as UTF-8 entries separated by an ASCII comma.
+     * There is no escaping syntax, so ambiguous entries are rejected instead of guessed.
+     */
+    private fun serializeQwenHotwords(snapshot: HotwordSnapshot?): String {
+        if (snapshot == null) return ""
+        snapshot.hotwords.forEach { hotword ->
+            require(hotword.isNotEmpty()) { "Qwen hotword must not be empty" }
+            require(hotword.none { it == ',' || it.isISOControl() }) {
+                "Qwen hotword contains an unsupported delimiter or control character"
+            }
+        }
+        return snapshot.hotwords.joinToString(separator = ",")
+    }
+
+    private fun requireRegularFile(modelDir: File, relativePath: String): File =
+        File(modelDir, relativePath).also { file ->
+            require(file.isFile && file.length() > 0L) {
+                "Required local ASR model file is missing or empty: $relativePath"
+            }
+        }
+
+    private const val MAX_SENSE_VOICE_THREADS = 3
+    private const val FINGERPRINT_LOG_PREFIX_LENGTH = 12
+}
+
 /**
  * 反射桥接 sherpa-onnx Kotlin/JNI API。本地 ASR 引擎专用。
  *
@@ -16,8 +158,8 @@ import kotlin.reflect.full.primaryConstructor
  *
  * 反射目标 API（sherpa-onnx Android 1.12.x，包名 com.k2fsa.sherpa.onnx）：
  *   - data class OfflineQwen3AsrModelConfig(convFrontend, encoder, decoder, tokenizer, ...)
- *   - data class OfflineFireRedAsrModelConfig(encoder: String = "", decoder: String = "")
- *   - data class OfflineModelConfig(... qwen3Asr, fireRedAsr, tokens, numThreads, debug, provider, modelType ...)
+ *   - data class OfflineSenseVoiceModelConfig(model, language, useInverseTextNormalization)
+ *   - data class OfflineModelConfig(... qwen3Asr, senseVoice, tokens, numThreads, provider ...)
  *   - data class OfflineRecognizerConfig(... modelConfig, decodingMethod ...)
  *   - class OfflineRecognizer(config)
  *       fun createStream(): OfflineStream
@@ -28,9 +170,8 @@ import kotlin.reflect.full.primaryConstructor
  *       fun acceptWaveform(samples: FloatArray, sampleRate: Int)
  *       fun release()
  *
- * 用 kotlin-reflect 的 primaryConstructor.callBy(...) 按字段名传值，sherpa-onnx 在数据类里加新字段
- * （只要带默认值）不会让我们崩。一旦有"必填新字段"加进来，构造会抛 IllegalArgumentException：
- * 看 runtime.log 里 [LocalAsr] 的具体异常信息再扩参数。
+ * 用 kotlin-reflect 的 primaryConstructor.callBy(...) 按字段名传值。影响识别行为的字段会验证
+ * 1.12.39 构造参数确实存在，避免旧 AAR 静默忽略语言、ITN 或热词。
  */
 class SherpaBridge private constructor(
     private val recognizer: Any,
@@ -71,124 +212,77 @@ class SherpaBridge private constructor(
         const val SAMPLE_RATE = 16000
         private const val PKG = "com.k2fsa.sherpa.onnx"
 
-        /** 用模型文件大小区分 SingleFile 布局：SenseVoice ~226MB，FireRedASR CTC ~740MB。 */
-        private const val SINGLE_FILE_MODEL_SIZE_THRESHOLD = 500L * 1024 * 1024
-
-        /**
-         * 在 IO 线程调；构造 OfflineRecognizer（加载 ONNX 模型）。
-         *
-         * 支持四种模型布局，按文件存在自动探测：
-         *   - Qwen3-ASR 0.6B (conv_frontend + encoder + decoder + tokenizer)
-         *   - SenseVoice (model.int8.onnx < 500MB)：ITN 开启
-         *   - FireRedASR CTC (model.int8.onnx > 500MB)：纯字符，无标点
-         *   - FireRedASR AED (encoder.int8.onnx + decoder.int8.onnx)：encoder+decoder
-         */
+        /** Temporary compatibility for callers that have not adopted attempt snapshots yet. */
+        @Deprecated("Pass a frozen LocalAsrSessionConfig")
         fun create(modelDir: File, numThreads: Int, logger: Logger): SherpaBridge {
-            val threads = numThreads.coerceIn(1, 4)
-            val tokens = File(modelDir, "tokens.txt").absolutePath
-            val convFrontendFile = File(modelDir, "conv_frontend.onnx")
-            val modelFile = File(modelDir, "model.int8.onnx")
-            val encoderFile = File(modelDir, "encoder.int8.onnx")
-            val decoderFile = File(modelDir, "decoder.int8.onnx")
-            val tokenizerDir = File(modelDir, "tokenizer")
-            val modelConfig: Any = when {
-                convFrontendFile.exists() && encoderFile.exists() && decoderFile.exists() && tokenizerDir.isDirectory -> {
-                    logger.i(
-                        "LocalAsr",
-                        "Qwen3-ASR layout (onnx ~${listOf(convFrontendFile, encoderFile, decoderFile).sumOf { it.length() } / 1024 / 1024}MB)"
-                    )
-                    val qwen3Peer = constructByName(
-                        "$PKG.OfflineQwen3AsrModelConfig",
-                        mapOf(
-                            "convFrontend" to convFrontendFile.absolutePath,
-                            "encoder" to encoderFile.absolutePath,
-                            "decoder" to decoderFile.absolutePath,
-                            "tokenizer" to tokenizerDir.absolutePath,
-                            "maxTotalLen" to 512,
-                            "maxNewTokens" to 512
-                        )
-                    )
-                    constructByName(
-                        "$PKG.OfflineModelConfig",
-                        mapOf(
-                            "qwen3Asr" to qwen3Peer,
-                            "numThreads" to threads,
-                            "provider" to "cpu"
-                        )
-                    )
-                }
-                modelFile.exists() && modelFile.length() < SINGLE_FILE_MODEL_SIZE_THRESHOLD -> {
-                    require(File(tokens).exists()) { "tokens.txt 不存在：$tokens" }
-                    logger.i("LocalAsr", "SenseVoice layout (model.int8.onnx ~${modelFile.length() / 1024 / 1024}MB)")
-                    val svPeer = constructByName(
-                        "$PKG.OfflineSenseVoiceModelConfig",
-                        mapOf(
-                            "model" to modelFile.absolutePath,
-                            "language" to "zh",
-                            "useInverseTextNormalization" to true
-                        )
-                    )
-                    constructByName(
-                        "$PKG.OfflineModelConfig",
-                        mapOf(
-                            "senseVoice" to svPeer,
-                            "tokens" to tokens,
-                            "numThreads" to threads,
-                            "provider" to "cpu"
-                        )
-                    )
-                }
-                modelFile.exists() -> {
-                    require(File(tokens).exists()) { "tokens.txt 不存在：$tokens" }
-                    logger.i("LocalAsr", "FireRedASR layout=CTC (model.int8.onnx ~${modelFile.length() / 1024 / 1024}MB)")
-                    val ctcPeer = constructByName(
-                        "$PKG.OfflineFireRedAsrCtcModelConfig",
-                        mapOf("model" to modelFile.absolutePath)
-                    )
-                    constructByName(
-                        "$PKG.OfflineModelConfig",
-                        mapOf(
-                            "fireRedAsrCtc" to ctcPeer,
-                            "tokens" to tokens,
-                            "numThreads" to threads,
-                            "provider" to "cpu"
-                        )
-                    )
-                }
-                encoderFile.exists() && decoderFile.exists() -> {
-                    require(File(tokens).exists()) { "tokens.txt 不存在：$tokens" }
-                    logger.i("LocalAsr", "FireRedASR layout=AED (encoder+decoder)")
-                    val aedPeer = constructByName(
-                        "$PKG.OfflineFireRedAsrModelConfig",
-                        mapOf(
-                            "encoder" to encoderFile.absolutePath,
-                            "decoder" to decoderFile.absolutePath
-                        )
-                    )
-                    constructByName(
-                        "$PKG.OfflineModelConfig",
-                        mapOf(
-                            "fireRedAsr" to aedPeer,
-                            "tokens" to tokens,
-                            "numThreads" to threads,
-                            "provider" to "cpu"
-                        )
-                    )
-                }
-                else -> error("找不到支持的 ASR 模型文件。modelDir=${modelDir.absolutePath}")
+            val isQwen = File(modelDir, "conv_frontend.onnx").isFile
+            val config = if (isQwen) {
+                LocalAsrSessionConfig(
+                    engineType = AsrEngineType.LOCAL_QWEN3_ASR,
+                    modelId = AsrModelUrls.QWEN3_ASR_ID,
+                    options = LocalModelOptions.Qwen3Asr(hotwordSnapshot = null),
+                    vadPresetVersion = "legacy-unspecified"
+                )
+            } else {
+                LocalAsrSessionConfig(
+                    engineType = AsrEngineType.LOCAL_SENSE_VOICE,
+                    modelId = AsrModelUrls.SENSE_VOICE_ID,
+                    options = LocalModelOptions.SenseVoice(language = "zh", useItn = true),
+                    vadPresetVersion = "legacy-unspecified"
+                )
             }
+            return create(modelDir, config, numThreads, logger)
+        }
+
+        /** Constructs an OfflineRecognizer from one frozen attempt config. */
+        fun create(
+            modelDir: File,
+            config: LocalAsrSessionConfig,
+            numThreads: Int,
+            logger: Logger
+        ): SherpaBridge {
+            val parameters = SherpaBridgeParameterResolver.resolve(
+                modelDir = modelDir,
+                config = config,
+                requestedThreads = numThreads
+            )
+            logger.i("LocalAsr", "initializing sherpa bridge ${parameters.metadataForLogging}")
+
+            val (modelClass, offlineModelKey) = when (parameters.modelKind) {
+                SherpaModelKind.SENSE_VOICE ->
+                    "$PKG.OfflineSenseVoiceModelConfig" to "senseVoice"
+                SherpaModelKind.QWEN3_ASR ->
+                    "$PKG.OfflineQwen3AsrModelConfig" to "qwen3Asr"
+            }
+            val modelPeer = constructByName(
+                className = modelClass,
+                args = parameters.modelArguments,
+                requiredArgumentNames = parameters.modelArguments.keys
+            )
+            val offlineModelArguments = linkedMapOf<String, Any?>(
+                offlineModelKey to modelPeer
+            ).apply {
+                putAll(parameters.offlineModelArguments)
+            }
+            val modelConfig = constructByName(
+                className = "$PKG.OfflineModelConfig",
+                args = offlineModelArguments,
+                requiredArgumentNames = offlineModelArguments.keys
+            )
 
             val recognizerConfig = constructByName(
-                "$PKG.OfflineRecognizerConfig",
-                mapOf(
+                className = "$PKG.OfflineRecognizerConfig",
+                args = mapOf(
                     "modelConfig" to modelConfig,
                     "decodingMethod" to "greedy_search"
-                )
+                ),
+                requiredArgumentNames = setOf("modelConfig", "decodingMethod")
             )
             val recognizer = constructByName(
-                "$PKG.OfflineRecognizer",
+                className = "$PKG.OfflineRecognizer",
                 // assetManager = null（用 filesDir 路径模式），config = recognizerConfig
-                mapOf("config" to recognizerConfig)
+                args = mapOf("config" to recognizerConfig),
+                requiredArgumentNames = setOf("config")
             )
 
             val recognizerCls = Class.forName("$PKG.OfflineRecognizer")
@@ -201,17 +295,33 @@ class SherpaBridge private constructor(
                 streamCls = streamCls,
                 mResultText = resultCls.getMethod("getText"),
                 logger = logger
-            ).also { logger.i("LocalAsr", "sherpa-onnx OfflineRecognizer initialized (threads=$threads modelDir=$modelDir)") }
+            ).also {
+                logger.i(
+                    "LocalAsr",
+                    "sherpa bridge initialized ${parameters.metadataForLogging} " +
+                        "threads=${parameters.offlineModelArguments["numThreads"]}"
+                )
+            }
         }
 
         /**
-         * 用 Kotlin 主构造按字段名传值。能跳过任何带默认值的字段；
-         * 找不到对应 KParameter 的 key 静默忽略（sherpa-onnx 跨版本字段名变更时不会硬崩）。
+         * Uses named primary-constructor parameters and fails closed if the installed AAR cannot
+         * represent a behavior-affecting value from the frozen config.
          */
-        private fun constructByName(className: String, args: Map<String, Any?>): Any {
+        private fun constructByName(
+            className: String,
+            args: Map<String, Any?>,
+            requiredArgumentNames: Set<String> = emptySet()
+        ): Any {
             val cls: KClass<*> = Class.forName(className).kotlin
             val ctor = cls.primaryConstructor
                 ?: error("$className has no primary constructor (是否被 ProGuard 误删？)")
+            val availableNames = ctor.parameters.mapNotNull(KParameter::name).toSet()
+            val missingRequiredArguments = requiredArgumentNames - availableNames
+            require(missingRequiredArguments.isEmpty()) {
+                "$className does not support required frozen ASR parameters: " +
+                    missingRequiredArguments.sorted().joinToString()
+            }
             val byName: Map<KParameter, Any?> = ctor.parameters
                 .mapNotNull { p ->
                     val name = p.name ?: return@mapNotNull null

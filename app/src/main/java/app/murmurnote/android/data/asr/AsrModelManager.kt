@@ -96,6 +96,10 @@ class AsrModelManager @Inject constructor(
 
     fun availableModels(): List<LocalAsrModelSpec> = AsrModelUrls.MODELS
 
+    private fun requireKnownModel(modelId: String): LocalAsrModelSpec =
+        AsrModelUrls.MODELS.firstOrNull { it.id == modelId }
+            ?: throw IllegalArgumentException("Unknown local ASR model id")
+
     suspend fun selectModel(id: String) {
         val normalized = AsrModelUrls.modelById(id).id
         selectedModelId = normalized
@@ -104,6 +108,9 @@ class AsrModelManager @Inject constructor(
     }
 
     fun modelDir(): File = modelDir(selectedModel())
+
+    /** Returns the directory for an immutable recognition config, independent of UI selection. */
+    fun modelDirFor(modelId: String): File = modelDir(requireKnownModel(modelId))
 
     private fun modelDir(model: LocalAsrModelSpec): File = File(context.filesDir, "asr_models/${model.id}").apply { mkdirs() }
     private fun rootDir(): File = File(context.filesDir, "asr_models").apply { mkdirs() }
@@ -117,6 +124,9 @@ class AsrModelManager @Inject constructor(
      * 按当前选中的模型规格判断文件是否就绪。
      */
     fun isModelReady(): Boolean = isModelReady(selectedModel())
+
+    /** Checks the model captured by an attempt instead of the subsequently selected model. */
+    fun isModelReady(modelId: String): Boolean = isModelReady(requireKnownModel(modelId))
 
     private fun isModelReady(model: LocalAsrModelSpec): Boolean {
         val dir = modelDir(model)
@@ -190,7 +200,7 @@ class AsrModelManager @Inject constructor(
                 }
             }
             .onFailure { e ->
-                logger.w("ModelMgr", "check update remote probe failed: ${e.message}")
+                logger.w("ModelMgr", "check update remote probe failed type=${e.javaClass.simpleName}")
                 return@withContext ModelUpdateCheck.UnableToCheck(
                     "本地模型可用；联网检查失败：${e.message ?: e.javaClass.simpleName}"
                 )
@@ -228,7 +238,7 @@ class AsrModelManager @Inject constructor(
             installVerifiedTarball(model, tarball)
             refreshStatus()
         }.onFailure { e ->
-            logger.e("ModelMgr", "downloadAndInstall failed: ${e.message}", e)
+            logger.e("ModelMgr", "downloadAndInstall failed type=${e.javaClass.simpleName}", e)
             if (e is CancellationException) {
                 _status.value = ModelStatus.NotDownloaded
             } else if (_status.value !is ModelStatus.HashMismatch) {
@@ -254,7 +264,7 @@ class AsrModelManager @Inject constructor(
             installVerifiedTarball(model, tarball)
             refreshStatus()
         }.onFailure { e ->
-            logger.e("ModelMgr", "installDownloadedWithoutHashCheck failed: ${e.message}", e)
+            logger.e("ModelMgr", "installDownloadedWithoutHashCheck failed type=${e.javaClass.simpleName}", e)
             if (e is CancellationException) {
                 _status.value = ModelStatus.NotDownloaded
             } else {
@@ -408,7 +418,7 @@ class AsrModelManager @Inject constructor(
                 .put("installedAt", System.currentTimeMillis())
             installInfoFile(model).writeText(json.toString(2))
         }.onFailure { e ->
-            logger.w("ModelMgr", "failed to write model install info: ${e.message}")
+            logger.w("ModelMgr", "failed to write model install info type=${e.javaClass.simpleName}")
         }
     }
 
@@ -417,7 +427,7 @@ class AsrModelManager @Inject constructor(
             val f = installInfoFile(model)
             if (!f.exists()) null else JSONObject(f.readText())
         }.onFailure { e ->
-            logger.w("ModelMgr", "failed to read model install info: ${e.message}")
+            logger.w("ModelMgr", "failed to read model install info type=${e.javaClass.simpleName}")
         }.getOrNull()
 
     private fun installInfoMatches(model: LocalAsrModelSpec, info: JSONObject): Boolean =
@@ -466,7 +476,7 @@ class AsrModelManager @Inject constructor(
                 logger.w("ModelMgr", "镜像 #$i 速度过慢，切下一个：$url")
                 // 不删 tarball，下个镜像继续 Range 续传
             } catch (e: IOException) {
-                logger.w("ModelMgr", "镜像 #$i IO 失败：${e.message}")
+                logger.w("ModelMgr", "镜像 #$i IO 失败 type=${e.javaClass.simpleName}")
             } catch (e: CancellationException) {
                 throw e
             }

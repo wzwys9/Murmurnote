@@ -1,7 +1,7 @@
 package app.murmurnote.android.data.remote.glm
 
 import app.murmurnote.android.data.preference.AppPreferences
-import app.murmurnote.android.data.remote.glm.dto.AsrChunk
+import app.murmurnote.android.data.asr.CloudAsrModels
 import app.murmurnote.android.util.Logger
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.channels.awaitClose
@@ -46,9 +46,16 @@ class GlmAsrClient @Inject constructor(
     }
 
     /** 流式转写一段 wav 文件（≤25s），逐字 emit Delta，结束 emit Done。 */
-    fun transcribeStream(wav: File, hotwords: List<String> = emptyList(), prompt: String? = null): Flow<Event> = callbackFlow {
-        val baseUrl = appPreferences.glmBaseUrl.first()
-        val key = appPreferences.glmApiKey.first()
+    fun transcribeStream(
+        wav: File,
+        hotwords: List<String> = emptyList(),
+        prompt: String? = null,
+        frozenBaseUrl: String? = null,
+        frozenApiKey: String? = null,
+        frozenModelId: String? = null
+    ): Flow<Event> = callbackFlow {
+        val baseUrl = frozenBaseUrl ?: appPreferences.glmBaseUrl.first()
+        val key = frozenApiKey ?: appPreferences.glmApiKey.first()
         if (key.isBlank()) {
             trySend(Event.Error(401, "GLM API Key 未配置"))
             close()
@@ -57,7 +64,7 @@ class GlmAsrClient @Inject constructor(
         val url = baseUrl.trimEnd('/') + "/audio/transcriptions"
 
         val multipart = MultipartBody.Builder().setType(MultipartBody.FORM)
-            .addFormDataPart("model", "glm-asr-2512")
+            .addFormDataPart("model", frozenModelId ?: CloudAsrModels.GLM_ASR_2512)
             .addFormDataPart("stream", "true")
             .addFormDataPart(
                 "file",
@@ -88,16 +95,16 @@ class GlmAsrClient @Inject constructor(
         val factory = EventSources.createFactory(okHttpClient)
         val listener = object : EventSourceListener() {
             override fun onOpen(eventSource: EventSource, response: Response) {
-                logger.i("ASR", "SSE open ${response.code} for ${wav.name}")
+                logger.i("ASR", "SSE open code=${response.code}")
             }
 
             override fun onEvent(eventSource: EventSource, id: String?, type: String?, data: String) {
                 eventCount++
                 if (eventCount <= 3 || eventCount % 20 == 0) {
-                    logger.d("ASR", "SSE evt#$eventCount type=$type data=${data.take(200)}")
+                    logger.d("ASR", "SSE evt#$eventCount type=$type payloadChars=${data.length}")
                 }
                 if (data == "[DONE]") {
-                    logger.i("ASR", "SSE [DONE] for ${wav.name}, total=${accumulator.length} chars: ${accumulator.toString().take(200)}")
+                    logger.i("ASR", "SSE done totalChars=${accumulator.length}")
                     streamFinished = true
                     trySend(Event.Done(accumulator.toString()))
                     close()
@@ -111,7 +118,7 @@ class GlmAsrClient @Inject constructor(
             }
 
             override fun onClosed(eventSource: EventSource) {
-                logger.i("ASR", "SSE closed for ${wav.name}, events=$eventCount accumulated=${accumulator.length} chars: ${accumulator.toString().take(200)}")
+                logger.i("ASR", "SSE closed events=$eventCount accumulatedChars=${accumulator.length}")
                 streamFinished = true
                 if (accumulator.isNotEmpty()) trySend(Event.Done(accumulator.toString()))
                 close()
@@ -119,13 +126,13 @@ class GlmAsrClient @Inject constructor(
 
             override fun onFailure(eventSource: EventSource, t: Throwable?, response: Response?) {
                 val code = response?.code ?: -1
-                val body = runCatching { response?.body?.string() }.getOrNull()
-                val msg = t?.message ?: body ?: "GLM-ASR SSE 失败"
+                val errorType = t?.javaClass?.simpleName ?: "HttpFailure"
+                val msg = if (code > 0) "GLM-ASR HTTP $code" else "GLM-ASR 网络错误 ($errorType)"
                 if (streamFinished) {
                     // 我们自己 cancel 后 OkHttp 回调过来的；累计文字已经通过 Event.Done 发出，这里不要再 emit Error。
-                    logger.d("ASR", "SSE post-finish cancel ignored for ${wav.name}: ${msg.take(120)}")
+                    logger.d("ASR", "SSE post-finish cancel ignored type=$errorType")
                 } else {
-                    logger.e("ASR", "SSE failure code=$code msg=$msg body=${body?.take(400).orEmpty()}", t)
+                    logger.e("ASR", "SSE failure code=$code type=$errorType", t)
                     trySend(Event.Error(code, msg))
                 }
                 close()
@@ -172,7 +179,7 @@ class GlmAsrClient @Inject constructor(
         if (key.isBlank()) error("API Key 未配置")
         val url = baseUrl.trimEnd('/') + "/audio/transcriptions"
         val body = MultipartBody.Builder().setType(MultipartBody.FORM)
-            .addFormDataPart("model", "glm-asr-2512")
+            .addFormDataPart("model", CloudAsrModels.GLM_ASR_2512)
             .build()
         val req = Request.Builder()
             .url(url)
@@ -186,7 +193,7 @@ class GlmAsrClient @Inject constructor(
                     401, 403 -> error("API Key 无效（HTTP ${r.code}）")
                     in 200..399 -> Unit
                     400 -> Unit // 故意空 multipart，能拿到 400 说明 Key 有效
-                    else -> error("HTTP ${r.code}: ${r.body?.string().orEmpty().take(200)}")
+                    else -> error("HTTP ${r.code}")
                 }
             }
         }

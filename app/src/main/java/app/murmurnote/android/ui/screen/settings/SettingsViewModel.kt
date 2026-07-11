@@ -4,6 +4,7 @@ import android.content.Context
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import app.murmurnote.android.data.asr.AsrEngineType
+import app.murmurnote.android.data.asr.AsrLanguageMode
 import app.murmurnote.android.data.asr.LocalAsrModelSpec
 import app.murmurnote.android.data.asr.AsrModelManager
 import app.murmurnote.android.data.asr.AsrModelUrls
@@ -80,9 +81,12 @@ class SettingsViewModel @Inject constructor(
         // 跟模型文件状态正交：模型文件可以在线下，但 AAR 必须编译期就绪。
         val asrNativeLibReady: Boolean = false,
         val asrLocalConcurrency: Int = 1,
+        val asrLanguageMode: AsrLanguageMode = AsrLanguageMode.SYSTEM,
+        val asrManualLanguage: String = "auto",
+        val asrSenseVoiceUseItn: Boolean = true,
         val realtimePerformanceMode: String = "BALANCED",
         val lowBatteryProtection: Boolean = true,
-        val aiExtractionEnabled: Boolean = true,
+        val aiExtractionEnabled: Boolean = false,
         val appUpdateStatus: AppUpdateStatus = AppUpdateStatus.Idle
     )
 
@@ -130,6 +134,9 @@ class SettingsViewModel @Inject constructor(
             }
         }
         viewModelScope.launch { appPreferences.asrLocalConcurrency.collect { v -> _uiState.update { it.copy(asrLocalConcurrency = v) } } }
+        viewModelScope.launch { appPreferences.asrLanguageMode.collect { v -> _uiState.update { it.copy(asrLanguageMode = v) } } }
+        viewModelScope.launch { appPreferences.asrManualLanguage.collect { v -> _uiState.update { it.copy(asrManualLanguage = v) } } }
+        viewModelScope.launch { appPreferences.asrSenseVoiceUseItn.collect { v -> _uiState.update { it.copy(asrSenseVoiceUseItn = v) } } }
         viewModelScope.launch { appPreferences.realtimePerformanceMode.collect { v -> _uiState.update { it.copy(realtimePerformanceMode = v) } } }
         viewModelScope.launch { appPreferences.lowBatteryProtection.collect { v -> _uiState.update { it.copy(lowBatteryProtection = v) } } }
         viewModelScope.launch { appPreferences.aiExtractionEnabled.collect { v -> _uiState.update { it.copy(aiExtractionEnabled = v) } } }
@@ -206,7 +213,7 @@ class SettingsViewModel @Inject constructor(
         val r = glmAsrClient.testConnection()
         r.fold(
             onSuccess = { logger.i("Settings", "GLM test → success") },
-            onFailure = { e -> logger.e("Settings", "GLM test → FAILED: ${describe(e)}", e) }
+            onFailure = { e -> logger.e("Settings", "GLM test failed type=${e.javaClass.simpleName}", e) }
         )
         _uiState.update {
             it.copy(glmTestStatus = r.fold({ TestStatus.Success }, { TestStatus.Failed(describe(it)) }))
@@ -219,7 +226,7 @@ class SettingsViewModel @Inject constructor(
         val r = llmClient.testConnection()
         r.fold(
             onSuccess = { logger.i("Settings", "LLM test → success") },
-            onFailure = { e -> logger.e("Settings", "LLM test → FAILED: ${describe(e)}", e) }
+            onFailure = { e -> logger.e("Settings", "LLM test failed type=${e.javaClass.simpleName}", e) }
         )
         _uiState.update {
             it.copy(llmTestStatus = r.fold({ TestStatus.Success }, { TestStatus.Failed(describe(it)) }))
@@ -270,8 +277,19 @@ class SettingsViewModel @Inject constructor(
     // -------------------- ASR 引擎切换 / 模型管理 --------------------
 
     fun setAsrEngineType(t: String) = viewModelScope.launch {
-        appPreferences.setAsrEngineType(t)
-        logger.i("Settings", "asr engine switched → $t")
+        val requested = AsrEngineType.parse(t)
+        val resolved = if (requested.isLocal()) {
+            if (_uiState.value.asrLocalModelId == AsrModelUrls.QWEN3_ASR_ID) {
+                AsrEngineType.LOCAL_QWEN3_ASR
+            } else {
+                AsrEngineType.LOCAL_SENSE_VOICE
+            }
+        } else {
+            requested
+        }
+        appPreferences.setAsrEngineType(resolved.name)
+        _uiState.update { it.copy(asrEngineType = resolved.name) }
+        logger.i("Settings", "asr engine switched → ${resolved.name}")
     }
 
     fun setAsrMirrorIndex(i: Int) = viewModelScope.launch {
@@ -282,23 +300,33 @@ class SettingsViewModel @Inject constructor(
         localAsrEngine.release()
         asrModelManager.selectModel(id)
         val model = AsrModelUrls.modelById(id)
+        val engineType = when (model.id) {
+            AsrModelUrls.QWEN3_ASR_ID -> AsrEngineType.LOCAL_QWEN3_ASR
+            else -> AsrEngineType.LOCAL_SENSE_VOICE
+        }
+        // Model and engine are one behavior contract. Persist them together from the user's
+        // single selection so a stale engine preference can never decode with another model.
+        appPreferences.setAsrEngineType(engineType.name)
         val bundledAssetsAvailable = withContext(Dispatchers.IO) {
             asrModelManager.hasBundledAssets(model)
         }
         _uiState.update {
             it.copy(
+                asrEngineType = engineType.name,
                 asrLocalModelId = model.id,
                 asrBundledAssetsAvailable = bundledAssetsAvailable
             )
         }
-        logger.i("Settings", "local asr model switched → ${model.id}")
+        logger.i("Settings", "local asr model switched → ${model.id} engine=${engineType.name}")
     }
 
     fun installBundledAsrModel() = viewModelScope.launch {
         logger.i("Settings", "bundled ASR model install requested")
         _uiState.update { it.copy(asrModelUpdateCheck = null, asrModelUpdateChecking = false) }
         runCatching { asrModelManager.installBundledModelIfNeeded() }
-            .onFailure { e -> logger.w("Settings", "bundled ASR model install failed: ${e.message}") }
+            .onFailure { e ->
+                logger.w("Settings", "bundled ASR model install failed type=${e.javaClass.simpleName}")
+            }
     }
 
     fun requestAsrDownloadConfirm() {
@@ -333,6 +361,18 @@ class SettingsViewModel @Inject constructor(
         appPreferences.setAsrLocalConcurrency(v)
     }
 
+    fun setAsrLanguageMode(mode: AsrLanguageMode) = viewModelScope.launch {
+        appPreferences.setAsrLanguageMode(mode)
+    }
+
+    fun setAsrManualLanguage(language: String) = viewModelScope.launch {
+        appPreferences.setAsrManualLanguage(language)
+    }
+
+    fun setAsrSenseVoiceUseItn(enabled: Boolean) = viewModelScope.launch {
+        appPreferences.setAsrSenseVoiceUseItn(enabled)
+    }
+
     fun setRealtimePerformanceMode(v: String) = viewModelScope.launch {
         appPreferences.setRealtimePerformanceMode(v)
     }
@@ -358,7 +398,7 @@ class SettingsViewModel @Inject constructor(
         _uiState.update { it.copy(asrModelUpdateChecking = true, asrModelUpdateCheck = null) }
         val result = runCatching { asrModelManager.checkForUpdate() }
             .getOrElse { e ->
-                logger.w("Settings", "asr model update check failed: ${e.message}")
+                logger.w("Settings", "asr model update check failed type=${e.javaClass.simpleName}")
                 AsrModelManager.ModelUpdateCheck.UnableToCheck(e.message ?: e.javaClass.simpleName)
             }
         _uiState.update { it.copy(asrModelUpdateChecking = false, asrModelUpdateCheck = result) }
@@ -379,7 +419,7 @@ class SettingsViewModel @Inject constructor(
                     }
                 },
                 onFailure = { e ->
-                    logger.w("Settings", "app update check failed: ${e.message}")
+                    logger.w("Settings", "app update check failed type=${e.javaClass.simpleName}")
                     AppUpdateStatus.Failed(describe(e))
                 }
             )

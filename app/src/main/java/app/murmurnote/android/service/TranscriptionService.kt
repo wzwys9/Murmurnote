@@ -5,10 +5,10 @@ import android.app.PendingIntent
 import android.app.Service
 import android.content.Intent
 import android.content.pm.ServiceInfo
-import android.os.Build
 import android.os.IBinder
 import android.os.PowerManager
 import androidx.core.app.NotificationCompat
+import androidx.core.app.ServiceCompat
 import app.murmurnote.android.CHANNEL_PROCESSING
 import app.murmurnote.android.MainActivity
 import app.murmurnote.android.R
@@ -18,6 +18,7 @@ import app.murmurnote.android.domain.pipeline.PipelineStatusBus
 import app.murmurnote.android.domain.pipeline.ProcessingQueueEntry
 import app.murmurnote.android.domain.pipeline.ProcessingQueueTracker
 import app.murmurnote.android.domain.pipeline.ProcessingQueueStatus
+import app.murmurnote.android.domain.pipeline.ProcessingStartupRecovery
 import app.murmurnote.android.domain.usecase.ProcessRecordingUseCase
 import app.murmurnote.android.util.Logger
 import dagger.hilt.android.AndroidEntryPoint
@@ -28,7 +29,6 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
 import java.io.File
-import java.util.ArrayDeque
 import java.util.UUID
 import javax.inject.Inject
 
@@ -42,6 +42,8 @@ class TranscriptionService : Service() {
         const val EXTRA_RECORDING_ID = "recording_id"
         const val ACTION_CANCEL_CURRENT = "app.murmurnote.android.action.CANCEL_CURRENT_TRANSCRIPTION"
         private const val WAKE_LOCK_TIMEOUT_MS = 6L * 60 * 60 * 1000
+        private const val USER_CANCELLED_MESSAGE = "用户取消处理，可手动重试"
+        private const val SERVICE_INTERRUPTED_MESSAGE = "处理服务被系统中断，可手动重试"
 
         fun intent(ctx: android.content.Context, file: File, source: RecordingSource): Intent =
             Intent(ctx, TranscriptionService::class.java)
@@ -68,13 +70,16 @@ class TranscriptionService : Service() {
     @Inject lateinit var processUseCase: ProcessRecordingUseCase
     @Inject lateinit var statusBus: PipelineStatusBus
     @Inject lateinit var queueTracker: ProcessingQueueTracker
+    @Inject lateinit var processingStartupRecovery: ProcessingStartupRecovery
     @Inject lateinit var logger: Logger
 
-    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+    // Service lifecycle callbacks and queue transitions are all main-thread confined. The
+    // pipeline itself uses flowOn(IO), so collection here does not move media work to main.
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     private var job: Job? = null
     private var wakeLock: PowerManager.WakeLock? = null
-    private val pending = ArrayDeque<ProcessingRequest>()
-    private var current: ProcessingRequest? = null
+    private val requests = SerialProcessingRequests<ProcessingRequest>()
+    private var destroyed = false
 
     private data class ProcessingRequest(
         val queueId: String,
@@ -92,6 +97,7 @@ class TranscriptionService : Service() {
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        requests.observeStart(startId)
         if (intent?.action == ACTION_CANCEL_CURRENT) {
             startForegroundCompat(buildNotification("正在取消当前处理…"))
             cancelCurrent(startId)
@@ -103,9 +109,11 @@ class TranscriptionService : Service() {
         val path = intent?.getStringExtra(EXTRA_FILE_PATH)
         if (path == null) {
             logger.w("Service", "onStartCommand without file_path → start+stop foreground")
-            startForegroundCompat(buildNotification("无效的处理请求…"))
-            stopForegroundSelf()
-            stopSelf(startId)
+            if (!requests.hasWork) {
+                startForegroundCompat(buildNotification("无效的处理请求…"))
+                stopForegroundSelf()
+                stopSelfResult(startId)
+            }
             return START_NOT_STICKY
         }
         val sourceName = intent.getStringExtra(EXTRA_SOURCE) ?: RecordingSource.RECORDED.name
@@ -118,10 +126,10 @@ class TranscriptionService : Service() {
             existingRecordingId = existingRecordingId,
             startId = startId
         )
-        logger.i("Service", "enqueue path=$path source=$source startId=$startId reprocess=${existingRecordingId != null}")
+        logger.i("Service", "enqueue source=$source startId=$startId reprocess=${existingRecordingId != null}")
 
         startForegroundCompat(buildNotification("已加入处理队列…"))
-        pending.add(request)
+        requests.enqueue(request, startId)
         queueTracker.enqueue(
             ProcessingQueueEntry(
                 queueId = request.queueId,
@@ -136,14 +144,13 @@ class TranscriptionService : Service() {
     }
 
     private fun processNextIfIdle() {
-        if (job?.isActive == true || current != null) return
-        val request = pending.poll() ?: run {
+        if (destroyed || job?.isActive == true || requests.current != null) return
+        val request = requests.takeIfIdle() ?: run {
             releaseWakeLock()
             stopForegroundSelf()
-            stopSelf()
+            stopSelfResult(requests.latestStartId)
             return
         }
-        current = request
         releaseWakeLock()
         acquireWakeLock()
         val initialText = if (request.existingRecordingId != null) "重新处理录音…" else "正在准备处理…"
@@ -151,6 +158,7 @@ class TranscriptionService : Service() {
         updateNotification(initialText)
         job = scope.launch {
             try {
+                processingStartupRecovery.awaitCompletion()
                 processUseCase(request.file, request.source, request.existingRecordingId).collect { stage ->
                     statusBus.update(stage)
                     val text = labelOf(stage)
@@ -173,7 +181,7 @@ class TranscriptionService : Service() {
                 statusBus.update(PipelineStage.Failed("service", error))
                 queueTracker.markFailed(request.queueId, error)
             } finally {
-                current = null
+                requests.complete(request)
                 job = null
                 queueTracker.pruneFinished()
                 releaseWakeLock()
@@ -183,16 +191,16 @@ class TranscriptionService : Service() {
     }
 
     private fun cancelCurrent(startId: Int) {
-        val running = current
+        val running = requests.current
         if (running == null) {
-            pending.clear()
+            requests.cancelPending().forEach { queueTracker.markCancelled(it.queueId) }
             stopForegroundSelf()
-            stopSelf(startId)
+            stopSelfResult(startId)
             return
         }
         logger.w("Service", "cancel current queue=${running.queueId}")
         queueTracker.markCancelled(running.queueId)
-        job?.cancel()
+        job?.cancel(CancellationException(USER_CANCELLED_MESSAGE))
         statusBus.update(PipelineStage.Failed("cancelled", "用户取消处理"))
     }
 
@@ -210,7 +218,9 @@ class TranscriptionService : Service() {
         wakeLock = null
         runCatching {
             if (wl.isHeld) wl.release()
-        }.onFailure { logger.w("Service", "partial wake lock release failed: ${it.message}") }
+        }.onFailure {
+            logger.w("Service", "partial wake lock release failed type=${it.javaClass.simpleName}")
+        }
         logger.i("Service", "partial wake lock released")
     }
 
@@ -227,20 +237,16 @@ class TranscriptionService : Service() {
     }
 
     private fun startForegroundCompat(notif: Notification) {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            startForeground(NOTIFICATION_ID, notif, ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC)
-        } else {
-            startForeground(NOTIFICATION_ID, notif)
-        }
+        ServiceCompat.startForeground(
+            this,
+            NOTIFICATION_ID,
+            notif,
+            ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC,
+        )
     }
 
     private fun stopForegroundSelf() {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
-            stopForeground(STOP_FOREGROUND_REMOVE)
-        } else {
-            @Suppress("DEPRECATION")
-            stopForeground(true)
-        }
+        ServiceCompat.stopForeground(this, ServiceCompat.STOP_FOREGROUND_REMOVE)
     }
 
     private fun buildNotification(text: String): Notification {
@@ -266,7 +272,14 @@ class TranscriptionService : Service() {
 
     override fun onDestroy() {
         logger.i("Service", "onDestroy")
-        job?.cancel()
+        destroyed = true
+        requests.current?.let {
+            queueTracker.markFailed(it.queueId, SERVICE_INTERRUPTED_MESSAGE)
+        }
+        requests.cancelPending().forEach {
+            queueTracker.markFailed(it.queueId, SERVICE_INTERRUPTED_MESSAGE)
+        }
+        job?.cancel(CancellationException(SERVICE_INTERRUPTED_MESSAGE))
         releaseWakeLock()
         scope.coroutineContext[Job]?.cancel()
         super.onDestroy()

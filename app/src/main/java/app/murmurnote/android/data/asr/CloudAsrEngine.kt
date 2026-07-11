@@ -4,6 +4,7 @@ import app.murmurnote.android.data.preference.AppPreferences
 import app.murmurnote.android.data.remote.glm.GlmAsrClient
 import app.murmurnote.android.util.Logger
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.CancellationException
 import java.io.File
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -28,11 +29,41 @@ class CloudAsrEngine @Inject constructor(
     override suspend fun transcribe(
         wav: File,
         onProgress: suspend (Float) -> Unit
+    ): Result<AsrResult> {
+        val preferences = appPreferences.snapshotAsrRuntimePreferences()
+        if (preferences.glmApiKey.isBlank()) {
+            return Result.failure(IllegalStateException("GLM API Key 未配置"))
+        }
+        val session = CloudAsrSessionConfig.fromBaseUrl(
+            modelId = CloudAsrModels.GLM_ASR_2512,
+            vadPresetVersion = "legacy-unspecified",
+            baseUrl = preferences.glmBaseUrl
+        )
+        return transcribe(
+            wav = wav,
+            config = CloudAsrRequestConfig(
+                sessionConfig = session,
+                baseUrl = preferences.glmBaseUrl,
+                apiKey = preferences.glmApiKey
+            ),
+            onProgress = onProgress
+        )
+    }
+
+    suspend fun transcribe(
+        wav: File,
+        config: CloudAsrRequestConfig,
+        onProgress: suspend (Float) -> Unit = {}
     ): Result<AsrResult> = runCatching {
         val sb = StringBuilder()
         var lastError: GlmAsrClient.Event.Error? = null
 
-        glmAsrClient.transcribeStream(wav).collect { ev ->
+        glmAsrClient.transcribeStream(
+            wav = wav,
+            frozenBaseUrl = config.baseUrl,
+            frozenApiKey = config.apiKey,
+            frozenModelId = config.sessionConfig.modelId
+        ).collect { ev ->
             when (ev) {
                 is GlmAsrClient.Event.Delta -> {
                     sb.append(ev.text)
@@ -51,14 +82,17 @@ class CloudAsrEngine @Inject constructor(
         }
 
         lastError?.let { err ->
-            error("GLM-ASR 失败 code=${err.code}: ${err.message.take(120)}")
+            error("GLM-ASR 失败 code=${err.code}")
         }
 
         AsrResult(
             text = sb.toString(),
             durationMs = 0L // 段时长由 Pipeline 从 Slice 拿，引擎不需要知道
         )
-    }.onFailure { logger.e("CloudAsr", "transcribe failed for ${wav.name}: ${it.message}", it) }
+    }.onFailure {
+        if (it is CancellationException) throw it
+        logger.e("CloudAsr", "transcribe failed type=${it.javaClass.simpleName}", it)
+    }
 
     override fun release() {
         // 云端无本地资源

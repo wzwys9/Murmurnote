@@ -52,8 +52,7 @@ fun OnboardingScreen(
         Column(modifier = Modifier.fillMaxSize().padding(padding)) {
             HorizontalPager(
                 state = pagerState,
-                modifier = Modifier.fillMaxWidth().weight(1f),
-                userScrollEnabled = pagerState.currentPage != 2
+                modifier = Modifier.fillMaxWidth().weight(1f)
             ) { page ->
                 when (page) {
                     0 -> WelcomePage()
@@ -62,7 +61,7 @@ fun OnboardingScreen(
                         state = state,
                         onGlmKeyChange = viewModel::updateGlmApiKey,
                         onLlmKeyChange = viewModel::updateLlmApiKey,
-                        onTest = viewModel::testBothConnections
+                        onTest = viewModel::testConfiguredConnections
                     )
                     3 -> PermissionPage()
                 }
@@ -98,24 +97,15 @@ fun OnboardingScreen(
                     }) { Text("上一步") }
                 } else Spacer(Modifier.width(1.dp))
 
-                if (pagerState.currentPage == 2) {
-                    TextButton(onClick = { viewModel.completeOnboarding(); onComplete() }) {
-                        Text("稍后配置", color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    }
-                }
-
                 Button(
                     onClick = {
                         if (pagerState.currentPage < 3) {
                             scope.launch { pagerState.animateScrollToPage(pagerState.currentPage + 1) }
                         } else {
-                            viewModel.completeOnboarding(); onComplete()
+                            viewModel.completeOnboarding(onComplete)
                         }
                     },
-                    enabled = when (pagerState.currentPage) {
-                        2 -> state.glmApiKey.isNotBlank() && state.llmApiKey.isNotBlank()
-                        else -> true
-                    }
+                    enabled = !state.testing
                 ) {
                     Text(if (pagerState.currentPage == 3) "开始使用" else "继续")
                 }
@@ -155,8 +145,8 @@ private fun CapabilitiesPage() {
         Spacer(Modifier.height(24.dp))
         listOf(
             "🎙 录音 / 导入" to "随手录或从其他 APP 分享音频过来",
-            "📝 自动转写" to "GLM-ASR 识别中文语音为文字",
-            "🤖 AI 整理" to "DeepSeek 抽出 4 类结构化信息",
+            "📝 本地转写" to "默认使用 SenseVoice 在设备上离线识别，不需要 API Key",
+            "☁️ 可选云功能" to "云端转写与 AI 总结均需你主动配置并开启",
             "📂 本地保存" to "全部数据离线存储，30 天自动清理音频"
         ).forEach { (title, desc) ->
             Text(title, style = MaterialTheme.typography.titleMedium)
@@ -178,16 +168,16 @@ private fun ApiKeyConfigPage(
         modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(32.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
-        Text("配置 AI 服务", style = MaterialTheme.typography.headlineMedium)
+        Text("可选的云服务", style = MaterialTheme.typography.headlineMedium)
         Text(
-            "Murmurnote 使用智谱 AI 做语音识别，默认使用 DeepSeek 做文本提取与总结。其他官方模式可稍后在设置中切换。",
+            "本地转写无需配置即可使用。只有在你主动选择云端转写，或开启云端 AI 总结时，才需要填写对应的 API Key；也可以直接跳过。",
             style = MaterialTheme.typography.bodyMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant
         )
         OutlinedTextField(
             value = state.glmApiKey,
             onValueChange = onGlmKeyChange,
-            label = { Text("智谱 GLM API Key") },
+            label = { Text("智谱 GLM API Key（可选云端转写）") },
             modifier = Modifier.fillMaxWidth(),
             singleLine = true
         )
@@ -197,7 +187,7 @@ private fun ApiKeyConfigPage(
         OutlinedTextField(
             value = state.llmApiKey,
             onValueChange = onLlmKeyChange,
-            label = { Text("DeepSeek API Key") },
+            label = { Text("DeepSeek API Key（可选 AI 总结）") },
             modifier = Modifier.fillMaxWidth(),
             singleLine = true
         )
@@ -206,9 +196,9 @@ private fun ApiKeyConfigPage(
         }) { Text("→ 没有？点这里去申请") }
         Button(
             onClick = onTest,
-            enabled = state.glmApiKey.isNotBlank() && state.llmApiKey.isNotBlank() && !state.testing,
+            enabled = (state.glmApiKey.isNotBlank() || state.llmApiKey.isNotBlank()) && !state.testing,
             modifier = Modifier.fillMaxWidth()
-        ) { Text(if (state.testing) "测试中..." else "测试两个连接") }
+        ) { Text(if (state.testing) "测试中..." else "测试已配置的连接") }
 
         state.testResult?.let {
             Text(

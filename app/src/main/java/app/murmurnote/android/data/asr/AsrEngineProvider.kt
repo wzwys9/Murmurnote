@@ -1,17 +1,12 @@
 package app.murmurnote.android.data.asr
 
 import app.murmurnote.android.data.preference.AppPreferences
-import kotlinx.coroutines.flow.first
+import java.util.Locale
 import javax.inject.Inject
 import javax.inject.Provider
 import javax.inject.Singleton
 
-/**
- * 按用户偏好返回当前要用的 AsrEngine。每次 transcribe 前调一次 current()，
- * 不缓存切换状态 —— 让用户在设置里改完引擎类型立刻生效。
- *
- * Local 引擎用 javax.inject.Provider 延迟注入，避免应用启动就构造 ONNX runtime。
- */
+/** Freezes one typed ASR attempt; local ONNX construction remains lazily provided. */
 @Singleton
 class AsrEngineProvider @Inject constructor(
     private val appPreferences: AppPreferences,
@@ -20,42 +15,105 @@ class AsrEngineProvider @Inject constructor(
 ) {
 
     /**
-     * 返回当前选中的引擎；如果选了本地但未就绪，回 NotReady 让 Pipeline 抛友好错误，
-     * 由 UI 引导用户回设置页下载/切换云端。
-     *
-     * 本地"未就绪"区分两种：
-     *   - 模型文件没下：让用户去设置页下
-     *   - 模型文件 OK 但 sherpa-onnx 原生库 AAR 缺失：开发者需要在构建时放进 app/libs/
+     * Freezes engine selection and all behavior-affecting settings as one typed attempt. A caller
+     * must retain the returned object until every segment has completed; later preference changes
+     * intentionally apply only to a future attempt.
      */
-    suspend fun current(): Selection {
-        val type = AsrEngineType.parse(appPreferences.asrEngineType.first())
-        return when (type) {
+    suspend fun snapshotAttempt(
+        vadPresetVersion: String,
+        locale: Locale
+    ): AttemptSelection {
+        val runtimeSnapshot = appPreferences.snapshotAsrRuntimePreferences()
+        val snapshot = runtimeSnapshot.toAttemptPreferenceSnapshot()
+        return when (snapshot.engineType) {
             AsrEngineType.CLOUD_GLM -> {
-                if (cloud.isReady()) Selection.Active(cloud)
-                else Selection.NotReady(type, "云端引擎未就绪：请在设置页填写智谱 GLM API Key")
+                val config = CloudAsrSessionConfig.fromBaseUrl(
+                    modelId = CloudAsrModels.GLM_ASR_2512,
+                    vadPresetVersion = vadPresetVersion,
+                    baseUrl = runtimeSnapshot.glmBaseUrl
+                )
+                if (runtimeSnapshot.glmApiKey.isNotBlank()) {
+                    AttemptSelection.Active(
+                        engine = cloud,
+                        localConfig = null,
+                        cloudRequestConfig = CloudAsrRequestConfig(
+                            sessionConfig = config,
+                            baseUrl = runtimeSnapshot.glmBaseUrl,
+                            apiKey = runtimeSnapshot.glmApiKey
+                        ),
+                        provenance = config.toProvenance()
+                    )
+                } else {
+                    AttemptSelection.NotReady(
+                        type = snapshot.engineType,
+                        reason = "云端引擎未就绪：请在设置页填写智谱 GLM API Key"
+                    )
+                }
             }
+
             AsrEngineType.LOCAL_SENSE_VOICE,
             AsrEngineType.LOCAL_QWEN3_ASR -> {
+                val config = AsrAttemptConfigResolver.resolve(
+                    preferenceSnapshot = snapshot,
+                    vadPresetVersion = vadPresetVersion,
+                    systemLocale = locale
+                )
                 val local = localProvider.get()
-                val modelOk = local.modelReady()
-                val nativeOk = local.nativeLibReady()
                 when {
-                    modelOk && nativeOk -> Selection.Active(local)
-                    !nativeOk -> Selection.NotReady(
-                        type,
-                        "sherpa-onnx 原生库未集成：本 APK 编译时未在 app/libs/ 放置 sherpa-onnx AAR。请联系开发者重新构建，或临时在设置页切换为云端引擎。"
+                    !local.nativeLibReady() -> AttemptSelection.NotReady(
+                        type = snapshot.engineType,
+                        reason = "sherpa-onnx 原生库未集成，请联系开发者重新构建，或在设置页切换为云端引擎"
                     )
-                    else -> Selection.NotReady(
-                        type,
-                        "本地模型未就绪，请到设置页下载，或临时切换到云端"
+
+                    !local.modelReady(config) -> AttemptSelection.NotReady(
+                        type = snapshot.engineType,
+                        reason = "本地模型未就绪，请到设置页下载，或手动切换到云端"
+                    )
+
+                    else -> AttemptSelection.Active(
+                        engine = local,
+                        localConfig = config,
+                        cloudRequestConfig = null,
+                        provenance = config.toProvenance()
                     )
                 }
             }
         }
     }
 
-    sealed class Selection {
-        data class Active(val engine: AsrEngine) : Selection()
-        data class NotReady(val type: AsrEngineType, val reason: String) : Selection()
+    sealed class AttemptSelection {
+        data class Active(
+            val engine: AsrEngine,
+            val localConfig: LocalAsrSessionConfig?,
+            val cloudRequestConfig: CloudAsrRequestConfig?,
+            val provenance: AsrProvenance
+        ) : AttemptSelection() {
+            init {
+                require((localConfig != null) == provenance.engineType.isLocal() &&
+                    (cloudRequestConfig != null) == !provenance.engineType.isLocal()) {
+                    "Frozen ASR attempt carries the wrong typed request config"
+                }
+                require(localConfig?.configFingerprint == null ||
+                    localConfig.configFingerprint == provenance.configFingerprint) {
+                    "ASR attempt config and provenance fingerprints differ"
+                }
+                require(cloudRequestConfig?.sessionConfig?.configFingerprint == null ||
+                    cloudRequestConfig.sessionConfig.configFingerprint == provenance.configFingerprint) {
+                    "Cloud ASR request and provenance fingerprints differ"
+                }
+            }
+        }
+
+        data class NotReady(val type: AsrEngineType, val reason: String) : AttemptSelection()
     }
 }
+
+private fun app.murmurnote.android.data.preference.AsrRuntimePreferenceSnapshot
+    .toAttemptPreferenceSnapshot() = AsrAttemptPreferenceSnapshot(
+        engineType = engineType,
+        requestedModelId = localModelId,
+        languageMode = languageMode,
+        manualLanguage = manualLanguage,
+        senseVoiceUseItn = senseVoiceUseItn,
+        localConcurrency = localConcurrency
+    )

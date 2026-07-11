@@ -6,9 +6,9 @@ import android.app.Service
 import android.content.Context
 import android.content.Intent
 import android.content.pm.ServiceInfo
-import android.os.Build
 import android.os.IBinder
 import androidx.core.app.NotificationCompat
+import androidx.core.app.ServiceCompat
 import app.murmurnote.android.CHANNEL_PROCESSING
 import app.murmurnote.android.MainActivity
 import app.murmurnote.android.R
@@ -39,8 +39,7 @@ class AsrModelDownloadService : Service() {
 
         fun start(context: Context) {
             val i = Intent(context, AsrModelDownloadService::class.java).setAction(ACTION_START)
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) context.startForegroundService(i)
-            else context.startService(i)
+            context.startForegroundService(i)
         }
 
         fun cancel(context: Context) {
@@ -50,8 +49,7 @@ class AsrModelDownloadService : Service() {
 
         fun installUnverified(context: Context) {
             val i = Intent(context, AsrModelDownloadService::class.java).setAction(ACTION_INSTALL_UNVERIFIED)
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) context.startForegroundService(i)
-            else context.startService(i)
+            context.startForegroundService(i)
         }
     }
 
@@ -149,20 +147,16 @@ class AsrModelDownloadService : Service() {
     }
 
     private fun startForegroundCompat(notif: Notification) {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            startForeground(NOTIFICATION_ID, notif, ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC)
-        } else {
-            startForeground(NOTIFICATION_ID, notif)
-        }
+        ServiceCompat.startForeground(
+            this,
+            NOTIFICATION_ID,
+            notif,
+            ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC,
+        )
     }
 
     private fun stopForegroundSelf() {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
-            stopForeground(STOP_FOREGROUND_REMOVE)
-        } else {
-            @Suppress("DEPRECATION")
-            stopForeground(true)
-        }
+        ServiceCompat.stopForeground(this, ServiceCompat.STOP_FOREGROUND_REMOVE)
     }
 
     private fun buildNotification(text: String, indeterminate: Boolean = false, progress: Int = 0): Notification {

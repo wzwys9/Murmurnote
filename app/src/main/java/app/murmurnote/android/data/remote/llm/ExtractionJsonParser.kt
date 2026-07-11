@@ -8,7 +8,7 @@ internal object ExtractionJsonParser {
     fun parse(rawContent: String, json: Json): ExtractionResult {
         val cleaned = stripThink(rawContent).trim()
         val jsonObject = extractJsonObject(cleaned)
-            ?: error("无法从响应抽取 JSON: ${cleaned.take(400)}")
+            ?: error("无法从响应抽取 JSON（responseChars=${cleaned.length}）")
 
         return runCatching {
             json.decodeFromString(ExtractionResult.serializer(), jsonObject)
