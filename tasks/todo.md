@@ -1,6 +1,6 @@
 # Local ASR and deterministic correction checklist
 
-## Current: 个性化自学习纠错（代码完成，待 APK/真机体验）
+## Current: 个性化自学习纠错（代码、APK 与真机验收完成）
 
 - [x] A1：审阅现有手动修改、精确词本、Room、LLM 和统一音频流水线
 - [x] A2：调研用户反馈个性化、中文音/形/语境纠错及过度纠错风险
@@ -12,8 +12,8 @@
 - [x] C1：受约束 LLM 学习评估与未来候选裁决
 - [x] C2：录音/导入统一流水线、自动修订审计和负反馈停用
 - [x] D1：实验室独立开关、首次隐私说明和学习管理 UI
-- [ ] D2：JVM 254 tests、Android 测试源码编译、Lint 0 issues 已通过；Release/APK 与真机
-      instrumentation 按本轮“不主动打包”要求留到体验轮次
+- [x] D2：JVM 254 tests、Android 真机 49 tests、Lint 0 issues、四 ABI Debug/Release
+      构建及 Android 16 录音/熄屏/离线转写/实验室 UI 冒烟已通过
 
 ## Current: 安全与架构加固
 

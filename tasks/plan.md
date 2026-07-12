@@ -1,11 +1,11 @@
 # Implementation Plan: Local ASR and deterministic correction
 
-## Current Slice: 个性化自学习纠错（代码完成，待 APK/真机体验，2026-07-11）
+## Current Slice: 个性化自学习纠错（代码、APK 与真机验收完成，2026-07-11～12）
 
 本轮以 `SELF_LEARNING_CORRECTION_SPEC.md` 为准。先完成研究、隐私边界和规格确认；用户确认
 前不修改运行时代码。实现阶段遵循“失败测试 → Room v8 学习存储 → 受约束 LLM → 统一流水线
-→ 实验室管理 UI → 完整验证”。代码、JVM 测试、Android 测试源码编译和 Debug Lint 已完成；
-按确认规格，本轮不主动打包或安装 APK。
+→ 实验室管理 UI → 完整验证”。代码与无设备验证于 7 月 11 日完成；7 月 12 日经用户授权，
+补齐四 ABI APK、Android 16 真机 instrumentation 和端到端体验门槛。
 
 ### Task A: 用户反馈与候选契约
 
@@ -35,8 +35,15 @@
 - `:app:testDebugUnitTest`：254 tests，0 failures / errors / skipped。
 - `:app:compileDebugAndroidTestKotlin`：通过；Room v7→v8、DataStore、Repository 和 Android ICU
   instrumentation 测试已编译。
+- Android 16 arm64 真机 instrumentation：49 tests 全部通过。真机首次运行暴露出
+  `MigrationTestHelper` 原始连接未执行 Room `onConfigure` 的夹具差异；测试显式启用外键后，
+  v7→v8 删除录音级联清理上下文事件的断言通过。
 - `:app:lintDebug`：通过，0 issues。
-- Release/APK/真机 instrumentation：按“不主动打包 APK”的确认边界保留到用户体验轮次。
+- `:app:assembleDebug` 与 `:app:assembleRelease`：四 ABI 构建通过。Debug v2 签名校验通过；
+  未提供发布凭据时 Release 保持 unsigned，没有回退到 debug 签名。
+- 小米 `23116PN5BC`（Android 16）冒烟通过：首次引导与权限、录音振幅、暂停/恢复、后台与
+  熄屏持续录音、前台服务与 wake lock 释放、SenseVoice 下载安装、失败录音重试、20 段
+  离线转写落库，以及实验室/API 门槛/学习管理空态。
 
 ### Approval checkpoint
 

@@ -67,6 +67,9 @@ class Migration7To8Test {
             true,
             MurmurnoteDatabase.MIGRATION_7_8,
         )
+        // MigrationTestHelper returns a raw connection without Room's generated onConfigure hook.
+        // Mirror production before verifying the migrated foreign-key cascade behavior.
+        db.execSQL("PRAGMA foreign_keys = ON")
 
         db.query(
             "SELECT observedText, replacementText, matchMode FROM correction_rules WHERE id = ?",
