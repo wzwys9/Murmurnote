@@ -20,6 +20,9 @@ local.properties
 /Murmur_1_extracted/
 /ui-design-reference/
 /Murmurnote_ClaudeCode_Prompt_v2.md
+/*_SPEC.md
+/*_PLAN.md
+/tasks/
 *.apk
 *.aab
 *.keystore
