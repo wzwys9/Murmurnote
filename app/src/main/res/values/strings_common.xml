@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources xmlns:tools="http://schemas.android.com/tools" tools:locale="zh">
+    <string name="action_back">返回</string>
+    <string name="action_cancel">取消</string>
+    <string name="action_close">关闭</string>
+    <string name="action_continue">继续</string>
+    <string name="action_pause">暂停</string>
+    <string name="action_refresh">刷新</string>
+    <string name="action_retry">重试</string>
+    <string name="action_share_zip">分享 zip</string>
+    <string name="action_stop">停止</string>
+    <string name="status_cancelled">已取消</string>
+    <string name="status_completed">完成</string>
+    <string name="status_failed">失败</string>
+    <string name="status_processing">处理中</string>
+    <string name="status_waiting">等待</string>
+    <string name="item_type_all">全部类型</string>
+    <string name="item_type_decision">决策</string>
+    <string name="item_type_idea">想法</string>
+    <string name="item_type_note">备忘</string>
+    <string name="item_type_todo">待办</string>
+</resources>

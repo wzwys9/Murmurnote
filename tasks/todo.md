@@ -1,5 +1,24 @@
 # Local ASR and deterministic correction checklist
 
+## Current: 高置信死代码审计与清理
+
+- [x] A1：盘点 Kotlin/Compose、资源、Manifest 和依赖候选
+- [x] A2：排除框架间接入口并核对测试与历史用途
+- [x] B1：分批删除高置信死代码，每批完成编译/测试
+- [x] B2：完整 JVM、Android 测试编译、Kotlin 编译、Lint 与最终复核
+
+## Current: 自定义纠错词典与统一上下文裁决
+
+- [x] A1：规则来源、应用模式、用户优先与跨来源冲突失败测试
+- [x] A2：Room v8→v9 无损迁移、schema 与来源隔离 DAO
+- [x] B1：用户规则事务支持上下文/始终替换及模式修改
+- [x] B2：用户规则写入时停用冲突学习规则，学习采集反向避让
+- [x] B3：两类上下文规则共享候选快照和单批 LLM 裁决
+- [x] B4：自定义词典开关与 API 可用性解耦，上下文失败安全 KEEP
+- [x] C1：重命名全部用户文案并更新详情页动作
+- [x] C2：添加、展示和修改应用方式，补齐风险/隐私/无障碍说明
+- [x] C3：完整测试、Android 测试编译、Kotlin 编译、Lint 与最终复核（不打 APK）
+
 ## Current: 个性化自学习纠错（代码、APK 与真机验收完成）
 
 - [x] A1：审阅现有手动修改、精确词本、Room、LLM 和统一音频流水线

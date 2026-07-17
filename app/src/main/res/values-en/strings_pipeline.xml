@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="pipeline_recording_title">Recording · %1$s</string>
+    <string name="pipeline_empty_recognition">(No speech recognized)</string>
+    <string name="pipeline_summary_revision_changed">The transcript changed while the summary was being generated. The summary was not saved; generate it again.</string>
+    <string name="pipeline_extraction_failed_saved">AI extraction failed, but the transcript was saved safely. You can retry later.</string>
+</resources>

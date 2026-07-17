@@ -14,7 +14,6 @@ val AccentGreen = Color(0xFF2D5F4F)
 val AccentInkLight = Color(0xFF1F4639)
 val DangerLight = Color(0xFFC2473A)
 val WarnLight = Color(0xFFA87632)
-val InfoLight = Color(0xFF3B4B7A)
 
 // === Dark（对齐 tokens.js dark）===
 val BgDark = Color(0xFF0E0D0B)
@@ -28,15 +27,3 @@ val AccentGreenDark = Color(0xFF7FB8A4)
 val AccentInkDark = Color(0xFFA8D4C4)
 val DangerDark = Color(0xFFE07868)
 val WarnDark = Color(0xFFD4A05A)
-val InfoDark = Color(0xFF8995C4)
-
-// === 4 类内容 tint ===
-val TodoTintLight = Color(0x0F2D5F4F)
-val IdeaTintLight = Color(0x12A87632)
-val NoteTintLight = Color(0x0F5B5B5B)
-val DecisionTintLight = Color(0x0F3B4B7A)
-
-val TodoTintDark = Color(0x147FB8A4)
-val IdeaTintDark = Color(0x14D4A05A)
-val NoteTintDark = Color(0x0FA8A299)
-val DecisionTintDark = Color(0x148995C4)

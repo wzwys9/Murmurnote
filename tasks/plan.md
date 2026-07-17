@@ -1,5 +1,104 @@
 # Implementation Plan: Local ASR and deterministic correction
 
+## Current Slice: 高置信死代码审计与清理（2026-07-13）
+
+本轮只删除能够通过静态引用、Android 框架入口和构建验证共同确认的无用代码。Manifest、
+Room、Hilt、WorkManager、Compose 导航及反射可能间接使用的符号必须先排除；证据不足的候选
+只记录、不删除。清理分成小批次，每批都保持项目可编译并复用现有测试证明行为不变。
+
+### Phase A: 候选盘点与证据核对
+
+- [x] A1：扫描 Kotlin/Compose 声明、Android 资源、Manifest 注册项和 Gradle 依赖。
+- [x] A2：逐项核对生产/测试引用、框架入口、生成代码约定及 Git 历史。
+- [x] A3：把候选分为“高置信可删”“框架间接使用”“证据不足保留”。
+
+### Phase B: 增量清理
+
+- [x] B1：先删除不涉及框架入口的高置信私有/内部死代码并编译。
+- [x] B2：再删除经 Lint/资源引用确认的无用资源或依赖并执行针对性验证。
+
+### Checkpoint
+
+- [x] 完整 JVM 单测、Android 测试编译、Kotlin 编译和 Lint 通过。
+- [x] 不生成或安装 APK；不修改现有功能语义，不删除证据不足的候选。
+
+### Verification result
+
+- `:app:testDebugUnitTest`：266 tests，0 failures / errors / skipped。
+- `:app:compileDebugAndroidTestKotlin`：通过。
+- `:app:compileDebugKotlin` 与 `:app:compileReleaseKotlin`：通过。
+- `:app:lintDebug` 与 `:app:lintRelease`：分开执行均通过，报告均为 0 issues。
+- Debug/Release lint 同一调用时触发一次 AGP/K2 并行分析竞态；顺序重跑通过，未改动代码或构建配置规避工具错误。
+- 未运行 `assemble*`、`install*` 或真机 instrumentation。
+
+### Risks and mitigations
+
+| Risk | Impact | Mitigation |
+|---|---|---|
+| Android/Hilt/Room 间接引用被静态扫描漏掉 | 高 | 同时核对 Manifest、注解、导航和生成代码契约 |
+| 当前未提交功能与清理互相覆盖 | 高 | 只做小范围 `apply_patch`，逐项查看 diff 并分批验证 |
+| 仅在特定 ABI/Release 使用的代码误删 | 中 | 核对 source set、JNI 名称和 Release 编译路径，证据不足即保留 |
+
+## Current Slice: 自定义纠错词典与统一上下文裁决（2026-07-13）
+
+本轮以 `CUSTOM_CORRECTION_DICTIONARY_SPEC.md` 为准。用户已确认将“稳妥词本”改为清晰的
+“自定义纠错词典”，新词条默认结合上下文，也允许显式选择始终替换。现有精确词条无损保留，
+用户规则优先于自动学习规则，二者复用同一个受约束 LLM 候选裁决。
+
+### Phase A: 契约与迁移
+
+- [x] A1：失败测试定义规则来源、两种应用模式和用户优先的重叠裁决。
+- [x] A2：Room v9 增加 `origin`，无损迁移既有用户词条与学习规则。
+- [x] A3：DAO 显式隔离用户规则和学习规则，并提供模式更新与冲突查询。
+
+### Checkpoint A
+
+- [x] 领域单测通过；v8→v9 migration 测试已编译，数据库 schema 导出一致。
+
+### Phase B: 统一运行时
+
+- [x] B1：用户规则创建/启用/切换模式时停用冲突学习规则。
+- [x] B2：学习采集跳过受用户规则保护的词对。
+- [x] B3：上下文用户规则与学习规则合并为同一候选快照和一次 LLM 裁决。
+- [x] B4：无 API 时只跳过上下文规则，绝不回退为强制替换。
+
+### Checkpoint B
+
+- [x] Repository Android 测试已编译；候选、计划验证、偏好和 LLM 安全回归通过。
+
+### Phase C: UI 与收尾
+
+- [x] C1：所有用户文案统一为“自定义纠错词典”。
+- [x] C2：新增默认“结合上下文”的模式选择、模式展示与修改入口。
+- [x] C3：更新隐私、无 API 降级、始终替换风险和无障碍说明。
+- [x] C4：完整 JVM、Android 测试编译、Kotlin 编译和 Lint；代码质量与安全复核。
+
+### Checkpoint C
+
+- [x] 静态成功标准满足；按用户要求未生成、未安装 APK，真机 UI/迁移测试留待打包指令。
+
+### Verification result
+
+- `:app:testDebugUnitTest`：通过。
+- `:app:compileDebugAndroidTestKotlin`：通过；Room migration、DataStore 与 Repository 测试已编译。
+- `:app:compileDebugKotlin`：通过。
+- `:app:lintDebug`：通过，0 issues。
+- 未运行 `assemble*`、`install*` 或真机 instrumentation。
+
+### Risks and mitigations
+
+| Risk | Impact | Mitigation |
+|---|---|---|
+| 旧精确词条升级后语义变化 | 高 | v9 migration 标记为用户来源并保持 `EXACT_TEXT` |
+| 用户规则与学习规则互相覆盖 | 高 | 写入时冲突停用 + 候选/计划层用户优先双保险 |
+| LLM 失败导致强制误改 | 高 | 上下文规则失败统一 KEEP，不降级 |
+| 候选增加导致费用或超限 | 中 | 复用单批请求和既有每段/每录音硬上限 |
+| UI 模式含义不清 | 中 | 默认推荐、真实示例、状态标签和始终替换风险文案 |
+
+### Open questions
+
+无；关键兼容和降级假设已向用户明确并获当前实现授权。
+
 ## Current Slice: 个性化自学习纠错（代码、APK 与真机验收完成，2026-07-11～12）
 
 本轮以 `SELF_LEARNING_CORRECTION_SPEC.md` 为准。先完成研究、隐私边界和规格确认；用户确认

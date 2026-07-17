@@ -1,0 +1,39 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="list_no_tag_matches">No recordings match this tag</string>
+    <string name="list_all_archived">All recordings are archived</string>
+    <string name="list_empty">No recordings yet</string>
+    <string name="list_no_tag_matches_hint">Try another tag or show archived recordings</string>
+    <string name="list_all_archived_hint">Show archived recordings above to view them</string>
+    <string name="list_empty_hint">Return to Record and press the large button to create your first voice note</string>
+    <string name="list_all_tags">All tags</string>
+    <string name="list_more_tags">More tags (%1$d)</string>
+    <string name="list_hide_archived">Hide archived</string>
+    <string name="list_show_archived">Show archived</string>
+    <string name="list_archived">Archived</string>
+    <string name="recording_status_pending">Pending</string>
+    <string name="recording_status_recording">Recording</string>
+    <string name="recording_status_converting">Converting</string>
+    <string name="recording_status_splitting">Segmenting</string>
+    <string name="recording_status_transcribing">Transcribing</string>
+    <string name="recording_status_extracting">AI extraction</string>
+    <string name="search_title">Search</string>
+    <string name="search_hint">Search recordings, transcripts, to-dos, and ideas…</string>
+    <string name="search_recordings_count">Recordings (%1$d)</string>
+    <string name="search_items_count">Extracted items (%1$d)</string>
+    <string name="search_no_results">No matching results</string>
+    <string name="search_scope_all">All</string>
+    <string name="search_scope_summary">Summaries</string>
+    <string name="search_scope_transcript">Transcripts</string>
+    <string name="search_scope_items">Items</string>
+    <string name="search_date_all">Any date</string>
+    <string name="search_date_today">Today</string>
+    <string name="search_date_seven_days">7 days</string>
+    <string name="search_date_thirty_days">30 days</string>
+    <string name="idea_empty">No ideas yet</string>
+    <string name="idea_empty_hint">Record a voice note and AI will identify inspirations and ideas</string>
+    <string name="todo_empty">No to-dos yet</string>
+    <string name="todo_empty_hint">Record a voice note and AI will identify to-dos</string>
+    <string name="todo_deadline_pattern">MMM d</string>
+    <string name="todo_deadline">Due %1$s</string>
+</resources>

@@ -42,9 +42,6 @@ class TranscriptionService : Service() {
         const val EXTRA_RECORDING_ID = "recording_id"
         const val ACTION_CANCEL_CURRENT = "app.murmurnote.android.action.CANCEL_CURRENT_TRANSCRIPTION"
         private const val WAKE_LOCK_TIMEOUT_MS = 6L * 60 * 60 * 1000
-        private const val USER_CANCELLED_MESSAGE = "用户取消处理，可手动重试"
-        private const val SERVICE_INTERRUPTED_MESSAGE = "处理服务被系统中断，可手动重试"
-
         fun intent(ctx: android.content.Context, file: File, source: RecordingSource): Intent =
             Intent(ctx, TranscriptionService::class.java)
                 .putExtra(EXTRA_FILE_PATH, file.absolutePath)
@@ -99,7 +96,7 @@ class TranscriptionService : Service() {
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         requests.observeStart(startId)
         if (intent?.action == ACTION_CANCEL_CURRENT) {
-            startForegroundCompat(buildNotification("正在取消当前处理…"))
+            startForegroundCompat(buildNotification(getString(R.string.service_cancelling)))
             cancelCurrent(startId)
             return START_NOT_STICKY
         }
@@ -110,7 +107,7 @@ class TranscriptionService : Service() {
         if (path == null) {
             logger.w("Service", "onStartCommand without file_path → start+stop foreground")
             if (!requests.hasWork) {
-                startForegroundCompat(buildNotification("无效的处理请求…"))
+                startForegroundCompat(buildNotification(getString(R.string.service_invalid_request)))
                 stopForegroundSelf()
                 stopSelfResult(startId)
             }
@@ -128,7 +125,7 @@ class TranscriptionService : Service() {
         )
         logger.i("Service", "enqueue source=$source startId=$startId reprocess=${existingRecordingId != null}")
 
-        startForegroundCompat(buildNotification("已加入处理队列…"))
+        startForegroundCompat(buildNotification(getString(R.string.service_queued)))
         requests.enqueue(request, startId)
         queueTracker.enqueue(
             ProcessingQueueEntry(
@@ -136,7 +133,7 @@ class TranscriptionService : Service() {
                 recordingId = existingRecordingId,
                 fileName = request.file.name,
                 status = ProcessingQueueStatus.WAITING,
-                detail = "等待中"
+                detail = getString(R.string.service_waiting)
             )
         )
         processNextIfIdle()
@@ -153,7 +150,11 @@ class TranscriptionService : Service() {
         }
         releaseWakeLock()
         acquireWakeLock()
-        val initialText = if (request.existingRecordingId != null) "重新处理录音…" else "正在准备处理…"
+        val initialText = if (request.existingRecordingId != null) {
+            getString(R.string.service_reprocessing)
+        } else {
+            getString(R.string.service_preparing)
+        }
         queueTracker.markRunning(request.queueId, initialText)
         updateNotification(initialText)
         job = scope.launch {
@@ -169,7 +170,10 @@ class TranscriptionService : Service() {
                         if (stage is PipelineStage.Completed) {
                             queueTracker.markCompleted(request.queueId)
                         } else if (stage is PipelineStage.Failed) {
-                            queueTracker.markFailed(request.queueId, stage.errorMessage)
+                            queueTracker.markFailed(
+                                request.queueId,
+                                getString(R.string.service_processing_failed_retry)
+                            )
                         }
                     }
                 }
@@ -179,7 +183,10 @@ class TranscriptionService : Service() {
                 logger.e("Service", "pipeline crashed", t)
                 val error = t.message ?: t.javaClass.simpleName
                 statusBus.update(PipelineStage.Failed("service", error))
-                queueTracker.markFailed(request.queueId, error)
+                queueTracker.markFailed(
+                    request.queueId,
+                    getString(R.string.service_processing_failed_retry)
+                )
             } finally {
                 requests.complete(request)
                 job = null
@@ -200,8 +207,10 @@ class TranscriptionService : Service() {
         }
         logger.w("Service", "cancel current queue=${running.queueId}")
         queueTracker.markCancelled(running.queueId)
-        job?.cancel(CancellationException(USER_CANCELLED_MESSAGE))
-        statusBus.update(PipelineStage.Failed("cancelled", "用户取消处理"))
+        job?.cancel(CancellationException(getString(R.string.service_user_cancelled_retry)))
+        statusBus.update(
+            PipelineStage.Failed("cancelled", getString(R.string.service_cancelled))
+        )
     }
 
     private fun acquireWakeLock() {
@@ -225,15 +234,23 @@ class TranscriptionService : Service() {
     }
 
     private fun labelOf(s: PipelineStage): String = when (s) {
-        is PipelineStage.Converting -> "转码为 mono WAV…"
-        is PipelineStage.Splitting -> if (s.segmentCount == 0) "按静音切片中…"
-            else "切片完成（${s.segmentCount} 段）"
-        is PipelineStage.Transcribing -> "转写第 ${s.segmentIndex + 1}/${s.totalSegments} 段（已识别 ${s.recognizedChars} 字）"
-        is PipelineStage.Extracting -> "AI 提取中（${s.transcriptLength} 字）…"
-        is PipelineStage.Saving -> "入库中…"
-        is PipelineStage.Completed -> "处理完成"
-        is PipelineStage.Failed -> "失败：${s.errorMessage.take(40)}"
-        else -> "处理中…"
+        is PipelineStage.Converting -> getString(R.string.service_converting)
+        is PipelineStage.Splitting -> if (s.segmentCount == 0) {
+            getString(R.string.service_splitting)
+        } else {
+            getString(R.string.service_split_complete, s.segmentCount)
+        }
+        is PipelineStage.Transcribing -> getString(
+            R.string.service_transcribing,
+            s.segmentIndex + 1,
+            s.totalSegments,
+            s.recognizedChars
+        )
+        is PipelineStage.Extracting -> getString(R.string.service_extracting, s.transcriptLength)
+        is PipelineStage.Saving -> getString(R.string.service_saving)
+        is PipelineStage.Completed -> getString(R.string.service_processing_complete)
+        is PipelineStage.Failed -> getString(R.string.service_processing_failed)
+        else -> getString(R.string.service_processing)
     }
 
     private fun startForegroundCompat(notif: Notification) {
@@ -273,13 +290,14 @@ class TranscriptionService : Service() {
     override fun onDestroy() {
         logger.i("Service", "onDestroy")
         destroyed = true
+        val interruptedMessage = getString(R.string.service_interrupted_retry)
         requests.current?.let {
-            queueTracker.markFailed(it.queueId, SERVICE_INTERRUPTED_MESSAGE)
+            queueTracker.markFailed(it.queueId, interruptedMessage)
         }
         requests.cancelPending().forEach {
-            queueTracker.markFailed(it.queueId, SERVICE_INTERRUPTED_MESSAGE)
+            queueTracker.markFailed(it.queueId, interruptedMessage)
         }
-        job?.cancel(CancellationException(SERVICE_INTERRUPTED_MESSAGE))
+        job?.cancel(CancellationException(interruptedMessage))
         releaseWakeLock()
         scope.coroutineContext[Job]?.cancel()
         super.onDestroy()

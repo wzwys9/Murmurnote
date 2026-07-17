@@ -1,0 +1,42 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources xmlns:tools="http://schemas.android.com/tools" tools:locale="zh">
+    <string name="import_audio_in_progress">正在导入音频…</string>
+    <string name="import_audio_success">已导入 %1$s</string>
+    <string name="import_audio_failure">导入失败，请重试。</string>
+    <string name="import_audio_title">导入音频</string>
+    <string name="import_audio_saved_processing_failed">导入文件已保存，但处理服务启动失败，可手动重试</string>
+    <string name="log_share_subject">Murmurnote 日志 %1$s</string>
+    <string name="log_share_chooser">分享日志包</string>
+    <string name="widget_quick_record">快速录音</string>
+    <string name="recording_foreground_start_failed">系统未能启动录音前台服务</string>
+
+    <string name="service_user_cancelled_retry">用户取消处理，可手动重试</string>
+    <string name="service_interrupted_retry">处理服务被系统中断，可手动重试</string>
+    <string name="service_cancelled">用户已取消处理</string>
+    <string name="service_cancelling">正在取消当前处理…</string>
+    <string name="service_invalid_request">无效的处理请求…</string>
+    <string name="service_queued">已加入处理队列…</string>
+    <string name="service_waiting">等待中</string>
+    <string name="service_reprocessing">正在重新处理录音…</string>
+    <string name="service_preparing">正在准备处理…</string>
+    <string name="service_converting">正在转码为单声道 WAV…</string>
+    <string name="service_splitting">正在按静音切片…</string>
+    <string name="service_split_complete">切片完成（%1$d 段）</string>
+    <string name="service_transcribing">正在转写第 %1$d/%2$d 段（已识别 %3$d 字）</string>
+    <string name="service_extracting">AI 正在提取（%1$d 字）…</string>
+    <string name="service_saving">正在保存…</string>
+    <string name="service_processing_complete">处理完成</string>
+    <string name="service_processing_failed">处理失败</string>
+    <string name="service_processing_failed_retry">处理失败，可手动重试</string>
+    <string name="service_processing">处理中…</string>
+
+    <string name="asr_download_preparing_local">正在准备下载本地 ASR 模型…</string>
+    <string name="asr_download_progress">下载模型 %1$d%%（%2$s，剩余 %3$d 秒）</string>
+    <string name="asr_extract_progress">解压模型 %1$d%%</string>
+    <string name="asr_notification_model_ready">模型已就绪</string>
+    <string name="asr_model_hash_mismatch">模型校验不匹配，请回到设置页确认</string>
+    <string name="asr_notification_download_failed">模型下载失败，请重试</string>
+    <string name="asr_notification_model_corrupted">模型已损坏，请重新下载</string>
+    <string name="asr_download_preparing">准备下载…</string>
+    <string name="asr_notification_title">Murmurnote · 本地 ASR 模型</string>
+</resources>

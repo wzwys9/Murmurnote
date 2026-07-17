@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources xmlns:tools="http://schemas.android.com/tools" tools:locale="zh">
+    <string name="onboarding_previous">上一步</string>
+    <string name="onboarding_get_started">开始使用</string>
+    <string name="onboarding_tagline_line_one">随口一说</string>
+    <string name="onboarding_tagline_line_two">AI 替你记下来</string>
+    <string name="onboarding_tagline_description">把灵感、待办、想法用语音留住</string>
+    <string name="onboarding_capabilities_title">能做什么</string>
+    <string name="onboarding_capability_record_title">🎙 录音 / 导入</string>
+    <string name="onboarding_capability_record_description">随手录或从其他 APP 分享音频过来</string>
+    <string name="onboarding_capability_local_title">📝 本地转写</string>
+    <string name="onboarding_capability_local_description">默认使用 SenseVoice 在设备上离线识别，不需要 API Key</string>
+    <string name="onboarding_capability_cloud_title">☁️ 可选云功能</string>
+    <string name="onboarding_capability_cloud_description">云端转写与 AI 总结均需你主动配置并开启</string>
+    <string name="onboarding_capability_storage_title">📂 本地保存</string>
+    <string name="onboarding_capability_storage_description">全部数据离线存储，30 天自动清理音频</string>
+    <string name="onboarding_cloud_title">可选的云服务</string>
+    <string name="onboarding_cloud_description">本地转写无需配置即可使用。只有在你主动选择云端转写，或开启云端 AI 总结时，才需要填写对应的 API Key；也可以直接跳过。</string>
+    <string name="onboarding_glm_key_label">智谱 GLM API Key（可选云端转写）</string>
+    <string name="onboarding_deepseek_key_label">DeepSeek API Key（可选 AI 总结）</string>
+    <string name="onboarding_get_api_key">→ 没有？点这里去申请</string>
+    <string name="onboarding_testing">测试中…</string>
+    <string name="onboarding_test_connections">测试已配置的连接</string>
+    <string name="onboarding_no_cloud_configured">云服务均未配置；可以直接继续使用本地转写。</string>
+    <string name="onboarding_connection_success">✓ %1$s 连接正常</string>
+    <string name="onboarding_connection_failure">%1$s 连接失败；可稍后在设置中重试</string>
+    <string name="onboarding_permissions_title">权限说明</string>
+    <string name="onboarding_permissions_description">为了正常工作，Murmurnote 需要：</string>
+    <string name="onboarding_permission_microphone_title">🎤 录音权限</string>
+    <string name="onboarding_permission_microphone_description">用于按住录音</string>
+    <string name="onboarding_permission_notification_title">🔔 通知权限</string>
+    <string name="onboarding_permission_notification_description">处理录音时显示进度</string>
+    <string name="onboarding_permission_media_title">📂 媒体读取</string>
+    <string name="onboarding_permission_media_description">支持从其他 APP 导入音频</string>
+</resources>

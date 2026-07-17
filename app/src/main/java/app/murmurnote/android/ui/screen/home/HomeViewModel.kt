@@ -5,6 +5,7 @@ import android.net.Uri
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import app.murmurnote.android.R
 import app.murmurnote.android.audio.AudioImporter
 import app.murmurnote.android.audio.AudioRecorder
 import app.murmurnote.android.audio.LiveVadWorkerState
@@ -24,6 +25,7 @@ import app.murmurnote.android.domain.pipeline.ProcessingStartupRecovery
 import app.murmurnote.android.service.TranscriptionService
 import app.murmurnote.android.util.Logger
 import dagger.hilt.android.lifecycle.HiltViewModel
+import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -39,13 +41,13 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.time.LocalDate
 import java.time.ZoneId
-import java.util.Locale
 import java.util.concurrent.ConcurrentLinkedQueue
 import javax.inject.Inject
 
 @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
 @HiltViewModel
 class HomeViewModel @Inject constructor(
+    @ApplicationContext private val context: Context,
     private val recordingRepository: RecordingRepository,
     private val recordingController: RecordingController,
     private val audioImporter: AudioImporter,
@@ -126,7 +128,13 @@ class HomeViewModel @Inject constructor(
     private fun restoreActiveRecordingSession() {
         val session = recordingController.activeSession() ?: return
         activeRecordingId = session.id
-        _uiState.update { current -> restoreRecordingUiState(current, session) }
+        _uiState.update { current ->
+            restoreRecordingUiState(
+                current,
+                session,
+                context.getString(R.string.home_recording_in_background),
+            )
+        }
         startTicker()
         logger.i(
             "Home",
@@ -159,10 +167,10 @@ class HomeViewModel @Inject constructor(
         ) return
         logger.i("Home", "startRecording requested")
         recordingController.prepareForRecording().getOrElse { error ->
+            logger.e("Home", "prepareForRecording failed", error)
             _uiState.update {
                 it.copy(
-                    errorMessage =
-                        "录音启动失败：${error.message ?: error.javaClass.simpleName}"
+                    errorMessage = context.getString(R.string.home_recording_start_failed)
                 )
             }
             return
@@ -177,8 +185,7 @@ class HomeViewModel @Inject constructor(
                         logger.e("Home", "startRecording failed", error)
                         _uiState.update {
                             it.copy(
-                                errorMessage =
-                                    "录音启动失败：${error.message ?: error.javaClass.simpleName}"
+                                errorMessage = context.getString(R.string.home_recording_start_failed)
                             )
                         }
                         return@launch
@@ -188,7 +195,7 @@ class HomeViewModel @Inject constructor(
                     recordingRepository.insert(
                         Recording(
                             id = active.id,
-                            title = "录音中",
+                            title = context.getString(R.string.home_recording_draft_title),
                             originalFilePath = active.file.absolutePath,
                             durationMs = 0L,
                             createdAt = active.createdAt,
@@ -202,8 +209,7 @@ class HomeViewModel @Inject constructor(
                     logger.e("Home", "failed to create recording draft", failure)
                     _uiState.update {
                         it.copy(
-                            errorMessage =
-                                "创建录音记录失败：${failure.message ?: failure.javaClass.simpleName}"
+                            errorMessage = context.getString(R.string.home_create_recording_failed)
                         )
                     }
                     return@launch
@@ -217,7 +223,7 @@ class HomeViewModel @Inject constructor(
                         elapsedMs = 0,
                         amplitudeDb = 0,
                         liveTranscriptionActive = true,
-                        liveTranscriptionMessage = "正在启动实时 Silero VAD…",
+                        liveTranscriptionMessage = context.getString(R.string.home_live_vad_starting),
                         liveTranscriptSegments = emptyList()
                     )
                 }
@@ -274,7 +280,10 @@ class HomeViewModel @Inject constructor(
         tickerJob?.cancel()
         stopLiveTranscription()
         _uiState.update {
-            it.copy(liveTranscriptionActive = false, liveTranscriptionMessage = "正在保存录音…")
+            it.copy(
+                liveTranscriptionActive = false,
+                liveTranscriptionMessage = context.getString(R.string.home_saving_recording),
+            )
         }
         val recordingId = activeRecordingId
         val job = viewModelScope.launch {
@@ -298,7 +307,7 @@ class HomeViewModel @Inject constructor(
                 if (recordingId != null) {
                     recordingRepository.markProcessingFailedIfInProgress(
                         recordingId,
-                        "录音已保存，但处理服务启动失败，可手动重试"
+                        context.getString(R.string.home_processing_start_failed_saved)
                     )
                 }
                 activeRecordingId = null
@@ -309,7 +318,7 @@ class HomeViewModel @Inject constructor(
                         amplitudeDb = 0,
                         liveTranscriptionActive = false,
                         liveTranscriptionMessage = null,
-                        errorMessage = "录音已保存，但未能开始处理，请稍后手动重试。"
+                        errorMessage = context.getString(R.string.home_processing_start_failed)
                     )
                 }
             }
@@ -353,7 +362,9 @@ class HomeViewModel @Inject constructor(
             } catch (failure: Throwable) {
                 logger.e("Home", "cancelRecording failed", failure)
                 _uiState.update {
-                    it.copy(errorMessage = "取消失败：${failure.message ?: failure.javaClass.simpleName}")
+                    it.copy(
+                        errorMessage = context.getString(R.string.home_cancel_failed)
+                    )
                 }
             }
         }
@@ -365,7 +376,9 @@ class HomeViewModel @Inject constructor(
 
     fun reportPermissionDenied() {
         logger.w("Home", "RECORD_AUDIO permission denied by user")
-        _uiState.update { it.copy(errorMessage = "需要录音权限才能开始录音。请在系统设置中授权。") }
+        _uiState.update {
+            it.copy(errorMessage = context.getString(R.string.home_record_permission_denied))
+        }
     }
 
     fun importAudio(uri: Uri) {
@@ -376,7 +389,12 @@ class HomeViewModel @Inject constructor(
                     _uiState.update { it.copy(errorMessage = null) }
                 }
                 .onFailure { e ->
-                    _uiState.update { it.copy(errorMessage = "导入失败：${e.message ?: e.javaClass.simpleName}") }
+                    logger.e("Home", "importAudio failed", e)
+                    _uiState.update {
+                        it.copy(
+                            errorMessage = context.getString(R.string.home_import_failed)
+                        )
+                    }
                 }
         }
     }
@@ -390,16 +408,15 @@ class HomeViewModel @Inject constructor(
         ContextCompat.startForegroundService(context, TranscriptionService.cancelCurrentIntent(context))
     }
 
-    fun clearMessages() {
-        _uiState.update { it.copy(errorMessage = null) }
-    }
-
     fun retryLiveSegment(sequence: Int) {
         val segment = recordingController.recordedSegments()
             .firstOrNull { it.sequence == sequence }
         if (segment == null || !recordingController.isRecording) {
             _uiState.update {
-                it.copy(liveTranscriptionMessage = "该预览片段已不可用；停止后会完整重新识别。")
+                it.copy(
+                    liveTranscriptionMessage =
+                        context.getString(R.string.home_preview_segment_unavailable)
+                )
             }
             return
         }
@@ -413,7 +430,14 @@ class HomeViewModel @Inject constructor(
                 status = LiveTranscriptStatus.WAITING
             )
         )
-        _uiState.update { it.copy(liveTranscriptionMessage = "已安排重试第 ${sequence + 1} 段…") }
+        _uiState.update {
+            it.copy(
+                liveTranscriptionMessage = context.getString(
+                    R.string.home_preview_retry_scheduled,
+                    sequence + 1,
+                )
+            )
+        }
     }
 
     private fun startLiveTranscription() {
@@ -424,7 +448,7 @@ class HomeViewModel @Inject constructor(
             val attempt = when (
                 val selection = asrEngineProvider.snapshotAttempt(
                     vadPresetVersion = NeuralVadSegmentPlanner.PRESET.version,
-                    locale = Locale.getDefault()
+                    locale = context.resources.configuration.locales[0]
                 )
             ) {
                 is AsrEngineProvider.AttemptSelection.NotReady -> {
@@ -432,7 +456,7 @@ class HomeViewModel @Inject constructor(
                         it.copy(
                             liveTranscriptionActive = false,
                             liveTranscriptionMessage =
-                                "实时预览不可用：${selection.reason}；停止后仍可重试完整处理。"
+                            context.getString(R.string.home_live_preview_unavailable)
                         )
                     }
                     return@launch
@@ -448,7 +472,7 @@ class HomeViewModel @Inject constructor(
                     it.copy(
                         liveTranscriptionActive = false,
                         liveTranscriptionMessage =
-                            "录音中不会把音频发送到云端；停止后将按当前云端设置完整转写。"
+                            context.getString(R.string.home_cloud_live_preview_disabled)
                     )
                 }
                 return@launch
@@ -502,7 +526,10 @@ class HomeViewModel @Inject constructor(
         updateLiveUi(generation) {
             it.copy(
                 liveTranscriptionActive = true,
-                liveTranscriptionMessage = "正在本地预览第 ${segment.sequence + 1} 段…"
+                liveTranscriptionMessage = context.getString(
+                    R.string.home_previewing_segment,
+                    segment.sequence + 1,
+                )
             )
         }
 
@@ -536,7 +563,12 @@ class HomeViewModel @Inject constructor(
                     state.copy(
                         liveTranscriptionActive = true,
                         liveTranscriptionMessage =
-                            "已本地预览 ${state.liveTranscriptSegments.count { it.status == LiveTranscriptStatus.TRANSCRIBED }} 段"
+                            context.getString(
+                                R.string.home_previewed_segments,
+                                state.liveTranscriptSegments.count {
+                                    it.status == LiveTranscriptStatus.TRANSCRIBED
+                                },
+                            )
                     )
                 }
             },
@@ -544,7 +576,12 @@ class HomeViewModel @Inject constructor(
                 if (!isLivePreviewCurrent(generation)) return@fold
                 if (retryAttempt < LIVE_SEGMENT_AUTO_RETRIES) {
                     updateLiveUi(generation) {
-                        it.copy(liveTranscriptionMessage = "第 ${segment.sequence + 1} 段失败，正在重试…")
+                        it.copy(
+                            liveTranscriptionMessage = context.getString(
+                                R.string.home_preview_segment_retrying,
+                                segment.sequence + 1,
+                            )
+                        )
                     }
                     delay(LIVE_SEGMENT_RETRY_DELAY_MS)
                     transcribeLiveSegment(
@@ -563,15 +600,17 @@ class HomeViewModel @Inject constructor(
                         startMs = segment.startMs,
                         endMs = segment.endMs,
                         status = LiveTranscriptStatus.FAILED,
-                        errorMessage = failure.message?.takeIf(String::isNotBlank)
-                            ?: failure.javaClass.simpleName
+                        errorMessage = context.getString(R.string.home_transcription_failed)
                     )
                 )
                 updateLiveUi(generation) {
                     it.copy(
                         liveTranscriptionActive = false,
                         liveTranscriptionMessage =
-                            "第 ${segment.sequence + 1} 段预览失败；主录音未受影响。"
+                            context.getString(
+                                R.string.home_preview_segment_failed,
+                                segment.sequence + 1,
+                            )
                     )
                 }
             }
@@ -582,21 +621,25 @@ class HomeViewModel @Inject constructor(
         val snapshot = recordingController.liveVadSnapshot()
         val (active, message) = when (snapshot.state) {
             LiveVadWorkerState.NEW,
-            LiveVadWorkerState.STARTING -> true to "正在启动实时 Silero VAD…"
+            LiveVadWorkerState.STARTING -> true to
+                context.getString(R.string.home_live_vad_starting)
 
             LiveVadWorkerState.RUNNING -> true to if (segmentCount == 0) {
-                "Silero VAD 正在本地监听语音边界…"
+                context.getString(R.string.home_vad_listening)
             } else {
-                "已生成 $segmentCount 个本地预览片段"
+                context.getString(R.string.home_preview_segments_created, segmentCount)
             }
 
-            LiveVadWorkerState.FINISHING -> true to "正在完成最后一个本地预览片段…"
-            LiveVadWorkerState.STOPPED -> false to "实时预览已结束；完整录音将重新识别。"
+            LiveVadWorkerState.FINISHING -> true to
+                context.getString(R.string.home_preview_finishing)
+            LiveVadWorkerState.STOPPED -> false to
+                context.getString(R.string.home_preview_finished)
             LiveVadWorkerState.DISABLED_BACKPRESSURE -> false to
-                "设备暂时跟不上实时 VAD，预览已停用；完整 WAV 未丢失，停止后会重新处理。"
+                context.getString(R.string.home_preview_backpressure)
             LiveVadWorkerState.FAILED_NEURAL_VAD -> false to
-                "实时 Silero VAD 失败（${snapshot.failureType ?: "未知错误"}）；停止后会再次运行完整神经 VAD。"
-            LiveVadWorkerState.ABORTED -> false to "实时预览已取消；完整录音不受影响。"
+                context.getString(R.string.home_preview_vad_failed)
+            LiveVadWorkerState.ABORTED -> false to
+                context.getString(R.string.home_preview_cancelled)
         }
         updateLiveUi(generation) {
             it.copy(liveTranscriptionActive = active, liveTranscriptionMessage = message)
@@ -658,6 +701,7 @@ class HomeViewModel @Inject constructor(
 internal fun restoreRecordingUiState(
     current: HomeViewModel.UiState,
     session: RecordingController.ActiveSession,
+    liveTranscriptionMessage: String,
 ): HomeViewModel.UiState = current.copy(
     isRecording = true,
     isPaused = session.isPaused,
@@ -665,6 +709,6 @@ internal fun restoreRecordingUiState(
     amplitudeDb = session.amplitudeDb,
     errorMessage = null,
     liveTranscriptionActive = false,
-    liveTranscriptionMessage = "录音正在后台继续；停止后会完整重新识别。",
+    liveTranscriptionMessage = liveTranscriptionMessage,
     liveTranscriptSegments = emptyList(),
 )

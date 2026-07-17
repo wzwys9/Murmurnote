@@ -61,7 +61,12 @@ class AsrModelDownloadService : Service() {
         logger.i("AsrDl", "onStartCommand action=$action startId=$startId hasJob=${job?.isActive == true}")
 
         // 8.0+ 强约束：startForegroundService 后必须 5s 内 startForeground，无论分支如何先挂通知。
-        startForegroundCompat(buildNotification("准备下载本地 ASR 模型…", indeterminate = true))
+        startForegroundCompat(
+            buildNotification(
+                getString(R.string.asr_download_preparing_local),
+                indeterminate = true
+            )
+        )
 
         when (action) {
             ACTION_CANCEL -> {
@@ -72,7 +77,7 @@ class AsrModelDownloadService : Service() {
             }
             ACTION_START -> {
                 if (job?.isActive == true) {
-                    logger.w("AsrDl", "已有任务在跑，忽略本次 START")
+                    logger.w("AsrDl", "download already running; ignoring duplicate START")
                     return START_NOT_STICKY
                 }
                 job = scope.launch {
@@ -106,15 +111,27 @@ class AsrModelDownloadService : Service() {
                 val mb = st.bytesPerSec / (1024 * 1024)
                 val kb = st.bytesPerSec / 1024
                 val speed = if (mb > 0) "${mb}MB/s" else "${kb}KB/s"
-                Triple("下载模型 ${(st.progress * 100).toInt()}%（$speed，剩 ${st.etaSec}s）", false, (st.progress * 100).toInt())
+                val progress = (st.progress * 100).toInt()
+                Triple(
+                    getString(R.string.asr_download_progress, progress, speed, st.etaSec),
+                    false,
+                    progress
+                )
             }
-            is AsrModelManager.ModelStatus.Extracting ->
-                Triple("解压模型 ${(st.progress * 100).toInt()}%", false, (st.progress * 100).toInt())
-            is AsrModelManager.ModelStatus.Ready -> Triple("模型已就绪", false, 100)
-            is AsrModelManager.ModelStatus.HashMismatch -> Triple("模型校验不匹配，请回到设置页确认", false, 0)
-            is AsrModelManager.ModelStatus.Failed -> Triple("下载失败：${st.message.take(40)}", false, 0)
-            is AsrModelManager.ModelStatus.Corrupted -> Triple("模型已损坏：${st.reason.take(40)}", false, 0)
-            AsrModelManager.ModelStatus.NotDownloaded -> Triple("准备下载…", true, 0)
+            is AsrModelManager.ModelStatus.Extracting -> {
+                val progress = (st.progress * 100).toInt()
+                Triple(getString(R.string.asr_extract_progress, progress), false, progress)
+            }
+            is AsrModelManager.ModelStatus.Ready ->
+                Triple(getString(R.string.asr_notification_model_ready), false, 100)
+            is AsrModelManager.ModelStatus.HashMismatch ->
+                Triple(getString(R.string.asr_model_hash_mismatch), false, 0)
+            is AsrModelManager.ModelStatus.Failed ->
+                Triple(getString(R.string.asr_notification_download_failed), false, 0)
+            is AsrModelManager.ModelStatus.Corrupted ->
+                Triple(getString(R.string.asr_notification_model_corrupted), false, 0)
+            AsrModelManager.ModelStatus.NotDownloaded ->
+                Triple(getString(R.string.asr_download_preparing), true, 0)
         }
         val nm = getSystemService(NOTIFICATION_SERVICE) as android.app.NotificationManager
         nm.notify(NOTIFICATION_ID, buildNotification(text, indeterminate, progress))
@@ -146,12 +163,12 @@ class AsrModelDownloadService : Service() {
         )
         val builder = NotificationCompat.Builder(this, CHANNEL_PROCESSING)
             .setSmallIcon(R.drawable.ic_mic)
-            .setContentTitle("Murmurnote · 本地 ASR 模型")
+            .setContentTitle(getString(R.string.asr_notification_title))
             .setContentText(text)
             .setContentIntent(pi)
             .setOngoing(true)
             .setPriority(NotificationCompat.PRIORITY_LOW)
-            .addAction(0, "取消", cancelIntent)
+            .addAction(0, getString(R.string.action_cancel), cancelIntent)
         if (indeterminate) builder.setProgress(0, 0, true)
         else if (progress in 0..100) builder.setProgress(100, progress, false)
         return builder.build()

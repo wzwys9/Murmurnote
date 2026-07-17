@@ -48,10 +48,12 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import app.murmurnote.android.R
 import app.murmurnote.android.data.remote.interceptor.ApiLogCapturePolicy
 
 @Composable
@@ -60,16 +62,25 @@ fun DebugScreen(
     viewModel: DebugViewModel = hiltViewModel()
 ) {
     var tabIndex by remember { mutableIntStateOf(0) }
-    val tabs = listOf("Pipeline", "API 日志", "Prompt", "运行日志", "配置")
+    val tabs = listOf(
+        stringResource(R.string.debug_tab_pipeline),
+        stringResource(R.string.debug_tab_api_logs),
+        stringResource(R.string.debug_tab_prompt),
+        stringResource(R.string.debug_tab_runtime_logs),
+        stringResource(R.string.debug_tab_config)
+    )
 
     Scaffold(
         topBar = {
             Column {
                 TopAppBar(
-                    title = { Text("DEBUG MODE") },
+                    title = { Text(stringResource(R.string.debug_title)) },
                     navigationIcon = {
                         IconButton(onClick = onBack) {
-                            Icon(Icons.AutoMirrored.Filled.ArrowBack, "返回")
+                            Icon(
+                                Icons.AutoMirrored.Filled.ArrowBack,
+                                stringResource(R.string.action_back)
+                            )
                         }
                     }
                 )
@@ -78,7 +89,7 @@ fun DebugScreen(
                     horizontalArrangement = Arrangement.Center
                 ) {
                     Text(
-                        "⚠ DEBUG 模式 — 仅供开发使用",
+                        stringResource(R.string.debug_banner),
                         color = Color.White,
                         style = MaterialTheme.typography.labelMedium
                     )
@@ -106,15 +117,15 @@ fun DebugScreen(
 @Composable
 private fun PipelineTab() {
     Column(modifier = Modifier.padding(16.dp)) {
-        Text("Pipeline 检视器", style = MaterialTheme.typography.titleMedium)
+        Text(stringResource(R.string.debug_pipeline_title), style = MaterialTheme.typography.titleMedium)
         Spacer(Modifier.height(8.dp))
         Text(
-            "选择最近一条录音查看完整 Pipeline 阶段。当前实现：选择最近条 → ApiLog 按 startedAt 关联",
+            stringResource(R.string.debug_pipeline_description),
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant
         )
         Spacer(Modifier.height(12.dp))
-        Text("👷 后续可点详情页中的 \"重新处理\" 触发并观察各 stage 耗时", style = MaterialTheme.typography.bodySmall)
+        Text(stringResource(R.string.debug_pipeline_hint), style = MaterialTheme.typography.bodySmall)
     }
 }
 
@@ -128,7 +139,7 @@ private fun ApiLogTab(vm: DebugViewModel) {
             modifier = Modifier.fillMaxWidth().padding(8.dp),
             horizontalArrangement = Arrangement.spacedBy(8.dp)
         ) {
-            Button(onClick = vm::clearApiLogs) { Text("清空日志") }
+            Button(onClick = vm::clearApiLogs) { Text(stringResource(R.string.debug_clear_logs)) }
             OutlinedButton(onClick = { vm.shareLogBundle(context) }, enabled = !sharing) {
                 if (sharing) {
                     CircularProgressIndicator(modifier = Modifier.size(14.dp), strokeWidth = 2.dp)
@@ -136,7 +147,7 @@ private fun ApiLogTab(vm: DebugViewModel) {
                 }
                 Icon(Icons.Filled.Share, contentDescription = null, modifier = Modifier.size(16.dp))
                 Spacer(Modifier.width(4.dp))
-                Text("分享 zip")
+                Text(stringResource(R.string.action_share_zip))
             }
         }
         LazyColumn(
@@ -164,7 +175,7 @@ private fun ApiLogTab(vm: DebugViewModel) {
                         )
                         if (expanded) {
                             Spacer(Modifier.height(8.dp))
-                            Text("仅保留请求元数据，不保存正文或异常消息。")
+                            Text(stringResource(R.string.debug_log_metadata_only))
                         }
                     }
                 }
@@ -178,23 +189,23 @@ private fun PromptTab(vm: DebugViewModel) {
     val sys by vm.systemPrompt.collectAsStateWithLifecycle()
     val usr by vm.userPrompt.collectAsStateWithLifecycle()
     Column(modifier = Modifier.padding(16.dp)) {
-        Text("Prompt 调试", style = MaterialTheme.typography.titleMedium)
+        Text(stringResource(R.string.debug_prompt_title), style = MaterialTheme.typography.titleMedium)
         Spacer(Modifier.height(8.dp))
         OutlinedTextField(
             value = sys,
             onValueChange = vm::setSystemPrompt,
-            label = { Text("System Prompt（覆盖默认）") },
+            label = { Text(stringResource(R.string.debug_system_prompt_label)) },
             modifier = Modifier.fillMaxWidth().height(200.dp)
         )
         Spacer(Modifier.height(8.dp))
         OutlinedTextField(
             value = usr,
             onValueChange = vm::setUserPrompt,
-            label = { Text("User Prompt 模板（含 %1\$s）") },
+            label = { Text(stringResource(R.string.debug_user_prompt_label)) },
             modifier = Modifier.fillMaxWidth().height(120.dp)
         )
         Spacer(Modifier.height(8.dp))
-        Button(onClick = vm::resetPrompts) { Text("恢复默认") }
+        Button(onClick = vm::resetPrompts) { Text(stringResource(R.string.debug_restore_defaults)) }
     }
 }
 
@@ -206,6 +217,12 @@ private fun RuntimeLogTab(vm: DebugViewModel) {
     val context = LocalContext.current
     var levelFilter by remember { mutableStateOf<String?>(null) }      // null = 全部
     val listState = rememberLazyListState()
+    val levelOptions = listOf(
+        "I" to stringResource(R.string.debug_filter_info),
+        "W" to stringResource(R.string.debug_filter_warn),
+        "E" to stringResource(R.string.debug_filter_error),
+        "D" to stringResource(R.string.debug_filter_debug)
+    )
 
     // 进入 tab 自动拉一次最新 runtime.log；后续靠"刷新"按钮主动拉。
     // 不做实时 tail：避免 ViewModel 持续轮询影响电量，也避免分批加载的复杂状态机。
@@ -230,9 +247,9 @@ private fun RuntimeLogTab(vm: DebugViewModel) {
                 FilterChip(
                     selected = levelFilter == null,
                     onClick = { levelFilter = null },
-                    label = { Text("全部") }
+                    label = { Text(stringResource(R.string.debug_filter_all)) }
                 )
-                listOf("I" to "Info", "W" to "Warn", "E" to "Error", "D" to "Debug").forEach { (lv, lbl) ->
+                levelOptions.forEach { (lv, lbl) ->
                     FilterChip(
                         selected = levelFilter == lv,
                         onClick = { levelFilter = lv },
@@ -250,9 +267,11 @@ private fun RuntimeLogTab(vm: DebugViewModel) {
                         Icon(Icons.Filled.Refresh, contentDescription = null, modifier = Modifier.size(16.dp))
                         Spacer(Modifier.width(4.dp))
                     }
-                    Text("刷新")
+                    Text(stringResource(R.string.action_refresh))
                 }
-                OutlinedButton(onClick = vm::clearRuntimeLog) { Text("清空") }
+                OutlinedButton(onClick = vm::clearRuntimeLog) {
+                    Text(stringResource(R.string.debug_clear))
+                }
                 OutlinedButton(onClick = { vm.shareLogBundle(context) }, enabled = !sharing) {
                     if (sharing) {
                         CircularProgressIndicator(modifier = Modifier.size(14.dp), strokeWidth = 2.dp)
@@ -260,12 +279,12 @@ private fun RuntimeLogTab(vm: DebugViewModel) {
                     }
                     Icon(Icons.Filled.Share, contentDescription = null, modifier = Modifier.size(16.dp))
                     Spacer(Modifier.width(4.dp))
-                    Text("分享 zip")
+                    Text(stringResource(R.string.action_share_zip))
                 }
             }
             Spacer(Modifier.height(4.dp))
             Text(
-                "显示末尾 ${visible.size}/${lines.size} 行（最多 500 行）",
+                stringResource(R.string.debug_log_line_count, visible.size, lines.size),
                 style = MaterialTheme.typography.labelSmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
@@ -278,8 +297,8 @@ private fun RuntimeLogTab(vm: DebugViewModel) {
                 horizontalAlignment = Alignment.CenterHorizontally
             ) {
                 Text(
-                    if (lines.isEmpty()) "尚无日志，点「刷新」加载 runtime.log"
-                    else "当前过滤条件下无匹配行",
+                    if (lines.isEmpty()) stringResource(R.string.debug_no_runtime_logs)
+                    else stringResource(R.string.debug_no_matching_logs),
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
@@ -319,10 +338,13 @@ private fun ConfigTab(vm: DebugViewModel) {
     val delay by vm.simulateDelayMs.collectAsStateWithLifecycle()
     Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically) {
-            Text("强制网络失败", modifier = Modifier.fillMaxWidth().weight(1f))
+            Text(
+                stringResource(R.string.debug_force_network_failure),
+                modifier = Modifier.fillMaxWidth().weight(1f)
+            )
             Switch(checked = forceFail, onCheckedChange = { vm.toggleForceFail() })
         }
-        Text("模拟延迟（ms）", style = MaterialTheme.typography.titleSmall)
+        Text(stringResource(R.string.debug_simulated_delay), style = MaterialTheme.typography.titleSmall)
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             listOf(0L, 500L, 2000L, 10000L).forEach { v ->
                 FilterChip(

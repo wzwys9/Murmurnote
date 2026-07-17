@@ -95,8 +95,6 @@ class AsrModelManager @Inject constructor(
 
     fun selectedModel(): LocalAsrModelSpec = AsrModelUrls.modelById(selectedModelId)
 
-    fun availableModels(): List<LocalAsrModelSpec> = AsrModelUrls.MODELS
-
     private fun requireKnownModel(modelId: String): LocalAsrModelSpec =
         AsrModelUrls.MODELS.firstOrNull { it.id == modelId }
             ?: throw IllegalArgumentException("Unknown local ASR model id")

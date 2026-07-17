@@ -33,17 +33,8 @@ object AiInstallDefaultPolicy {
         explicitEnabled ?: onboardingCompleted
 }
 
-object SafeLexiconInstallDefaultPolicy {
-    fun resolve(
-        explicitEnabled: Boolean?,
-        llmApiConfigured: Boolean,
-    ): Boolean = llmApiConfigured && (explicitEnabled ?: false)
-
-    fun resolveAfterApiKeyUpdate(
-        explicitEnabled: Boolean?,
-        wasConfigured: Boolean,
-        isConfigured: Boolean,
-    ): Boolean = isConfigured && wasConfigured && (explicitEnabled ?: false)
+object CustomDictionaryInstallDefaultPolicy {
+    fun resolve(explicitEnabled: Boolean?): Boolean = explicitEnabled ?: false
 }
 
 object PersonalCorrectionInstallDefaultPolicy {
@@ -199,11 +190,6 @@ class AppPreferences internal constructor(
         it[Keys.ASR_LOCAL_MODEL_ID] ?: "sense_voice_zh_en_ja_ko_yue"
     }
 
-    /** assets 中的预置模型是否已经拷贝到 filesDir。 */
-    val asrBundledInstalled: Flow<Boolean> = dataStore.data.map {
-        it[Keys.ASR_BUNDLED_INSTALLED] ?: false
-    }
-
     /** 本地小模型并行识别倍速，1..3。大模型会被运行时强制降到 1。 */
     val asrLocalConcurrency: Flow<Int> = dataStore.data.map {
         it[Keys.ASR_LOCAL_CONCURRENCY] ?: 1
@@ -238,9 +224,8 @@ class AppPreferences internal constructor(
     }
 
     val safeLexiconEnabled: Flow<Boolean> = dataStore.data.map { prefs ->
-        SafeLexiconInstallDefaultPolicy.resolve(
+        CustomDictionaryInstallDefaultPolicy.resolve(
             explicitEnabled = prefs[Keys.SAFE_LEXICON_ENABLED],
-            llmApiConfigured = activeLlmApiKey(prefs).isNotBlank(),
         )
     }
 
@@ -290,12 +275,6 @@ class AppPreferences internal constructor(
             val activeKeyWasConfigured = activeLlmApiKey(prefs).isNotBlank()
             prefs[llmApiKeyFor(provider)] = normalizedKey
             if (provider == activeProvider) {
-                prefs[Keys.SAFE_LEXICON_ENABLED] =
-                    SafeLexiconInstallDefaultPolicy.resolveAfterApiKeyUpdate(
-                        explicitEnabled = prefs[Keys.SAFE_LEXICON_ENABLED],
-                        wasConfigured = activeKeyWasConfigured,
-                        isConfigured = normalizedKey.isNotBlank(),
-                    )
                 prefs[Keys.PERSONAL_CORRECTION_ENABLED] =
                     PersonalCorrectionInstallDefaultPolicy.resolveAfterApiKeyUpdate(
                         explicitEnabled = prefs[Keys.PERSONAL_CORRECTION_ENABLED],
@@ -320,7 +299,6 @@ class AppPreferences internal constructor(
         it[Keys.OLLAMA_BASE_URL] = provider.defaultBaseUrl
         it.remove(Keys.OLLAMA_MODEL)
         if (activeLlmApiKey(it).isBlank()) {
-            it[Keys.SAFE_LEXICON_ENABLED] = false
             it[Keys.PERSONAL_CORRECTION_ENABLED] = false
         }
     }
@@ -336,11 +314,6 @@ class AppPreferences internal constructor(
             prefs[Keys.AI_EXTRACTION_ENABLED] = false
         }
         prefs[Keys.ONBOARDING_COMPLETED] = true
-    }
-
-    suspend fun setOnboardingCompleted(c: Boolean) {
-        if (c) completeOnboarding()
-        else dataStore.edit { it[Keys.ONBOARDING_COMPLETED] = false }
     }
 
     suspend fun setSystemPromptOverride(p: String?) = dataStore.edit {
@@ -375,15 +348,8 @@ class AppPreferences internal constructor(
     suspend fun setLowBatteryProtection(v: Boolean) = dataStore.edit { it[Keys.LOW_BATTERY_PROTECTION] = v }
     suspend fun setAiExtractionEnabled(v: Boolean) = dataStore.edit { it[Keys.AI_EXTRACTION_ENABLED] = v }
     suspend fun setSafeLexiconEnabled(v: Boolean): Boolean {
-        var applied = false
-        dataStore.edit { prefs ->
-            applied = SafeLexiconInstallDefaultPolicy.resolve(
-                explicitEnabled = v,
-                llmApiConfigured = activeLlmApiKey(prefs).isNotBlank(),
-            )
-            prefs[Keys.SAFE_LEXICON_ENABLED] = applied
-        }
-        return applied
+        dataStore.edit { prefs -> prefs[Keys.SAFE_LEXICON_ENABLED] = v }
+        return v
     }
 
     suspend fun acceptPersonalCorrectionDisclosure() = dataStore.edit {
@@ -403,6 +369,4 @@ class AppPreferences internal constructor(
         }
         return applied
     }
-
-    suspend fun hasAllApiKeys(): Boolean = glmApiKey.first().isNotBlank() && llmApiKey.first().isNotBlank()
 }

@@ -49,6 +49,7 @@ object PersonalCorrectionCandidateFinder {
                     val candidate = PersonalCorrectionCandidate(
                         id = "s${segmentId}p${start}r${rule.id}",
                         ruleId = rule.id,
+                        ruleOrigin = rule.origin,
                         segmentId = segmentId,
                         startCodePoint = start,
                         endCodePointExclusive = end,
@@ -70,7 +71,10 @@ object PersonalCorrectionCandidateFinder {
         }
         return matches
             .sortedWith(
-                compareByDescending<ScoredCandidate> { it.contextScore }
+                compareByDescending<ScoredCandidate> {
+                    it.candidate.ruleOrigin == CorrectionRuleOrigin.USER_DEFINED
+                }
+                    .thenByDescending { it.contextScore }
                     .thenBy { it.candidate.startCodePoint }
                     .thenBy { it.candidate.ruleId },
             )

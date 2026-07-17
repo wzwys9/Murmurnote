@@ -66,6 +66,32 @@ class PersonalCorrectionPlanValidatorTest {
     }
 
     @Test
+    fun userDefinedCandidateWinsWhenTheSameRangeAlsoHasALearnedCandidate() {
+        val learned = candidate(
+            id = "learned",
+            start = 2,
+            end = 4,
+            origin = CorrectionRuleOrigin.PERSONAL_LEARNING,
+        )
+        val userDefined = candidate(
+            id = "user",
+            start = 2,
+            end = 4,
+            origin = CorrectionRuleOrigin.USER_DEFINED,
+        )
+
+        val approved = PersonalCorrectionPlanValidator.approve(
+            candidates = listOf(learned, userDefined),
+            decisions = listOf(
+                untrusted("learned", "APPLY", "HIGH", "PHONETIC_ASR_ERROR"),
+                untrusted("user", "APPLY", "HIGH", "USER_TERM_FITS_CONTEXT"),
+            ),
+        )
+
+        assertEquals(listOf("user"), approved.map { it.id })
+    }
+
+    @Test
     fun candidateCountIsHardCappedBeforeModelOutputCanBeApplied() {
         val candidates = (0 until 25).map { index ->
             candidate("c$index", index * 3, index * 3 + 2)
@@ -80,9 +106,15 @@ class PersonalCorrectionPlanValidatorTest {
         assertEquals("c23", approved.last().id)
     }
 
-    private fun candidate(id: String, start: Int, end: Int) = PersonalCorrectionCandidate(
+    private fun candidate(
+        id: String,
+        start: Int,
+        end: Int,
+        origin: CorrectionRuleOrigin = CorrectionRuleOrigin.PERSONAL_LEARNING,
+    ) = PersonalCorrectionCandidate(
         id = id,
         ruleId = "rule-$id",
+        ruleOrigin = origin,
         segmentId = 7L,
         startCodePoint = start,
         endCodePointExclusive = end,

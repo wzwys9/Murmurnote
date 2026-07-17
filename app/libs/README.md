@@ -7,8 +7,8 @@
 - `app/src/main/java/com/k2fsa/sherpa/onnx/`：sherpa-onnx Kotlin 绑定源码。
 - `app/src/main/jniLibs/<abi>/`：`libsherpa-onnx-jni.so`、`libonnxruntime.so` 等 JNI/ONNX Runtime 原生库。
 
-因此当前构建不依赖 `app/libs/` 下的 AAR。`app/build.gradle.kts` 仍保留
-`implementation(fileTree(... "*.aar"))`，只是为了以后需要整体替换为官方 AAR 时有兼容入口。
+因此当前构建不依赖 `app/libs/` 下的 AAR。如果以后需要整体切换为官方
+AAR，应在放入 AAR 的同一变更中显式添加 Gradle 依赖，避免长期保留空的依赖入口。
 
 ## 缺失时的表现
 

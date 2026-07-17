@@ -1,6 +1,7 @@
 # Spec: 个性化自学习纠错（实验）
 
 > 状态：用户已于 2026-07-11 确认；代码实现与静态验证已完成，APK/真机体验按用户后续指令执行。
+> 用户自定义规则的后续统一与优先级以 `CUSTOM_CORRECTION_DICTIONARY_SPEC.md` 为准。
 
 ## Objective
 

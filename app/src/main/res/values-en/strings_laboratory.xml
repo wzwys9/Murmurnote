@@ -1,0 +1,26 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="laboratory_title">Experimental features</string>
+    <string name="laboratory_directory_description">Try features that are still being validated. All experiments are off by default.</string>
+    <string name="laboratory_open_description">Open experimental features</string>
+    <string name="laboratory_open">Open</string>
+    <string name="laboratory_notice">Experimental features may continue to change. Each feature has its own switch and does not participate in processing while disabled.</string>
+    <string name="laboratory_personal_disclosure_title">Enable personalized self-learning corrections?</string>
+    <string name="laboratory_personal_disclosure">When you edit a transcript, the changed word pair and up to 240 nearby characters will be sent to the configured language model to decide whether the correction is worth learning.\n\nWhen a learned entry matches later, only nearby text is sent. Audio, titles, summaries, and complete recordings are never sent. Every automatic replacement can be disabled or deleted.</string>
+    <string name="laboratory_accept_enable">Agree and enable</string>
+    <string name="laboratory_not_now">Not now</string>
+    <string name="laboratory_personal_switch_description">Personalized self-learning corrections master switch</string>
+    <string name="laboratory_personal_title">Personalized self-learning corrections (experimental)</string>
+    <string name="laboratory_personal_missing_key">Unavailable: configure an API key for the current language model first.</string>
+    <string name="laboratory_personal_enabled">Enabled: learns from transcript edits. Custom dictionary entries take priority when they conflict.</string>
+    <string name="laboratory_personal_disabled">Disabled: does not collect edits, call the correction model, or apply learned entries.</string>
+    <string name="laboratory_manage_learning">Manage learned corrections</string>
+    <string name="laboratory_lexicon_switch_description">Custom correction dictionary master switch</string>
+    <string name="laboratory_lexicon_title">Custom correction dictionary (experimental)</string>
+    <string name="laboratory_lexicon_waiting_for_key">Enabled: Always replace entries work now; Context-aware entries activate after an API key is configured.</string>
+    <string name="laboratory_lexicon_enabled">Enabled: saved entries are applied to future transcripts using their selected mode.</string>
+    <string name="laboratory_lexicon_disabled">Disabled: entries are neither loaded nor applied, but saved entries are retained.</string>
+    <string name="laboratory_manage_lexicon">Manage entries</string>
+    <string name="laboratory_back_to_settings">Back to Settings</string>
+    <string name="laboratory_subtitle">Opt in to features that are still being validated</string>
+</resources>

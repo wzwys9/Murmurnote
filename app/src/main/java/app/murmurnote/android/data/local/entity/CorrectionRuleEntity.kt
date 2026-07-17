@@ -27,6 +27,8 @@ data class CorrectionRuleEntity(
     val scopeRecordingId: String? = null,
     @ColumnInfo(defaultValue = "'EXACT_TEXT'")
     val matchMode: String = "EXACT_TEXT",
+    @ColumnInfo(defaultValue = "'USER_DEFINED'")
+    val origin: String = "USER_DEFINED",
     @ColumnInfo(defaultValue = "1")
     val isEnabled: Boolean = true,
     val createdAt: Long = System.currentTimeMillis(),

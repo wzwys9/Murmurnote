@@ -5,28 +5,29 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
-import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material3.Card
-import androidx.compose.material3.Checkbox
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import app.murmurnote.android.R
 import app.murmurnote.android.data.local.entity.ExtractedItem
+import app.murmurnote.android.ui.component.FirstLineAlignedCheckboxRow
 import app.murmurnote.android.util.formatTimestampFull
 import java.time.Instant
 import java.time.ZoneId
@@ -46,10 +47,10 @@ fun TodoScreen(
             verticalArrangement = Arrangement.Center,
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
-            Text("还没有待办", style = MaterialTheme.typography.titleMedium)
+            Text(stringResource(R.string.todo_empty), style = MaterialTheme.typography.titleMedium)
             Spacer(Modifier.height(8.dp))
             Text(
-                "录一段语音，AI 会自动从中识别出待办",
+                stringResource(R.string.todo_empty_hint),
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
@@ -69,33 +70,39 @@ fun TodoScreen(
 
 @Composable
 private fun TodoRow(item: ExtractedItem, onToggle: (Boolean) -> Unit, onClick: () -> Unit) {
+    val locale = LocalConfiguration.current.locales[0] ?: Locale.getDefault()
+    val deadlineText = item.deadline?.let {
+        formatTodoDeadline(
+            deadlineMs = it,
+            zoneId = ZoneId.systemDefault(),
+            locale = locale,
+            datePattern = stringResource(R.string.todo_deadline_pattern),
+            template = stringResource(R.string.todo_deadline),
+        )
+    }
     Card(modifier = Modifier.fillMaxWidth().clickable { onClick() }) {
         Box(modifier = Modifier.fillMaxWidth().padding(12.dp)) {
             Text(
-                formatTimestampFull(item.createdAt),
+                formatTimestampFull(item.createdAt, locale),
                 style = MaterialTheme.typography.labelSmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier.align(Alignment.TopEnd)
             )
-            Row(
+            FirstLineAlignedCheckboxRow(
+                checked = item.isCompleted,
+                onCheckedChange = onToggle,
+                text = item.content,
+                textStyle = MaterialTheme.typography.bodyLarge,
                 modifier = Modifier.fillMaxWidth().padding(top = 18.dp),
-                verticalAlignment = Alignment.CenterVertically
+                textDecoration = if (item.isCompleted) TextDecoration.LineThrough else TextDecoration.None,
+                horizontalSpacing = 8.dp,
             ) {
-                Checkbox(checked = item.isCompleted, onCheckedChange = onToggle)
-                Spacer(Modifier.width(8.dp))
-                Column(Modifier.fillMaxWidth().weight(1f)) {
+                deadlineText?.let {
                     Text(
-                        item.content,
-                        style = MaterialTheme.typography.bodyLarge,
-                        textDecoration = if (item.isCompleted) TextDecoration.LineThrough else TextDecoration.None
+                        it,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
-                    item.deadline?.let {
-                        Text(
-                            formatTodoDeadline(it),
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                    }
                 }
             }
         }
@@ -104,9 +111,12 @@ private fun TodoRow(item: ExtractedItem, onToggle: (Boolean) -> Unit, onClick: (
 
 internal fun formatTodoDeadline(
     deadlineMs: Long,
-    zoneId: ZoneId = ZoneId.systemDefault(),
-    locale: Locale = Locale.getDefault(),
+    zoneId: ZoneId,
+    locale: Locale,
+    datePattern: String,
+    template: String,
 ): String {
-    val formatter = DateTimeFormatter.ofPattern("M月d日", locale).withZone(zoneId)
-    return "截止 ${formatter.format(Instant.ofEpochMilli(deadlineMs))}"
+    val formatter = DateTimeFormatter.ofPattern(datePattern, locale).withZone(zoneId)
+    val date = formatter.format(Instant.ofEpochMilli(deadlineMs))
+    return String.format(locale, template, date)
 }

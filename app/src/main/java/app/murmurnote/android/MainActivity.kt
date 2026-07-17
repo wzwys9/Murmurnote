@@ -44,14 +44,23 @@ class MainActivity : ComponentActivity() {
             logger.i("Import", "incoming intent action=${intent.action} hasType=${intent.type != null}")
         }
         val uri = audioImporter.extractUri(intent) ?: return
-        Toast.makeText(this, "正在导入音频…", Toast.LENGTH_SHORT).show()
+        Toast.makeText(this, R.string.import_audio_in_progress, Toast.LENGTH_SHORT).show()
         lifecycleScope.launch {
             audioImporter.importAndProcess(uri)
                 .onSuccess { f ->
-                    Toast.makeText(this@MainActivity, "已导入 ${f.name}", Toast.LENGTH_SHORT).show()
+                    Toast.makeText(
+                        this@MainActivity,
+                        getString(R.string.import_audio_success, f.name),
+                        Toast.LENGTH_SHORT
+                    ).show()
                 }
                 .onFailure { e ->
-                    Toast.makeText(this@MainActivity, "导入失败：${e.message}", Toast.LENGTH_LONG).show()
+                    logger.e("Import", "audio import failed", e)
+                    Toast.makeText(
+                        this@MainActivity,
+                        R.string.import_audio_failure,
+                        Toast.LENGTH_LONG
+                    ).show()
                 }
         }
     }

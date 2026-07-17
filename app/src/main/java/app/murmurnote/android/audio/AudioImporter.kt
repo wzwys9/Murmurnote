@@ -4,6 +4,7 @@ import android.content.Context
 import android.content.Intent
 import android.net.Uri
 import androidx.core.content.ContextCompat
+import app.murmurnote.android.R
 import app.murmurnote.android.data.local.entity.ProcessingStatus
 import app.murmurnote.android.data.local.entity.Recording
 import app.murmurnote.android.data.local.entity.RecordingSource
@@ -106,7 +107,7 @@ class AudioImporter @Inject constructor(
             recordingRepository.insert(
                 Recording(
                     id = recordingId,
-                    title = "导入音频",
+                    title = context.getString(R.string.import_audio_title),
                     originalFilePath = uniqueTarget.absolutePath,
                     durationMs = 0L,
                     createdAt = now,
@@ -133,7 +134,7 @@ class AudioImporter @Inject constructor(
             } else {
                 recordingRepository.markProcessingFailedIfInProgress(
                     recordingId,
-                    "导入文件已保存，但处理服务启动失败，可手动重试"
+                    context.getString(R.string.import_audio_saved_processing_failed)
                 )
             }
             logger.w("Import", "import failed type=${error.javaClass.simpleName}")

@@ -14,11 +14,23 @@ class TodoDeadlineFormatterTest {
 
         assertEquals(
             "截止 7月11日",
-            formatTodoDeadline(deadline, ZoneId.of("Asia/Shanghai"), Locale.CHINA),
+            formatTodoDeadline(
+                deadline,
+                ZoneId.of("Asia/Shanghai"),
+                Locale.CHINA,
+                datePattern = "M月d日",
+                template = "截止 %1\$s",
+            ),
         )
         assertEquals(
-            "截止 7月10日",
-            formatTodoDeadline(deadline, ZoneId.of("America/Los_Angeles"), Locale.US),
+            "Due Jul 10",
+            formatTodoDeadline(
+                deadline,
+                ZoneId.of("America/Los_Angeles"),
+                Locale.US,
+                datePattern = "MMM d",
+                template = "Due %1\$s",
+            ),
         )
     }
 }

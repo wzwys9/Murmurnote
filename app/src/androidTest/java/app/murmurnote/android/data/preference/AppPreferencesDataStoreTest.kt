@@ -22,7 +22,7 @@ import org.junit.runner.RunWith
 class AppPreferencesDataStoreTest {
 
     @Test
-    fun safeLexiconRequiresExplicitEnableAndDisablesWhenTheActiveApiBecomesUnavailable() =
+    fun customDictionaryStaysEnabledWhenTheActiveApiBecomesUnavailable() =
         runBlocking {
             val context = ApplicationProvider.getApplicationContext<Context>()
             val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
@@ -37,21 +37,21 @@ class AppPreferencesDataStoreTest {
                 preferences.setLlmProvider(LlmProvider.DEEPSEEK)
                 preferences.setLlmApiKey(LlmProvider.DEEPSEEK, "")
 
-                assertFalse(preferences.setSafeLexiconEnabled(true))
                 assertFalse(preferences.safeLexiconEnabled.first())
-
-                preferences.setLlmApiKey(LlmProvider.DEEPSEEK, "test-key")
-                assertFalse(preferences.safeLexiconEnabled.first())
-
                 assertTrue(preferences.setSafeLexiconEnabled(true))
                 assertTrue(preferences.safeLexiconEnabled.first())
 
+                preferences.setLlmApiKey(LlmProvider.DEEPSEEK, "test-key")
+                assertTrue(preferences.safeLexiconEnabled.first())
+
                 preferences.setLlmApiKey(LlmProvider.DEEPSEEK, "")
-                assertFalse(preferences.safeLexiconEnabled.first())
+                assertTrue(preferences.safeLexiconEnabled.first())
 
                 preferences.setLlmApiKey(LlmProvider.DEEPSEEK, "restored-key")
-                preferences.setSafeLexiconEnabled(true)
                 preferences.setLlmProvider(LlmProvider.ANTHROPIC)
+                assertTrue(preferences.safeLexiconEnabled.first())
+
+                assertFalse(preferences.setSafeLexiconEnabled(false))
                 assertFalse(preferences.safeLexiconEnabled.first())
             } finally {
                 scope.cancel()

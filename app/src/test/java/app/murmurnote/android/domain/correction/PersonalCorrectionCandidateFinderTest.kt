@@ -82,6 +82,36 @@ class PersonalCorrectionCandidateFinderTest {
     }
 
     @Test
+    fun userDefinedCandidatesAreNotCrowdedOutByLearnedCandidates() {
+        val learnedRules = (0 until 6).map { index ->
+            rule(
+                id = "learned-$index",
+                observed = "生",
+                replacement = "声$index",
+                mode = CorrectionMatchMode.CONTEXTUAL_LLM,
+                origin = CorrectionRuleOrigin.PERSONAL_LEARNING,
+            )
+        }
+        val userRule = rule(
+            id = "user",
+            observed = "生",
+            replacement = "声记",
+            mode = CorrectionMatchMode.CONTEXTUAL_LLM,
+            origin = CorrectionRuleOrigin.USER_DEFINED,
+        )
+
+        val candidates = PersonalCorrectionCandidateFinder.find(
+            segmentId = 7L,
+            text = "生",
+            rules = learnedRules + userRule,
+        )
+
+        assertEquals(6, candidates.size)
+        assertEquals("user", candidates.first().ruleId)
+        assertEquals(CorrectionRuleOrigin.USER_DEFINED, candidates.first().ruleOrigin)
+    }
+
+    @Test
     fun pathologicalSegmentLengthFailsClosedBeforeScanningRules() {
         val candidates = PersonalCorrectionCandidateFinder.find(
             segmentId = 5L,
@@ -122,11 +152,13 @@ class PersonalCorrectionCandidateFinderTest {
         replacement: String,
         mode: CorrectionMatchMode,
         enabled: Boolean = true,
+        origin: CorrectionRuleOrigin = CorrectionRuleOrigin.USER_DEFINED,
     ) = CorrectionRule(
         id = id,
         observedText = observed,
         replacementText = replacement,
         matchMode = mode,
+        origin = origin,
         scope = CorrectionScope.GLOBAL,
         isEnabled = enabled,
     )

@@ -1,12 +1,15 @@
 package app.murmurnote.android.ui.screen.onboarding
 
+import android.content.Context
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import app.murmurnote.android.data.preference.AppPreferences
+import app.murmurnote.android.R
 import app.murmurnote.android.data.remote.glm.GlmAsrClient
 import app.murmurnote.android.data.remote.llm.LlmClient
 import app.murmurnote.android.util.Logger
 import dagger.hilt.android.lifecycle.HiltViewModel
+import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -17,6 +20,7 @@ import javax.inject.Inject
 
 @HiltViewModel
 class OnboardingViewModel @Inject constructor(
+    @ApplicationContext private val context: Context,
     private val appPreferences: AppPreferences,
     private val llmClient: LlmClient,
     private val glmAsrClient: GlmAsrClient,
@@ -59,7 +63,7 @@ class OnboardingViewModel @Inject constructor(
         if (!testGlm && !testLlm) {
             _uiState.update {
                 it.copy(
-                    testResult = "云服务均未配置；可以直接继续使用本地转写。",
+                    testResult = context.getString(R.string.onboarding_no_cloud_configured),
                     testSuccess = true
                 )
             }
@@ -80,9 +84,15 @@ class OnboardingViewModel @Inject constructor(
         val testedNames = listOfNotNull("GLM".takeIf { testGlm }, "LLM".takeIf { testLlm })
         val ok = failures.isEmpty()
         val msg = if (ok) {
-            "✓ ${testedNames.joinToString("、")} 连接正常"
+            context.getString(
+                R.string.onboarding_connection_success,
+                testedNames.joinToString(", "),
+            )
         } else {
-            "${failures.joinToString("、")} 连接失败；可稍后在设置中重试"
+            context.getString(
+                R.string.onboarding_connection_failure,
+                failures.joinToString(", "),
+            )
         }
         logger.i("Onboard", "optional cloud connection result success=$ok")
         _uiState.update { it.copy(testing = false, testSuccess = ok, testResult = msg) }

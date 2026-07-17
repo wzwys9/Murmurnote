@@ -3,6 +3,7 @@ package app.murmurnote.android.ui.screen.settings
 import android.content.Context
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import app.murmurnote.android.R
 import app.murmurnote.android.data.asr.AsrEngineType
 import app.murmurnote.android.data.asr.AsrLanguageMode
 import app.murmurnote.android.data.asr.LocalAsrModelSpec
@@ -18,6 +19,7 @@ import app.murmurnote.android.service.AsrModelDownloadService
 import app.murmurnote.android.util.LogExporter
 import app.murmurnote.android.util.Logger
 import dagger.hilt.android.lifecycle.HiltViewModel
+import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.first
@@ -38,6 +40,7 @@ sealed class TestStatus {
 
 @HiltViewModel
 class SettingsViewModel @Inject constructor(
+    @ApplicationContext private val context: Context,
     private val appPreferences: AppPreferences,
     private val llmClient: LlmClient,
     private val glmAsrClient: GlmAsrClient,
@@ -69,7 +72,6 @@ class SettingsViewModel @Inject constructor(
         // ASR 引擎切换
         val asrEngineType: String = AsrEngineType.CLOUD_GLM.name,
         val asrMirrorIndex: Int = 0,
-        val asrMirrorOptions: List<String> = listOf("GitHub 直连", "ghproxy 镜像", "gh-proxy 镜像"),
         val asrLocalModelId: String = AsrModelUrls.DEFAULT_MODEL_ID,
         val asrLocalModels: List<LocalAsrModelSpec> = AsrModelUrls.MODELS,
         val asrModelStatus: AsrModelManager.ModelStatus = AsrModelManager.ModelStatus.NotDownloaded,
@@ -213,10 +215,8 @@ class SettingsViewModel @Inject constructor(
     }
 
     fun setSafeLexiconEnabled(enabled: Boolean) = viewModelScope.launch {
-        if (enabled) {
-            llmApiKeySaveJob?.cancel()
-            val provider = LlmProvider.parse(_uiState.value.llmProvider)
-            appPreferences.setLlmApiKey(provider, _uiState.value.llmApiKey)
+        if (enabled && _uiState.value.llmApiKey.isNotBlank()) {
+            persistCurrentLlmApiKey()
         }
         val applied = appPreferences.setSafeLexiconEnabled(enabled)
         _uiState.update { it.copy(safeLexiconEnabled = applied) }
@@ -256,7 +256,11 @@ class SettingsViewModel @Inject constructor(
                 }
                 _uiState.update { it.copy(availableLlmModels = models, isLoadingModels = false) }
             },
-            onFailure = { e -> _uiState.update { it.copy(isLoadingModels = false, modelLoadError = e.message ?: "未知错误") } }
+            onFailure = { e ->
+                _uiState.update {
+                    it.copy(isLoadingModels = false, modelLoadError = errorSummary(e))
+                }
+            }
         )
     }
 
@@ -286,8 +290,11 @@ class SettingsViewModel @Inject constructor(
         }
     }
 
-    private fun describe(t: Throwable): String =
-        t.message?.takeIf { it.isNotBlank() } ?: t.javaClass.simpleName
+    private fun describe(t: Throwable): String = errorSummary(t)
+
+    private fun errorSummary(t: Throwable): String =
+        t.javaClass.simpleName.takeIf { it.isNotBlank() }
+            ?: context.getString(R.string.settings_unknown_error)
 
     fun exportLog() = viewModelScope.launch {
         _uiState.update { it.copy(exportingLog = true, exportLogResult = null) }
@@ -297,8 +304,12 @@ class SettingsViewModel @Inject constructor(
             it.copy(
                 exportingLog = false,
                 exportLogResult = r.fold(
-                    onSuccess = { path -> "✓ 已导出到 $path" },
-                    onFailure = { e -> "✗ 导出失败：${e.message}" }
+                    onSuccess = { path ->
+                        context.getString(R.string.settings_export_success, path)
+                    },
+                    onFailure = { e ->
+                        context.getString(R.string.settings_export_failed, errorSummary(e))
+                    }
                 )
             )
         }
@@ -317,14 +328,12 @@ class SettingsViewModel @Inject constructor(
                 exportingLog = false,
                 exportLogResult = r.fold(
                     onSuccess = { null },                      // 成功就让分享面板替我们说话，不刷字
-                    onFailure = { e -> "✗ 分享失败：${e.message}" }
+                    onFailure = { e ->
+                        context.getString(R.string.settings_share_failed, errorSummary(e))
+                    }
                 )
             )
         }
-    }
-
-    fun clearExportResult() {
-        _uiState.update { it.copy(exportLogResult = null) }
     }
 
     // -------------------- ASR 引擎切换 / 模型管理 --------------------

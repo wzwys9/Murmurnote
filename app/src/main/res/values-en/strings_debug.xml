@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="debug_title">DEBUG MODE</string>
+    <string name="debug_banner">⚠ DEBUG MODE — FOR DEVELOPMENT ONLY</string>
+    <string name="debug_tab_pipeline">Pipeline</string>
+    <string name="debug_tab_api_logs">API Logs</string>
+    <string name="debug_tab_prompt">Prompt</string>
+    <string name="debug_tab_runtime_logs">Runtime Logs</string>
+    <string name="debug_tab_config">Config</string>
+    <string name="debug_pipeline_title">Pipeline Inspector</string>
+    <string name="debug_pipeline_description">Select the latest recording to inspect every pipeline stage. Current implementation: select latest → match ApiLog by startedAt.</string>
+    <string name="debug_pipeline_hint">👷 Use “Reprocess” on the details screen to trigger the pipeline and inspect stage timings.</string>
+    <string name="debug_clear_logs">Clear logs</string>
+    <string name="debug_log_metadata_only">Only request metadata is retained. Bodies and exception messages are not saved.</string>
+    <string name="debug_prompt_title">Prompt Debugger</string>
+    <string name="debug_system_prompt_label">System prompt (overrides default)</string>
+    <string name="debug_user_prompt_label" formatted="false">User prompt template (contains %1$s)</string>
+    <string name="debug_restore_defaults">Restore defaults</string>
+    <string name="debug_filter_all">All</string>
+    <string name="debug_filter_info">Info</string>
+    <string name="debug_filter_warn">Warn</string>
+    <string name="debug_filter_error">Error</string>
+    <string name="debug_filter_debug">Debug</string>
+    <string name="debug_clear">Clear</string>
+    <string name="debug_log_line_count">Log lines shown: %1$d/%2$d (maximum 500)</string>
+    <string name="debug_no_runtime_logs">No logs yet. Tap “Refresh” to load runtime.log.</string>
+    <string name="debug_no_matching_logs">No lines match the current filter.</string>
+    <string name="debug_force_network_failure">Force network failure</string>
+    <string name="debug_simulated_delay">Simulated delay (ms)</string>
+</resources>

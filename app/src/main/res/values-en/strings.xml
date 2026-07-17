@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Murmurnote</string>
+    <string name="tab_home">Record</string>
+    <string name="tab_list">Library</string>
+    <string name="tab_todo">To-dos</string>
+    <string name="tab_idea">Ideas</string>
+    <string name="tab_settings">Settings</string>
+    <string name="notif_channel_processing">Processing</string>
+    <string name="notif_processing_title">Processing recording</string>
+    <string name="notif_channel_recording">Recording</string>
+    <string name="notif_channel_recording_description">Continue recording while the screen is locked or the app is in the background</string>
+    <string name="notif_recording_title">Recording in progress</string>
+    <string name="notif_recording_text">Recording continues while the screen is locked. Tap to return to Murmurnote.</string>
+</resources>

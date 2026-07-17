@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="onboarding_previous">Back</string>
+    <string name="onboarding_get_started">Get started</string>
+    <string name="onboarding_tagline_line_one">Just say it</string>
+    <string name="onboarding_tagline_line_two">AI writes it down</string>
+    <string name="onboarding_tagline_description">Capture inspirations, to-dos, and ideas with your voice</string>
+    <string name="onboarding_capabilities_title">What it can do</string>
+    <string name="onboarding_capability_record_title">🎙 Record / import</string>
+    <string name="onboarding_capability_record_description">Record on the spot or share audio from another app</string>
+    <string name="onboarding_capability_local_title">📝 On-device transcription</string>
+    <string name="onboarding_capability_local_description">SenseVoice transcribes offline by default, with no API key required</string>
+    <string name="onboarding_capability_cloud_title">☁️ Optional cloud features</string>
+    <string name="onboarding_capability_cloud_description">Cloud transcription and AI summaries only run after you configure and enable them</string>
+    <string name="onboarding_capability_storage_title">📂 Local storage</string>
+    <string name="onboarding_capability_storage_description">All data stays on your device; audio is automatically removed after 30 days</string>
+    <string name="onboarding_cloud_title">Optional cloud services</string>
+    <string name="onboarding_cloud_description">On-device transcription works without setup. Add the corresponding API key only if you choose cloud transcription or enable cloud AI summaries. You can also skip this step.</string>
+    <string name="onboarding_glm_key_label">Zhipu GLM API key (optional cloud transcription)</string>
+    <string name="onboarding_deepseek_key_label">DeepSeek API key (optional AI summaries)</string>
+    <string name="onboarding_get_api_key">→ Need one? Apply here</string>
+    <string name="onboarding_testing">Testing…</string>
+    <string name="onboarding_test_connections">Test configured connections</string>
+    <string name="onboarding_no_cloud_configured">No cloud service is configured. You can continue with on-device transcription.</string>
+    <string name="onboarding_connection_success">✓ %1$s connected</string>
+    <string name="onboarding_connection_failure">%1$s failed to connect. You can try again later in Settings.</string>
+    <string name="onboarding_permissions_title">Permissions</string>
+    <string name="onboarding_permissions_description">Murmurnote needs these permissions to work:</string>
+    <string name="onboarding_permission_microphone_title">🎤 Microphone</string>
+    <string name="onboarding_permission_microphone_description">Used while recording</string>
+    <string name="onboarding_permission_notification_title">🔔 Notifications</string>
+    <string name="onboarding_permission_notification_description">Shows progress while recordings are processed</string>
+    <string name="onboarding_permission_media_title">📂 Media access</string>
+    <string name="onboarding_permission_media_description">Lets you import audio from other apps</string>
+</resources>

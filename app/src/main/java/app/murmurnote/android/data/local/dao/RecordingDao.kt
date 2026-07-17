@@ -179,18 +179,6 @@ interface RecordingDao {
     // 但能正确命中中英文及混合输入。recordings_fts 表保留不动,只是不再被这条查询使用。
     @Query("""
         SELECT * FROM recordings
-        WHERE title LIKE '%' || :query || '%'
-           OR tags LIKE '%' || :query || '%'
-           OR summary LIKE '%' || :query || '%'
-           OR draftSummary LIKE '%' || :query || '%'
-           OR finalSummary LIKE '%' || :query || '%'
-           OR correctedTranscript LIKE '%' || :query || '%'
-        ORDER BY createdAt DESC
-    """)
-    fun searchRecordings(query: String): Flow<List<Recording>>
-
-    @Query("""
-        SELECT * FROM recordings
         WHERE (:fromMs IS NULL OR createdAt >= :fromMs)
           AND (:toMs IS NULL OR createdAt <= :toMs)
           AND (

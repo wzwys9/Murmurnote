@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources xmlns:tools="http://schemas.android.com/tools" tools:locale="zh">
+    <string name="debug_title">调试模式</string>
+    <string name="debug_banner">⚠ 调试模式 — 仅供开发使用</string>
+    <string name="debug_tab_pipeline">Pipeline</string>
+    <string name="debug_tab_api_logs">API 日志</string>
+    <string name="debug_tab_prompt">Prompt</string>
+    <string name="debug_tab_runtime_logs">运行日志</string>
+    <string name="debug_tab_config">配置</string>
+    <string name="debug_pipeline_title">Pipeline 检视器</string>
+    <string name="debug_pipeline_description">选择最近一条录音查看完整 Pipeline 阶段。当前实现：选择最近条 → ApiLog 按 startedAt 关联</string>
+    <string name="debug_pipeline_hint">👷 后续可点详情页中的“重新处理”触发并观察各阶段耗时</string>
+    <string name="debug_clear_logs">清空日志</string>
+    <string name="debug_log_metadata_only">仅保留请求元数据，不保存正文或异常消息。</string>
+    <string name="debug_prompt_title">Prompt 调试</string>
+    <string name="debug_system_prompt_label">System Prompt（覆盖默认）</string>
+    <string name="debug_user_prompt_label" formatted="false">User Prompt 模板（含 %1$s）</string>
+    <string name="debug_restore_defaults">恢复默认</string>
+    <string name="debug_filter_all">全部</string>
+    <string name="debug_filter_info">信息</string>
+    <string name="debug_filter_warn">警告</string>
+    <string name="debug_filter_error">错误</string>
+    <string name="debug_filter_debug">调试</string>
+    <string name="debug_clear">清空</string>
+    <string name="debug_log_line_count">日志行数：%1$d/%2$d（最多 500 行）</string>
+    <string name="debug_no_runtime_logs">尚无日志，点“刷新”加载 runtime.log</string>
+    <string name="debug_no_matching_logs">当前过滤条件下无匹配行</string>
+    <string name="debug_force_network_failure">强制网络失败</string>
+    <string name="debug_simulated_delay">模拟延迟（ms）</string>
+</resources>

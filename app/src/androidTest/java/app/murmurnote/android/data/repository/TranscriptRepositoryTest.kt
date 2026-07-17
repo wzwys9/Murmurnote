@@ -13,6 +13,8 @@ import app.murmurnote.android.data.local.entity.ItemType
 import app.murmurnote.android.data.local.entity.ProcessingStatus
 import app.murmurnote.android.data.local.entity.Recording
 import app.murmurnote.android.data.local.entity.RecordingSource
+import app.murmurnote.android.domain.correction.CorrectionMatchMode
+import app.murmurnote.android.domain.correction.CorrectionRuleOrigin
 import app.murmurnote.android.domain.correction.CorrectionScope
 import app.murmurnote.android.domain.correction.PersonalLearningConfidence
 import app.murmurnote.android.domain.correction.PersonalLearningVerdict
@@ -241,7 +243,7 @@ class TranscriptRepositoryTest {
                 ),
             PROVENANCE
         )
-        repository.createGlobalLexiconRule("alpha", "omega", now = 10L)
+        saveExactUserDefinedRule("alpha", "omega", now = 10L)
 
         repository.finalizeModelTranscript(
             recordingId = RECORDING_ID,
@@ -286,7 +288,7 @@ class TranscriptRepositoryTest {
             modelSegment(rawText = "alpha", sequence = 0),
             PROVENANCE,
         )
-        repository.createGlobalLexiconRule("alpha", "omega", now = 21L)
+        saveExactUserDefinedRule("alpha", "omega", now = 21L)
 
         repository.finalizeModelTranscript(
             recordingId = RECORDING_ID,
@@ -769,7 +771,7 @@ class TranscriptRepositoryTest {
             insertActivePersonalRule("learned-rule", "生", "声")
             insertActivePersonalRule("protected-rule", "Alpha版本", "恶意替换")
             insertRecording()
-            repository.createGlobalLexiconRule(
+            saveExactUserDefinedRule(
                 observedText = "阿尔法",
                 replacementText = "Alpha版本",
                 now = 60L,
@@ -1101,7 +1103,7 @@ class TranscriptRepositoryTest {
     @Test
     fun recordingRuleApiNeverReusesOrConflictsWithGlobalLexiconRows() = runBlocking {
         insertRecording()
-        val global = repository.createGlobalLexiconRule("alpha", "omega", now = 90L)
+        val global = saveExactUserDefinedRule("alpha", "omega", now = 90L)
         val recording = repository.rememberRecordingRule(
             recordingId = RECORDING_ID,
             diff = app.murmurnote.android.domain.correction.SingleReplacementDiff(
@@ -1118,13 +1120,13 @@ class TranscriptRepositoryTest {
         assertEquals(CorrectionScope.RECORDING, recording.scope)
         assertFalse(global.id == recording.id)
         assertEquals(listOf(recording.id), repository.getRecordingRules(RECORDING_ID).map { it.id })
-        assertEquals(listOf(global.id), repository.observeGlobalLexiconRules().first().map { it.id })
+        assertEquals(listOf(global.id), repository.observeUserDefinedRules().first().map { it.id })
     }
 
     @Test
     fun recordingRuleToggleCannotMutateAGlobalLexiconRow() = runBlocking {
         insertRecording()
-        val global = repository.createGlobalLexiconRule("alpha", "omega", now = 92L)
+        val global = saveExactUserDefinedRule("alpha", "omega", now = 92L)
 
         assertThrows(IllegalStateException::class.java) {
             runBlocking {
@@ -1137,7 +1139,7 @@ class TranscriptRepositoryTest {
             }
         }
 
-        assertTrue(repository.observeGlobalLexiconRules().first().single().isEnabled)
+        assertTrue(repository.observeUserDefinedRules().first().single().isEnabled)
         assertTrue(repository.getRecordingRules(RECORDING_ID).isEmpty())
     }
 
@@ -1145,12 +1147,12 @@ class TranscriptRepositoryTest {
     fun globalLexicon_createReactivateToggleAndDeleteAreScopedAndIdempotent() = runBlocking {
         insertRecording()
 
-        val created = repository.createGlobalLexiconRule(
+        val created = saveExactUserDefinedRule(
             observedText = "  木木笔记  ",
             replacementText = "  声记应用  ",
             now = 100L,
         )
-        val duplicate = repository.createGlobalLexiconRule(
+        val duplicate = saveExactUserDefinedRule(
             observedText = "木木笔记",
             replacementText = "声记应用",
             now = 101L,
@@ -1160,12 +1162,12 @@ class TranscriptRepositoryTest {
         assertEquals("木木笔记", created.observedText)
         assertEquals("声记应用", created.replacementText)
         assertEquals(CorrectionScope.GLOBAL, created.scope)
-        assertEquals(1, repository.observeGlobalLexiconRules().first().size)
+        assertEquals(1, repository.observeUserDefinedRules().first().size)
 
-        repository.setGlobalLexiconRuleEnabled(created.id, enabled = false, now = 102L)
-        assertFalse(repository.observeGlobalLexiconRules().first().single().isEnabled)
+        repository.setUserDefinedRuleEnabled(created.id, enabled = false, now = 102L)
+        assertFalse(repository.observeUserDefinedRules().first().single().isEnabled)
 
-        val reactivated = repository.createGlobalLexiconRule(
+        val reactivated = saveExactUserDefinedRule(
             observedText = "木木笔记",
             replacementText = "声记应用",
             now = 103L,
@@ -1173,23 +1175,159 @@ class TranscriptRepositoryTest {
         assertEquals(created.id, reactivated.id)
         assertTrue(reactivated.isEnabled)
 
-        repository.deleteGlobalLexiconRule(created.id)
-        assertTrue(repository.observeGlobalLexiconRules().first().isEmpty())
+        repository.deleteUserDefinedRule(created.id)
+        assertTrue(repository.observeUserDefinedRules().first().isEmpty())
+    }
+
+    @Test
+    fun userDefinedRuleDefaultsToContextualAndCanSwitchToExactText() = runBlocking {
+        val created = repository.saveUserDefinedRule(
+            observedText = "木木笔记",
+            replacementText = "声记应用",
+            now = 104L,
+        )
+
+        assertEquals(CorrectionRuleOrigin.USER_DEFINED, created.origin)
+        assertEquals(CorrectionMatchMode.CONTEXTUAL_LLM, created.matchMode)
+
+        repository.setUserDefinedRuleMatchMode(
+            ruleId = created.id,
+            matchMode = CorrectionMatchMode.EXACT_TEXT,
+            now = 105L,
+        )
+
+        val updated = repository.observeUserDefinedRules().first().single()
+        assertEquals(CorrectionMatchMode.EXACT_TEXT, updated.matchMode)
+    }
+
+    @Test
+    fun contextualUserRuleOnlyParticipatesWhenItsSourceIsIncluded() = runBlocking {
+        val rule = repository.saveUserDefinedRule(
+            observedText = "木木笔记",
+            replacementText = "声记应用",
+            now = 106L,
+        )
+        insertFinalizedSingleSegment("这是木木笔记")
+
+        assertTrue(
+            personalCorrectionRepository.prepareSnapshot(RECORDING_ID).candidates.isEmpty(),
+        )
+        val included = personalCorrectionRepository.prepareSnapshot(
+            recordingId = RECORDING_ID,
+            includeUserDefinedRules = true,
+            includePersonalLearningRules = false,
+        )
+
+        assertEquals(1, included.candidates.size)
+        assertEquals(rule.id, included.candidates.single().ruleId)
+        assertEquals(
+            CorrectionRuleOrigin.USER_DEFINED,
+            included.candidates.single().ruleOrigin,
+        )
+        assertTrue(
+            personalCorrectionRepository.applyApproved(
+                snapshot = included,
+                approved = included.candidates,
+                now = 107L,
+            ),
+        )
+        assertEquals(
+            "这是声记应用",
+            database.recordingDao().getById(RECORDING_ID)!!.correctedTranscript,
+        )
+    }
+
+    @Test
+    fun savingAUserDefinitionDisablesConflictingPersonalLearningRules() = runBlocking {
+        insertActivePersonalRule(
+            id = "learned-rule",
+            observedText = "木木笔记",
+            replacementText = "旧的写法",
+        )
+
+        repository.saveUserDefinedRule(
+            observedText = "木木笔记",
+            replacementText = "声记应用",
+            now = 107L,
+        )
+
+        assertFalse(database.correctionDao().getRule("learned-rule")!!.isEnabled)
+        assertEquals(
+            "DISABLED",
+            database.personalCorrectionDao().getProfile("learned-rule")!!.state,
+        )
+    }
+
+    @Test
+    fun userDictionaryApisCannotMutatePersonalLearningRules() = runBlocking {
+        insertActivePersonalRule(
+            id = "learned-rule",
+            observedText = "生记",
+            replacementText = "声记",
+        )
+
+        assertThrows(IllegalArgumentException::class.java) {
+            runBlocking {
+                repository.setUserDefinedRuleEnabled(
+                    ruleId = "learned-rule",
+                    enabled = false,
+                    now = 107L,
+                )
+            }
+        }
+        assertThrows(IllegalArgumentException::class.java) {
+            runBlocking {
+                repository.setUserDefinedRuleMatchMode(
+                    ruleId = "learned-rule",
+                    matchMode = CorrectionMatchMode.EXACT_TEXT,
+                    now = 108L,
+                )
+            }
+        }
+        assertThrows(IllegalArgumentException::class.java) {
+            runBlocking { repository.deleteUserDefinedRule("learned-rule") }
+        }
+
+        assertTrue(database.correctionDao().getRule("learned-rule")!!.isEnabled)
+        assertEquals(
+            "ACTIVE",
+            database.personalCorrectionDao().getProfile("learned-rule")!!.state,
+        )
+    }
+
+    @Test
+    fun enabledUserDefinitionPreventsCapturingTheSamePersonalLearningRule() = runBlocking {
+        repository.saveUserDefinedRule(
+            observedText = "木木笔记",
+            replacementText = "声记应用",
+            now = 108L,
+        )
+        val segmentId = insertFinalizedSingleSegment("这是木木笔记")
+
+        repository.editSegment(
+            recordingId = RECORDING_ID,
+            segmentId = segmentId,
+            newText = "这是声记应用",
+            capturePersonalLearning = true,
+            now = 109L,
+        )
+
+        assertEquals(0, database.personalCorrectionDao().countProfiles())
     }
 
     @Test
     fun globalLexicon_rejectsConflictsAndCannotMutateRecordingRules() = runBlocking {
         insertRecording()
-        repository.createGlobalLexiconRule("木木笔记", "声记应用", now = 110L)
+        saveExactUserDefinedRule("木木笔记", "声记应用", now = 110L)
 
         assertThrows(IllegalArgumentException::class.java) {
             runBlocking {
-                repository.createGlobalLexiconRule("木木笔记", "其他写法", now = 111L)
+                saveExactUserDefinedRule("木木笔记", "其他写法", now = 111L)
             }
         }
         assertThrows(IllegalArgumentException::class.java) {
             runBlocking {
-                repository.createGlobalLexiconRule("声记应用", "木木笔记", now = 112L)
+                saveExactUserDefinedRule("声记应用", "木木笔记", now = 112L)
             }
         }
 
@@ -1206,7 +1344,7 @@ class TranscriptRepositoryTest {
         )
         assertThrows(IllegalArgumentException::class.java) {
             runBlocking {
-                repository.setGlobalLexiconRuleEnabled(
+                repository.setUserDefinedRuleEnabled(
                     recordingRule.id,
                     enabled = false,
                     now = 114L,
@@ -1214,7 +1352,7 @@ class TranscriptRepositoryTest {
             }
         }
         assertThrows(IllegalArgumentException::class.java) {
-            runBlocking { repository.deleteGlobalLexiconRule(recordingRule.id) }
+            runBlocking { repository.deleteUserDefinedRule(recordingRule.id) }
         }
         assertTrue(
             repository.getRecordingRules(RECORDING_ID)
@@ -1252,7 +1390,7 @@ class TranscriptRepositoryTest {
 
         assertThrows(IllegalArgumentException::class.java) {
             runBlocking {
-                repository.setGlobalLexiconRuleEnabled(
+                repository.setUserDefinedRuleEnabled(
                     ruleId = "disabled-rule",
                     enabled = true,
                     now = 122L,
@@ -1260,7 +1398,7 @@ class TranscriptRepositoryTest {
             }
         }
 
-        val target = repository.observeGlobalLexiconRules().first()
+        val target = repository.observeUserDefinedRules().first()
             .single { it.id == "disabled-rule" }
         assertFalse(target.isEnabled)
     }
@@ -1273,7 +1411,7 @@ class TranscriptRepositoryTest {
             modelSegment(rawText = "alpha", sequence = 0),
             PROVENANCE,
         )
-        val rule = repository.createGlobalLexiconRule("alpha", "omega", now = 130L)
+        val rule = saveExactUserDefinedRule("alpha", "omega", now = 130L)
         repository.finalizeModelTranscript(
             recordingId = RECORDING_ID,
             provenance = PROVENANCE,
@@ -1282,7 +1420,7 @@ class TranscriptRepositoryTest {
             now = 131L,
         )
 
-        repository.deleteGlobalLexiconRule(rule.id)
+        repository.deleteUserDefinedRule(rule.id)
 
         val audit = repository.getAuditRecords(RECORDING_ID).single()
         assertNull(audit.sourceRuleId)
@@ -1344,6 +1482,17 @@ class TranscriptRepositoryTest {
         return segment.id
     }
 
+    private suspend fun saveExactUserDefinedRule(
+        observedText: String,
+        replacementText: String,
+        now: Long,
+    ) = repository.saveUserDefinedRule(
+        observedText = observedText,
+        replacementText = replacementText,
+        matchMode = CorrectionMatchMode.EXACT_TEXT,
+        now = now,
+    )
+
     private suspend fun insertActivePersonalRule(
         id: String,
         observedText: String,
@@ -1356,6 +1505,7 @@ class TranscriptRepositoryTest {
                 replacementText = replacementText,
                 scope = CorrectionScope.GLOBAL.name,
                 matchMode = "CONTEXTUAL_LLM",
+                origin = CorrectionRuleOrigin.PERSONAL_LEARNING.name,
                 isEnabled = true,
                 createdAt = 1L,
                 updatedAt = 1L,

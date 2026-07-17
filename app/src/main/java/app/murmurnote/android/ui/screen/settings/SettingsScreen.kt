@@ -57,6 +57,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.semantics
@@ -71,6 +72,7 @@ import androidx.core.net.toUri
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import app.murmurnote.android.BuildConfig
+import app.murmurnote.android.R
 import app.murmurnote.android.data.asr.AsrEngineType
 import app.murmurnote.android.data.asr.AsrModelUrls
 import app.murmurnote.android.data.asr.AsrModelManager
@@ -117,7 +119,7 @@ fun SettingsScreen(
     if (showSafeLexicon) {
         SafeLexiconScreen(
             modifier = modifier,
-            masterEnabled = state.safeLexiconEnabled && state.llmApiKey.isNotBlank(),
+            masterEnabled = state.safeLexiconEnabled,
             llmApiConfigured = state.llmApiKey.isNotBlank(),
             onMasterEnabledChange = viewModel::setSafeLexiconEnabled,
             onBack = { showSafeLexicon = false },
@@ -127,7 +129,7 @@ fun SettingsScreen(
     if (showLaboratory) {
         LaboratoryScreen(
             modifier = modifier,
-            safeLexiconEnabled = state.safeLexiconEnabled && state.llmApiKey.isNotBlank(),
+            safeLexiconEnabled = state.safeLexiconEnabled,
             personalCorrectionEnabled =
                 state.personalCorrectionEnabled && state.llmApiKey.isNotBlank(),
             personalCorrectionDisclosureAccepted =
@@ -158,19 +160,19 @@ fun SettingsScreen(
         modifier = modifier.fillMaxWidth(),
         contentPadding = PaddingValues(vertical = 8.dp)
     ) {
-        item { SettingSectionHeader("语音识别") }
+        item { SettingSectionHeader(stringResource(R.string.settings_section_speech)) }
         item {
             AsrSettingsDirectoryCard(
                 panel = AsrSettingsPanel.CLOUD,
                 selected = asrSettingsPanel == AsrSettingsPanel.CLOUD,
-                statusText = asrSettingsStatusText(
+                statusText = asrSettingsStatus(
                     panel = AsrSettingsPanel.CLOUD,
                     selected = asrSettingsPanel == AsrSettingsPanel.CLOUD,
                     cloudApiConfigured = state.glmApiKey.isNotBlank(),
                     localModelDisplayName = AsrModelUrls.modelById(
                         state.asrLocalModelId,
                     ).displayName,
-                ),
+                ).displayText(),
                 onSelect = {
                     viewModel.setAsrEngineType(AsrEngineType.CLOUD_GLM.name)
                 },
@@ -183,14 +185,14 @@ fun SettingsScreen(
             AsrSettingsDirectoryCard(
                 panel = AsrSettingsPanel.LOCAL,
                 selected = asrSettingsPanel == AsrSettingsPanel.LOCAL,
-                statusText = asrSettingsStatusText(
+                statusText = asrSettingsStatus(
                     panel = AsrSettingsPanel.LOCAL,
                     selected = asrSettingsPanel == AsrSettingsPanel.LOCAL,
                     cloudApiConfigured = state.glmApiKey.isNotBlank(),
                     localModelDisplayName = AsrModelUrls.modelById(
                         state.asrLocalModelId,
                     ).displayName,
-                ),
+                ).displayText(),
                 onSelect = {
                     viewModel.setAsrEngineType(AsrEngineType.LOCAL_SENSE_VOICE.name)
                 },
@@ -201,8 +203,8 @@ fun SettingsScreen(
         }
         item {
             SettingGroupHeader(
-                title = "录音时处理",
-                description = "两种识别引擎共用的实时处理与省电选项。"
+                title = stringResource(R.string.settings_recording_processing),
+                description = stringResource(R.string.settings_recording_processing_description)
             )
         }
         item {
@@ -214,7 +216,7 @@ fun SettingsScreen(
             )
         }
 
-        item { SettingSectionHeader("AI 文本整理") }
+        item { SettingSectionHeader(stringResource(R.string.settings_section_ai)) }
         item {
             AiExtractionSwitch(
                 enabled = state.aiExtractionEnabled,
@@ -230,9 +232,12 @@ fun SettingsScreen(
             }
             item {
                 ApiKeySettingItem(
-                    title = "${llmProvider.displayName} API Key",
-                    description = "用于 AI 文本提取与总结",
-                    placeholder = "请输入您的 ${llmProvider.displayName} API Key",
+                    title = stringResource(R.string.settings_api_key_title, llmProvider.displayName),
+                    description = stringResource(R.string.settings_llm_api_description),
+                    placeholder = stringResource(
+                        R.string.settings_llm_api_placeholder,
+                        llmProvider.displayName,
+                    ),
                     value = state.llmApiKey,
                     isConfigured = state.llmApiKey.isNotBlank(),
                     onValueChange = viewModel::updateLlmApiKey,
@@ -259,7 +264,7 @@ fun SettingsScreen(
                 )
             }
             item {
-                ExpandableSection("AI 服务高级设置") {
+                ExpandableSection(stringResource(R.string.settings_ai_advanced)) {
                     ServiceBaseUrlField(
                         value = state.llmBaseUrl,
                         onValueChange = viewModel::updateLlmBaseUrl,
@@ -269,17 +274,17 @@ fun SettingsScreen(
             }
         }
 
-        item { SettingSectionHeader("更多") }
+        item { SettingSectionHeader(stringResource(R.string.settings_section_more)) }
         item {
             LaboratoryDirectoryCard(
                 onOpen = { showLaboratory = true },
             )
         }
 
-        item { SettingSectionHeader("关于") }
+        item { SettingSectionHeader(stringResource(R.string.settings_section_about)) }
         item {
             ListItem(
-                headlineContent = { Text("版本") },
+                headlineContent = { Text(stringResource(R.string.settings_version)) },
                 trailingContent = { Text(BuildConfig.VERSION_NAME) },
                 modifier = Modifier.clickable {
                     val now = System.currentTimeMillis()
@@ -301,7 +306,7 @@ fun SettingsScreen(
             )
         }
 
-        item { SettingSectionHeader("日志") }
+        item { SettingSectionHeader(stringResource(R.string.settings_section_logs)) }
         item {
             val ctx = LocalContext.current
             Card(
@@ -310,11 +315,9 @@ fun SettingsScreen(
                     .padding(horizontal = 16.dp, vertical = 4.dp)
             ) {
                 Column(modifier = Modifier.padding(16.dp)) {
-                    Text("运行日志", style = MaterialTheme.typography.titleMedium)
+                    Text(stringResource(R.string.settings_runtime_logs), style = MaterialTheme.typography.titleMedium)
                     Text(
-                        "打包成 zip。包含：runtime.log（录音/Pipeline/API/设置/崩溃事件）、" +
-                            "runtime.log.old（轮转备份）、api_logs.txt（最近 100 条 HTTP 方法、主机、状态码和耗时等元数据，不含正文或凭据）、" +
-                            "meta.txt（设备与版本信息）。",
+                        stringResource(R.string.settings_runtime_logs_description),
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
@@ -327,14 +330,14 @@ fun SettingsScreen(
                             if (state.exportingLog) {
                                 CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp)
                                 Spacer(Modifier.width(8.dp))
-                                Text("处理中…")
-                            } else Text("导出到 Downloads")
+                                Text(stringResource(R.string.settings_processing))
+                            } else Text(stringResource(R.string.settings_export_downloads))
                         }
                         OutlinedButton(
                             onClick = { viewModel.shareLog(ctx) },
                             enabled = !state.exportingLog
                         ) {
-                            Text("分享")
+                            Text(stringResource(R.string.settings_share))
                         }
                     }
                     state.exportLogResult?.let { msg ->
@@ -353,6 +356,15 @@ fun SettingsScreen(
 }
 
 @Composable
+private fun AsrSettingsStatus?.displayText(): String? = when (this) {
+    is AsrSettingsStatus.Cloud -> stringResource(
+        if (configured) R.string.asr_api_configured else R.string.asr_api_not_configured
+    )
+    is AsrSettingsStatus.Local -> stringResource(R.string.asr_current_model, modelDisplayName)
+    null -> null
+}
+
+@Composable
 private fun AsrSettingsDetailScreen(
     modifier: Modifier,
     panel: AsrSettingsPanel,
@@ -361,14 +373,14 @@ private fun AsrSettingsDetailScreen(
     onBack: () -> Unit,
 ) {
     val title = if (panel == AsrSettingsPanel.CLOUD) {
-        "云端语音识别"
+        stringResource(R.string.asr_cloud_title)
     } else {
-        "本地模型"
+        stringResource(R.string.asr_local_title)
     }
     val description = if (panel == AsrSettingsPanel.CLOUD) {
-        "智谱 GLM-ASR 的 API 与接口设置"
+        stringResource(R.string.settings_cloud_detail_description)
     } else {
-        "模型选择、识别语言、安装与更新"
+        stringResource(R.string.settings_local_detail_description)
     }
 
     LazyColumn(
@@ -386,9 +398,9 @@ private fun AsrSettingsDetailScreen(
             AsrSettingsPanel.CLOUD -> {
                 item {
                     ApiKeySettingItem(
-                        title = "智谱 GLM API Key",
-                        description = "仅用于云端语音识别；已内置密钥时可留空",
-                        placeholder = "请输入您的智谱 API Key",
+                        title = stringResource(R.string.settings_glm_api_title),
+                        description = stringResource(R.string.settings_glm_api_description),
+                        placeholder = stringResource(R.string.settings_glm_api_placeholder),
                         value = state.glmApiKey,
                         isConfigured = state.glmApiKey.isNotBlank(),
                         onValueChange = viewModel::updateGlmApiKey,
@@ -398,7 +410,7 @@ private fun AsrSettingsDetailScreen(
                     )
                 }
                 item {
-                    ExpandableSection("云端识别高级设置") {
+                    ExpandableSection(stringResource(R.string.settings_cloud_advanced)) {
                         ServiceBaseUrlField(
                             value = state.glmBaseUrl,
                             onValueChange = viewModel::updateGlmBaseUrl,
@@ -438,7 +450,11 @@ private fun AsrSettingsDetailScreen(
                         updateChecking = state.asrModelUpdateChecking,
                         bundledAssetsAvailable = state.asrBundledAssetsAvailable,
                         mirrorIndex = state.asrMirrorIndex,
-                        mirrorOptions = state.asrMirrorOptions,
+                        mirrorOptions = listOf(
+                            stringResource(R.string.asr_mirror_github),
+                            stringResource(R.string.asr_mirror_ghproxy),
+                            stringResource(R.string.asr_mirror_gh_proxy),
+                        ),
                         localConcurrency = state.asrLocalConcurrency,
                         onMirrorSelected = viewModel::setAsrMirrorIndex,
                         onConcurrencyChanged = viewModel::setAsrLocalConcurrency,
@@ -476,7 +492,7 @@ private fun SettingsDetailHeader(
         IconButton(onClick = onBack) {
             Icon(
                 imageVector = Icons.AutoMirrored.Filled.ArrowBack,
-                contentDescription = "返回设置",
+                contentDescription = stringResource(R.string.settings_back),
             )
         }
         Column(modifier = Modifier.padding(start = 4.dp)) {
@@ -509,9 +525,9 @@ private fun AppUpdateCheckCard(
         Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Column(modifier = Modifier.weight(1f)) {
-                    Text("检查更新", style = MaterialTheme.typography.titleMedium)
+                    Text(stringResource(R.string.settings_update_title), style = MaterialTheme.typography.titleMedium)
                     Text(
-                        "从 GitHub Releases 获取最新版本。",
+                        stringResource(R.string.settings_update_description),
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
@@ -523,11 +539,11 @@ private fun AppUpdateCheckCard(
                     if (status is AppUpdateStatus.Checking) {
                         CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp)
                         Spacer(Modifier.width(6.dp))
-                        Text("检查中…")
+                        Text(stringResource(R.string.settings_checking))
                     } else {
                         Icon(Icons.Filled.Refresh, contentDescription = null, modifier = Modifier.size(18.dp))
                         Spacer(Modifier.width(6.dp))
-                        Text("检查")
+                        Text(stringResource(R.string.settings_check))
                     }
                 }
             }
@@ -535,18 +551,18 @@ private fun AppUpdateCheckCard(
             when (status) {
                 AppUpdateStatus.Idle -> Unit
                 AppUpdateStatus.Checking -> Text(
-                    "正在检查最新版本…",
+                    stringResource(R.string.settings_update_checking),
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
                 is AppUpdateStatus.UpToDate -> Text(
-                    "已是最新版本：${status.latestVersion}",
+                    stringResource(R.string.settings_update_current, status.latestVersion),
                     style = MaterialTheme.typography.bodySmall,
                     color = Color(0xFF4CAF50)
                 )
                 is AppUpdateStatus.UpdateAvailable -> {
                     Text(
-                        "发现新版本：${status.latestVersion}",
+                        stringResource(R.string.settings_update_available, status.latestVersion),
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.primary
                     )
@@ -555,11 +571,11 @@ private fun AppUpdateCheckCard(
                     }) {
                         Icon(Icons.AutoMirrored.Filled.OpenInNew, contentDescription = null, modifier = Modifier.size(18.dp))
                         Spacer(Modifier.width(6.dp))
-                        Text("打开下载页")
+                        Text(stringResource(R.string.settings_open_download))
                     }
                 }
                 is AppUpdateStatus.Failed -> Text(
-                    "检查失败：${status.message}",
+                    stringResource(R.string.settings_update_failed, status.message),
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.error
                 )
@@ -575,19 +591,29 @@ private fun RealtimePerformanceSection(
     onModeSelected: (String) -> Unit,
     onLowBatteryProtectionChanged: (Boolean) -> Unit
 ) {
-    val options = remember {
-        listOf(
-            "OFF" to ("关闭" to "录音中不做实时转写和滚动总结，停止后完整处理"),
-            "POWER_SAVE" to ("省电" to "保留实时转写，降低滚动总结频率"),
-            "BALANCED" to ("平衡" to "默认实时转写和滚动总结频率"),
-            "FAST" to ("快速" to "更频繁更新滚动总结，耗电更高")
-        )
-    }
+    val options = listOf(
+        "OFF" to (
+            stringResource(R.string.settings_performance_off) to
+                stringResource(R.string.settings_performance_off_description)
+            ),
+        "POWER_SAVE" to (
+            stringResource(R.string.settings_performance_power_save) to
+                stringResource(R.string.settings_performance_power_save_description)
+            ),
+        "BALANCED" to (
+            stringResource(R.string.settings_performance_balanced) to
+                stringResource(R.string.settings_performance_balanced_description)
+            ),
+        "FAST" to (
+            stringResource(R.string.settings_performance_fast) to
+                stringResource(R.string.settings_performance_fast_description)
+            )
+    )
     val selected = options.firstOrNull { it.first == mode } ?: options.first { it.first == "BALANCED" }
     var expanded by remember { mutableStateOf(false) }
     Card(modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp)) {
         Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-            Text("实时处理性能", style = MaterialTheme.typography.titleMedium)
+            Text(stringResource(R.string.settings_performance_title), style = MaterialTheme.typography.titleMedium)
             ExposedDropdownMenuBox(
                 expanded = expanded,
                 onExpandedChange = { expanded = it }
@@ -596,7 +622,7 @@ private fun RealtimePerformanceSection(
                     value = selected.second.first,
                     onValueChange = {},
                     readOnly = true,
-                    label = { Text("处理模式") },
+                    label = { Text(stringResource(R.string.settings_performance_mode)) },
                     trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded) },
                     modifier = Modifier
                         .fillMaxWidth()
@@ -634,18 +660,30 @@ private fun RealtimePerformanceSection(
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Column(modifier = Modifier.weight(1f)) {
-                    Text("低电量保护", style = MaterialTheme.typography.bodyMedium)
+            Column(
+                modifier = Modifier.fillMaxWidth(),
+                verticalArrangement = Arrangement.spacedBy(2.dp)
+            ) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(12.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
                     Text(
-                        "电量低于 20% 时暂停滚动总结，只保留录音和必要转写",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                        stringResource(R.string.settings_low_battery),
+                        style = MaterialTheme.typography.bodyMedium,
+                        modifier = Modifier.weight(1f)
+                    )
+                    Switch(
+                        checked = lowBatteryProtection,
+                        onCheckedChange = onLowBatteryProtectionChanged
                     )
                 }
-                Switch(
-                    checked = lowBatteryProtection,
-                    onCheckedChange = onLowBatteryProtectionChanged
+                Text(
+                    stringResource(R.string.settings_low_battery_description),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.fillMaxWidth()
                 )
             }
         }
@@ -704,7 +742,7 @@ private fun ServiceBaseUrlField(
             singleLine = true
         )
         Text(
-            "默认地址适合大多数用户。仅在使用代理或自部署服务时修改。",
+            stringResource(R.string.settings_base_url_description),
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant
         )
@@ -789,15 +827,21 @@ fun ApiKeySettingItem(
                         ) {
                             if (testStatus is TestStatus.Testing) {
                                 CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp)
-                            } else Text("测试连接")
+                            } else Text(stringResource(R.string.settings_test_connection))
                         }
                         TextButton(onClick = {
                             context.startActivity(Intent(Intent.ACTION_VIEW, helpUrl.toUri()))
-                        }) { Text("如何获取?") }
+                        }) { Text(stringResource(R.string.settings_get_api_key)) }
                     }
                     when (val ts = testStatus) {
-                        is TestStatus.Success -> Text("✓ 连接成功", color = Color(0xFF4CAF50))
-                        is TestStatus.Failed -> Text("✗ ${ts.message}", color = MaterialTheme.colorScheme.error)
+                        is TestStatus.Success -> Text(
+                            stringResource(R.string.settings_connection_success),
+                            color = Color(0xFF4CAF50),
+                        )
+                        is TestStatus.Failed -> Text(
+                            stringResource(R.string.settings_connection_failed, ts.message),
+                            color = MaterialTheme.colorScheme.error,
+                        )
                         else -> Unit
                     }
                 }
@@ -808,7 +852,9 @@ fun ApiKeySettingItem(
 
 @Composable
 private fun StatusBadge(configured: Boolean) {
-    val text = if (configured) "已配置" else "未配置"
+    val text = stringResource(
+        if (configured) R.string.settings_configured else R.string.settings_not_configured
+    )
     val color = if (configured) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.error
     Box(
         modifier = Modifier
@@ -831,10 +877,12 @@ fun AiExtractionSwitch(
             verticalAlignment = Alignment.CenterVertically
         ) {
             Column(modifier = Modifier.weight(1f)) {
-                Text("AI 总结和事项提取", style = MaterialTheme.typography.titleMedium)
+                Text(stringResource(R.string.settings_ai_extraction_title), style = MaterialTheme.typography.titleMedium)
                 Text(
-                    if (enabled) "录音完成后生成总结、待办、想法和决策。"
-                    else "关闭后只做语音转文字，不调用 AI 文本模型。",
+                    stringResource(
+                        if (enabled) R.string.settings_ai_extraction_enabled
+                        else R.string.settings_ai_extraction_disabled
+                    ),
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
@@ -858,9 +906,9 @@ fun LlmProviderSelector(
 
     Card(modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp)) {
         Column(modifier = Modifier.padding(16.dp)) {
-            Text("官方模式", style = MaterialTheme.typography.titleMedium)
+            Text(stringResource(R.string.settings_official_mode), style = MaterialTheme.typography.titleMedium)
             Text(
-                "切换后从对应官方接口拉取可用模型",
+                stringResource(R.string.settings_official_mode_description),
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
@@ -873,7 +921,7 @@ fun LlmProviderSelector(
                     value = current.providerLabel(),
                     onValueChange = {},
                     readOnly = true,
-                    label = { Text("当前官方模式") },
+                    label = { Text(stringResource(R.string.settings_current_official_mode)) },
                     trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded) },
                     modifier = Modifier
                         .fillMaxWidth()
@@ -936,16 +984,25 @@ fun LlmModelSelector(
         Column(modifier = Modifier.padding(16.dp)) {
             Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                 Column(modifier = Modifier.fillMaxWidth().weight(1f)) {
-                    Text("${provider.displayName} 模型", style = MaterialTheme.typography.titleMedium)
                     Text(
-                        "从 ${provider.displayName} 官方模型接口获取",
+                        stringResource(R.string.settings_provider_models, provider.displayName),
+                        style = MaterialTheme.typography.titleMedium,
+                    )
+                    Text(
+                        stringResource(
+                            R.string.settings_provider_models_description,
+                            provider.displayName,
+                        ),
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                 }
                 IconButton(onClick = onRefresh, enabled = !isLoading) {
                     if (isLoading) CircularProgressIndicator(modifier = Modifier.size(20.dp), strokeWidth = 2.dp)
-                    else Icon(Icons.Filled.Refresh, contentDescription = "刷新")
+                    else Icon(
+                        Icons.Filled.Refresh,
+                        contentDescription = stringResource(R.string.action_refresh),
+                    )
                 }
             }
             Spacer(Modifier.height(12.dp))
@@ -957,7 +1014,14 @@ fun LlmModelSelector(
                     value = currentModel,
                     onValueChange = {},
                     readOnly = true,
-                    label = { Text(if (currentModel.isBlank()) "请刷新并选择模型" else "当前模型") },
+                    label = {
+                        Text(
+                            stringResource(
+                                if (currentModel.isBlank()) R.string.settings_select_model
+                                else R.string.settings_current_model
+                            )
+                        )
+                    },
                     trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded) },
                     modifier = Modifier
                         .fillMaxWidth()
@@ -969,7 +1033,7 @@ fun LlmModelSelector(
                 ) {
                     if (display.isEmpty()) {
                         DropdownMenuItem(
-                            text = { Text("请先刷新模型列表") },
+                            text = { Text(stringResource(R.string.settings_refresh_models_first)) },
                             onClick = { expanded = false },
                             enabled = false
                         )
@@ -989,7 +1053,7 @@ fun LlmModelSelector(
             if (error != null) {
                 Spacer(Modifier.height(8.dp))
                 Text(
-                    "无法从官方接口获取模型列表：$error",
+                    stringResource(R.string.settings_models_failed, error),
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.error
                 )
@@ -1001,15 +1065,27 @@ fun LlmModelSelector(
 @Composable
 fun ReasoningEffortSelector(current: String, onSelected: (String) -> Unit) {
     val options = listOf(
-        Triple("none", "关闭", "不思考，最快响应"),
-        Triple("high", "高（推荐）", "DeepSeek 默认思考强度"),
-        Triple("max", "最大", "最深度思考，复杂任务更准")
+        Triple(
+            "none",
+            stringResource(R.string.settings_reasoning_none),
+            stringResource(R.string.settings_reasoning_none_description),
+        ),
+        Triple(
+            "high",
+            stringResource(R.string.settings_reasoning_high),
+            stringResource(R.string.settings_reasoning_high_description),
+        ),
+        Triple(
+            "max",
+            stringResource(R.string.settings_reasoning_max),
+            stringResource(R.string.settings_reasoning_max_description),
+        )
     )
     Card(modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp)) {
         Column(modifier = Modifier.padding(16.dp).selectableGroup()) {
-            Text("思考深度", style = MaterialTheme.typography.titleMedium)
+            Text(stringResource(R.string.settings_reasoning_title), style = MaterialTheme.typography.titleMedium)
             Text(
-                "支持的供应商会按官方 thinking / reasoning 参数发送",
+                stringResource(R.string.settings_reasoning_description),
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )

@@ -1,0 +1,39 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources xmlns:tools="http://schemas.android.com/tools" tools:locale="zh">
+    <string name="list_no_tag_matches">没有匹配标签的录音</string>
+    <string name="list_all_archived">录音都已归档</string>
+    <string name="list_empty">还没有录音</string>
+    <string name="list_no_tag_matches_hint">换一个标签或显示归档后再试</string>
+    <string name="list_all_archived_hint">点上方显示归档即可查看</string>
+    <string name="list_empty_hint">回到首页按下大圆按钮，开始你的第一段语音备忘</string>
+    <string name="list_all_tags">全部标签</string>
+    <string name="list_more_tags">更多 %1$d</string>
+    <string name="list_hide_archived">隐藏归档</string>
+    <string name="list_show_archived">显示归档</string>
+    <string name="list_archived">已归档</string>
+    <string name="recording_status_pending">待处理</string>
+    <string name="recording_status_recording">录音中</string>
+    <string name="recording_status_converting">转码中</string>
+    <string name="recording_status_splitting">切片中</string>
+    <string name="recording_status_transcribing">转写中</string>
+    <string name="recording_status_extracting">AI 提取中</string>
+    <string name="search_title">搜索</string>
+    <string name="search_hint">搜录音、转写、待办、创意…</string>
+    <string name="search_recordings_count">录音 (%1$d)</string>
+    <string name="search_items_count">提取项 (%1$d)</string>
+    <string name="search_no_results">没找到匹配结果</string>
+    <string name="search_scope_all">全部</string>
+    <string name="search_scope_summary">总结</string>
+    <string name="search_scope_transcript">转写</string>
+    <string name="search_scope_items">事项</string>
+    <string name="search_date_all">不限日期</string>
+    <string name="search_date_today">今天</string>
+    <string name="search_date_seven_days">7天</string>
+    <string name="search_date_thirty_days">30天</string>
+    <string name="idea_empty">还没有想法</string>
+    <string name="idea_empty_hint">录一段语音，AI 会自动从中识别出灵感与创意</string>
+    <string name="todo_empty">还没有待办</string>
+    <string name="todo_empty_hint">录一段语音，AI 会自动从中识别出待办</string>
+    <string name="todo_deadline_pattern">M月d日</string>
+    <string name="todo_deadline">截止 %1$s</string>
+</resources>

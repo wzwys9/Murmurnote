@@ -18,7 +18,11 @@ import app.murmurnote.android.domain.correction.AppliedTextReplacement
 import app.murmurnote.android.domain.correction.CorrectionDecision
 import app.murmurnote.android.domain.correction.CorrectionMatchMode
 import app.murmurnote.android.domain.correction.CorrectionRule
+import app.murmurnote.android.domain.correction.CorrectionRuleOrigin
 import app.murmurnote.android.domain.correction.CorrectionScope
+import app.murmurnote.android.domain.correction.ContextualCorrectionCapacityExceededException
+import app.murmurnote.android.domain.correction.ContextualCorrectionLimits
+import app.murmurnote.android.domain.correction.CrossOriginCorrectionConflictPolicy
 import app.murmurnote.android.domain.correction.CorrectedTextCoordinateMap
 import app.murmurnote.android.domain.correction.DeterministicCorrectionEngine
 import app.murmurnote.android.domain.correction.SafeLexiconCreateAction
@@ -194,7 +198,7 @@ class TranscriptRepository @Inject constructor(
         } else {
             correctionDao.getEnabledRecordingRuleCandidates(recordingId)
         }
-        val rules = ruleCandidates.map { it.toDomainRule() }
+        val rules = ruleCandidates.mapNotNull { it.toDomainRuleOrNull() }
         val results = segments.map { segment ->
             correctionEngine.correct(segment.rawText, recordingId, rules)
         }
@@ -352,6 +356,22 @@ class TranscriptRepository @Inject constructor(
         draft: app.murmurnote.android.domain.correction.PersonalCorrectionObservationDraft,
         now: Long,
     ) {
+        val proposedRule = CorrectionRule(
+            id = "pending-personal-learning",
+            observedText = draft.observedText,
+            replacementText = draft.replacementText,
+            matchMode = CorrectionMatchMode.CONTEXTUAL_LLM,
+            origin = CorrectionRuleOrigin.PERSONAL_LEARNING,
+            scope = CorrectionScope.GLOBAL,
+        )
+        val conflictsWithUserDefinition = correctionDao.getEnabledUserDefinedRules()
+            .asSequence()
+            .mapNotNull { entity -> runCatching { entity.toDomainRule() }.getOrNull() }
+            .any { userRule ->
+                CrossOriginCorrectionConflictPolicy.conflicts(userRule, proposedRule)
+            }
+        if (conflictsWithUserDefinition) return
+
         val existing = personalCorrectionDao.findRule(
             observedText = draft.observedText,
             replacementText = draft.replacementText,
@@ -387,6 +407,7 @@ class TranscriptRepository @Inject constructor(
                     scope = CorrectionScope.GLOBAL.name,
                     scopeRecordingId = null,
                     matchMode = CorrectionMatchMode.CONTEXTUAL_LLM.name,
+                    origin = CorrectionRuleOrigin.PERSONAL_LEARNING.name,
                     isEnabled = false,
                     createdAt = now,
                     updatedAt = now,
@@ -501,8 +522,10 @@ class TranscriptRepository @Inject constructor(
             .distinct()
             .toList()
         val matchingRuleIds = candidateRuleIds.filter { ruleId ->
-            correctionDao.getRule(ruleId)?.matchMode ==
-                CorrectionMatchMode.CONTEXTUAL_LLM.name
+            correctionDao.getRule(ruleId)?.let { rule ->
+                rule.matchMode == CorrectionMatchMode.CONTEXTUAL_LLM.name &&
+                    rule.origin == CorrectionRuleOrigin.PERSONAL_LEARNING.name
+            } == true
         }
         if (matchingRuleIds.isEmpty()) return PersonalCorrectionNegativeFeedback.NONE
         val rawLearningRange = coordinateMap.rawRangeForCorrectedIncludingReplacements(
@@ -656,19 +679,37 @@ class TranscriptRepository @Inject constructor(
         }
     }
 
-    fun observeGlobalLexiconRules(): Flow<List<CorrectionRule>> =
-        correctionDao.observeGlobalLexiconRules().map { rules ->
-            rules.map { it.toDomainRule() }
+    fun observeUserDefinedRules(): Flow<List<CorrectionRule>> =
+        correctionDao.observeUserDefinedRules().map { rules ->
+            rules.mapNotNull { it.toDomainRuleOrNull() }
         }
 
-    suspend fun createGlobalLexiconRule(
+    suspend fun saveUserDefinedRule(
         observedText: String,
         replacementText: String,
+        matchMode: CorrectionMatchMode = CorrectionMatchMode.CONTEXTUAL_LLM,
         now: Long = System.currentTimeMillis(),
     ): CorrectionRule = database.withTransaction {
         val input = SafeLexiconRulePolicy.normalize(observedText, replacementText)
-        val existingRules = correctionDao.getGlobalLexiconRules().map { it.toDomainRule() }
+        val existingRules = correctionDao.getUserDefinedRules()
+            .mapNotNull { it.toDomainRuleOrNull() }
         val decision = SafeLexiconRulePolicy.decideCreate(input, existingRules)
+        val existingDecisionRule = decision.existingRuleId?.let { ruleId ->
+            existingRules.firstOrNull { it.id == ruleId }
+        }
+        if (
+            (decision.action == SafeLexiconCreateAction.INSERT &&
+                matchMode == CorrectionMatchMode.CONTEXTUAL_LLM) ||
+            (decision.action == SafeLexiconCreateAction.REACTIVATE &&
+                existingDecisionRule?.matchMode == CorrectionMatchMode.CONTEXTUAL_LLM)
+        ) {
+            requireUserContextualCapacity(existingRules, existingDecisionRule?.id)
+        }
+        disableConflictingPersonalLearningRules(
+            observedText = input.observedText,
+            replacementText = input.replacementText,
+            now = now,
+        )
 
         when (decision.action) {
             SafeLexiconCreateAction.INSERT -> {
@@ -677,7 +718,8 @@ class TranscriptRepository @Inject constructor(
                     observedText = input.observedText,
                     replacementText = input.replacementText,
                     scope = CorrectionScope.GLOBAL.name,
-                    matchMode = CorrectionMatchMode.EXACT_TEXT.name,
+                    matchMode = matchMode.name,
+                    origin = CorrectionRuleOrigin.USER_DEFINED.name,
                     isEnabled = true,
                     createdAt = now,
                     updatedAt = now,
@@ -693,7 +735,7 @@ class TranscriptRepository @Inject constructor(
             SafeLexiconCreateAction.REACTIVATE -> {
                 val existing = existingRules.requireDecisionRule(decision.existingRuleId)
                 require(
-                    correctionDao.setGlobalLexiconRuleEnabled(
+                    correctionDao.setUserDefinedRuleEnabled(
                         id = existing.id,
                         enabled = true,
                         updatedAt = now,
@@ -704,14 +746,15 @@ class TranscriptRepository @Inject constructor(
         }
     }
 
-    suspend fun setGlobalLexiconRuleEnabled(
+    suspend fun setUserDefinedRuleEnabled(
         ruleId: String,
         enabled: Boolean,
         now: Long = System.currentTimeMillis(),
     ) = database.withTransaction {
-        val rules = correctionDao.getGlobalLexiconRules().map { it.toDomainRule() }
+        val rules = correctionDao.getUserDefinedRules()
+            .mapNotNull { it.toDomainRuleOrNull() }
         val target = rules.firstOrNull { it.id == ruleId }
-        requireNotNull(target) { "找不到这个全局词条" }
+        requireNotNull(target) { "找不到这个自定义词条" }
 
         if (enabled) {
             val hasConflict = rules.any { other ->
@@ -722,10 +765,18 @@ class TranscriptRepository @Inject constructor(
                             other.replacementText == target.observedText))
             }
             require(!hasConflict) { "这个词条与另一个已启用词条冲突" }
+            if (target.matchMode == CorrectionMatchMode.CONTEXTUAL_LLM) {
+                requireUserContextualCapacity(rules, target.id)
+            }
+            disableConflictingPersonalLearningRules(
+                observedText = target.observedText,
+                replacementText = target.replacementText,
+                now = now,
+            )
         }
 
         require(
-            correctionDao.setGlobalLexiconRuleEnabled(
+            correctionDao.setUserDefinedRuleEnabled(
                 id = ruleId,
                 enabled = enabled,
                 updatedAt = now,
@@ -733,9 +784,87 @@ class TranscriptRepository @Inject constructor(
         ) { "词条状态已变化，请重试" }
     }
 
-    suspend fun deleteGlobalLexiconRule(ruleId: String) = database.withTransaction {
-        require(correctionDao.deleteGlobalLexiconRule(ruleId) == 1) {
-            "找不到这个全局词条"
+    suspend fun setUserDefinedRuleMatchMode(
+        ruleId: String,
+        matchMode: CorrectionMatchMode,
+        now: Long = System.currentTimeMillis(),
+    ) = database.withTransaction {
+        val target = correctionDao.getUserDefinedRules()
+            .firstOrNull { it.id == ruleId }
+            ?.toDomainRuleOrNull()
+        requireNotNull(target) { "找不到这个自定义词条" }
+        if (target.matchMode == matchMode) return@withTransaction
+        if (target.isEnabled && matchMode == CorrectionMatchMode.CONTEXTUAL_LLM) {
+            val rules = correctionDao.getUserDefinedRules()
+                .mapNotNull { it.toDomainRuleOrNull() }
+            requireUserContextualCapacity(rules, target.id)
+        }
+
+        disableConflictingPersonalLearningRules(
+            observedText = target.observedText,
+            replacementText = target.replacementText,
+            now = now,
+        )
+        require(
+            correctionDao.setUserDefinedRuleMatchMode(
+                id = ruleId,
+                matchMode = matchMode.name,
+                updatedAt = now,
+            ) == 1,
+        ) { "词条状态已变化，请重试" }
+    }
+
+    suspend fun deleteUserDefinedRule(ruleId: String) = database.withTransaction {
+        require(correctionDao.deleteUserDefinedRule(ruleId) == 1) {
+            "找不到这个自定义词条"
+        }
+    }
+
+    private suspend fun disableConflictingPersonalLearningRules(
+        observedText: String,
+        replacementText: String,
+        now: Long,
+    ) {
+        personalCorrectionDao.getRulesConflictingWithUserDefinition(
+            userObservedText = observedText,
+            userReplacementText = replacementText,
+        ).forEach { conflicting ->
+            check(
+                personalCorrectionDao.setProfileState(
+                    ruleId = conflicting.id,
+                    state = PersonalCorrectionLearningState.DISABLED.name,
+                    updatedAt = now,
+                ) == 1,
+            ) { "冲突的个性化学习词条状态已变化" }
+            check(
+                personalCorrectionDao.setRuleEnabled(
+                    ruleId = conflicting.id,
+                    enabled = false,
+                    updatedAt = now,
+                ) == 1,
+            ) { "冲突的个性化学习规则状态已变化" }
+            personalCorrectionDao.failPendingEvents(
+                ruleId = conflicting.id,
+                reasonCode = "SUPERSEDED_BY_USER_DICTIONARY",
+                updatedAt = now,
+            )
+        }
+    }
+
+    private fun requireUserContextualCapacity(
+        rules: List<CorrectionRule>,
+        excludingRuleId: String?,
+    ) {
+        val activeContextualRules = rules.count { rule ->
+            rule.id != excludingRuleId &&
+                rule.isEnabled &&
+                rule.matchMode == CorrectionMatchMode.CONTEXTUAL_LLM
+        }
+        if (activeContextualRules >= ContextualCorrectionLimits.MAX_ACTIVE_RULES_PER_ORIGIN) {
+            throw ContextualCorrectionCapacityExceededException(
+                origin = CorrectionRuleOrigin.USER_DEFINED,
+                maximum = ContextualCorrectionLimits.MAX_ACTIVE_RULES_PER_ORIGIN,
+            )
         }
     }
 
@@ -754,11 +883,11 @@ class TranscriptRepository @Inject constructor(
         }
 
     suspend fun getRecordingRules(recordingId: String): List<CorrectionRule> =
-        correctionDao.getRecordingRules(recordingId).map { it.toDomainRule() }
+        correctionDao.getRecordingRules(recordingId).mapNotNull { it.toDomainRuleOrNull() }
 
     fun observeRecordingRules(recordingId: String): Flow<List<CorrectionRule>> =
         correctionDao.observeRecordingRules(recordingId).map { rules ->
-            rules.map { it.toDomainRule() }
+            rules.mapNotNull { it.toDomainRuleOrNull() }
         }
 
     suspend fun getAuditRecords(recordingId: String): List<CorrectionAuditRecord> =
@@ -888,10 +1017,14 @@ private fun CorrectionRuleEntity.toDomainRule(): CorrectionRule = CorrectionRule
     observedText = observedText,
     replacementText = replacementText,
     matchMode = strictEnumValueOf(matchMode, "correction rule match mode"),
+    origin = strictEnumValueOf(origin, "correction rule origin"),
     scope = strictEnumValueOf(scope, "correction rule scope"),
     scopeId = scopeRecordingId,
     isEnabled = isEnabled
 )
+
+private fun CorrectionRuleEntity.toDomainRuleOrNull(): CorrectionRule? =
+    runCatching { toDomainRule() }.getOrNull()
 
 private fun List<CorrectionRule>.requireDecisionRule(ruleId: String?): CorrectionRule =
     firstOrNull { it.id == ruleId }

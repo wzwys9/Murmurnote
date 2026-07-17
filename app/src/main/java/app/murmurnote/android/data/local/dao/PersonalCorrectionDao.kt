@@ -22,19 +22,11 @@ interface PersonalCorrectionDao {
     @Query("SELECT * FROM correction_learning_profiles WHERE ruleId = :ruleId")
     suspend fun getProfile(ruleId: String): CorrectionLearningProfileEntity?
 
+    @Query("SELECT * FROM correction_learning_profiles WHERE ruleId IN (:ruleIds)")
+    suspend fun getProfiles(ruleIds: List<String>): List<CorrectionLearningProfileEntity>
+
     @Query("SELECT * FROM correction_learning_events WHERE id = :id")
     suspend fun getEvent(id: String): CorrectionLearningEventEntity?
-
-    @Query(
-        """
-        SELECT * FROM correction_learning_events
-        WHERE ruleId = :ruleId
-          AND status = 'REVIEWED'
-        ORDER BY reviewedAt DESC, createdAt DESC, id DESC
-        LIMIT 1
-        """,
-    )
-    suspend fun getLatestReviewedEvent(ruleId: String): CorrectionLearningEventEntity?
 
     @Query(
         """
@@ -65,6 +57,7 @@ interface PersonalCorrectionDao {
             ON correction_learning_profiles.ruleId = correction_rules.id
         WHERE correction_rules.scope = 'GLOBAL'
           AND correction_rules.scopeRecordingId IS NULL
+          AND correction_rules.origin = 'PERSONAL_LEARNING'
           AND correction_rules.matchMode = 'CONTEXTUAL_LLM'
           AND correction_rules.observedText = :observedText
           AND correction_rules.replacementText = :replacementText
@@ -84,6 +77,7 @@ interface PersonalCorrectionDao {
             ON correction_learning_profiles.ruleId = correction_rules.id
         WHERE correction_rules.scope = 'GLOBAL'
           AND correction_rules.scopeRecordingId IS NULL
+          AND correction_rules.origin = 'PERSONAL_LEARNING'
           AND correction_rules.matchMode = 'CONTEXTUAL_LLM'
           AND correction_rules.observedText = :observedText
         ORDER BY correction_rules.createdAt, correction_rules.id
@@ -161,6 +155,7 @@ interface PersonalCorrectionDao {
         WHERE id = :ruleId
           AND scope = 'GLOBAL'
           AND scopeRecordingId IS NULL
+          AND origin = 'PERSONAL_LEARNING'
           AND matchMode = 'CONTEXTUAL_LLM'
         """,
     )
@@ -246,6 +241,7 @@ interface PersonalCorrectionDao {
             ON correction_learning_profiles.ruleId = correction_rules.id
         WHERE correction_rules.scope = 'GLOBAL'
           AND correction_rules.scopeRecordingId IS NULL
+          AND correction_rules.origin = 'PERSONAL_LEARNING'
           AND correction_rules.matchMode = 'CONTEXTUAL_LLM'
           AND correction_rules.isEnabled = 1
           AND correction_learning_profiles.state = 'ACTIVE'
@@ -262,15 +258,19 @@ interface PersonalCorrectionDao {
             ON correction_learning_profiles.ruleId = correction_rules.id
         WHERE correction_rules.scope = 'GLOBAL'
           AND correction_rules.scopeRecordingId IS NULL
+          AND correction_rules.origin = 'PERSONAL_LEARNING'
           AND correction_rules.matchMode = 'CONTEXTUAL_LLM'
-          AND correction_rules.isEnabled = 1
-          AND correction_learning_profiles.state = 'ACTIVE'
-          AND correction_rules.observedText = :observedText
+          AND (
+            correction_rules.observedText = :userObservedText
+            OR correction_rules.observedText = :userReplacementText
+            OR correction_rules.replacementText = :userObservedText
+          )
         ORDER BY correction_rules.createdAt, correction_rules.id
         """,
     )
-    suspend fun getActiveRulesForObservedText(
-        observedText: String,
+    suspend fun getRulesConflictingWithUserDefinition(
+        userObservedText: String,
+        userReplacementText: String,
     ): List<CorrectionRuleEntity>
 
     @Query("SELECT * FROM correction_learning_profiles ORDER BY updatedAt DESC, ruleId")
@@ -295,6 +295,7 @@ interface PersonalCorrectionDao {
         WHERE id = :ruleId
           AND scope = 'GLOBAL'
           AND scopeRecordingId IS NULL
+          AND origin = 'PERSONAL_LEARNING'
           AND matchMode = 'CONTEXTUAL_LLM'
         """,
     )
@@ -305,6 +306,7 @@ interface PersonalCorrectionDao {
         DELETE FROM correction_rules
         WHERE scope = 'GLOBAL'
           AND scopeRecordingId IS NULL
+          AND origin = 'PERSONAL_LEARNING'
           AND matchMode = 'CONTEXTUAL_LLM'
         """,
     )

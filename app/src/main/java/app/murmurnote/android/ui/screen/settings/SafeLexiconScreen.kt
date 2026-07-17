@@ -11,7 +11,10 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Add
@@ -25,6 +28,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -32,7 +36,9 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
@@ -40,6 +46,8 @@ import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import app.murmurnote.android.R
+import app.murmurnote.android.domain.correction.CorrectionMatchMode
 import app.murmurnote.android.domain.correction.CorrectionRule
 
 @Composable
@@ -77,19 +85,19 @@ internal fun SafeLexiconScreen(
                     modifier = Modifier.padding(16.dp),
                     verticalArrangement = Arrangement.spacedBy(6.dp),
                 ) {
-                    Text("它会做什么", style = MaterialTheme.typography.titleSmall)
+                    Text(stringResource(R.string.lexicon_what_it_does), style = MaterialTheme.typography.titleSmall)
                     Text(
-                        "完全在本地做“识别结果 → 正确写法”的精确替换，不调用 LLM，也不把词条注入识别模型。",
+                        stringResource(R.string.lexicon_description_modes),
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                     Text(
-                        "只影响开启后新完成的转写；实时预览、模型原文和历史内容都不会被改写。",
+                        stringResource(R.string.lexicon_description_context),
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                     Text(
-                        "后续 AI 纠错会以这些词条为术语基础，因此未配置 LLM API 时不能开启。",
+                        stringResource(R.string.lexicon_description_exact),
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
@@ -115,7 +123,7 @@ internal fun SafeLexiconScreen(
                     modifier = Modifier.size(18.dp),
                 )
                 Spacer(Modifier.width(6.dp))
-                Text("添加精确词条")
+                Text(stringResource(R.string.lexicon_add))
             }
         }
         when {
@@ -138,10 +146,12 @@ internal fun SafeLexiconScreen(
                 LexiconRuleCard(
                     rule = rule,
                     masterEnabled = masterEnabled,
+                    llmApiConfigured = llmApiConfigured,
                     isUpdating = rule.id in state.updatingRuleIds,
                     onEnabledChange = { enabled ->
                         viewModel.setRuleEnabled(rule.id, enabled)
                     },
+                    onChangeMatchMode = { viewModel.requestMatchModeChange(rule) },
                     onDelete = { viewModel.requestDelete(rule) },
                 )
             }
@@ -152,34 +162,71 @@ internal fun SafeLexiconScreen(
         AddLexiconRuleDialog(
             observedText = state.observedDraft,
             replacementText = state.replacementDraft,
+            matchMode = state.matchModeDraft,
             errorMessage = state.errorMessage,
             isSaving = state.isSaving,
             masterEnabled = masterEnabled,
+            llmApiConfigured = llmApiConfigured,
             onObservedChange = viewModel::updateObservedDraft,
             onReplacementChange = viewModel::updateReplacementDraft,
+            onMatchModeChange = viewModel::updateMatchModeDraft,
             onDismiss = viewModel::dismissAddDialog,
             onSave = viewModel::saveRule,
+        )
+    }
+
+    state.pendingModeRule?.let { rule ->
+        AlertDialog(
+            onDismissRequest = viewModel::dismissMatchModeChange,
+            title = { Text(stringResource(R.string.lexicon_change_mode_title)) },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                    Text(
+                        "“${rule.observedText}” → “${rule.replacementText}”",
+                        style = MaterialTheme.typography.bodyMedium,
+                    )
+                    MatchModeSelector(
+                        selected = state.matchModeDraft,
+                        enabled = true,
+                        llmApiConfigured = llmApiConfigured,
+                        onSelected = viewModel::updateMatchModeDraft,
+                    )
+                }
+            },
+            confirmButton = {
+                Button(onClick = viewModel::confirmMatchModeChange) {
+                    Text(stringResource(R.string.lexicon_save))
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = viewModel::dismissMatchModeChange) {
+                    Text(stringResource(R.string.action_cancel))
+                }
+            },
         )
     }
 
     state.pendingDeleteRule?.let { rule ->
         AlertDialog(
             onDismissRequest = viewModel::dismissDelete,
-            title = { Text("删除这个词条？") },
+            title = { Text(stringResource(R.string.lexicon_delete_title)) },
             text = {
                 Text(
-                    "“${rule.observedText}” → “${rule.replacementText}”\n\n" +
-                        "删除后只会停止未来的替换，不会改动已经完成的转写或模型原文。",
+                    stringResource(
+                        R.string.lexicon_delete_description,
+                        rule.observedText,
+                        rule.replacementText,
+                    )
                 )
             },
             confirmButton = {
                 TextButton(onClick = viewModel::confirmDelete) {
-                    Text("删除")
+                    Text(stringResource(R.string.asr_delete))
                 }
             },
             dismissButton = {
                 TextButton(onClick = viewModel::dismissDelete) {
-                    Text("取消")
+                    Text(stringResource(R.string.action_cancel))
                 }
             },
         )
@@ -197,18 +244,18 @@ private fun SafeLexiconHeader(onBack: () -> Unit) {
         IconButton(onClick = onBack) {
             Icon(
                 imageVector = Icons.AutoMirrored.Filled.ArrowBack,
-                contentDescription = "返回实验室功能",
+                contentDescription = stringResource(R.string.lexicon_back),
             )
         }
         Column(modifier = Modifier.padding(start = 4.dp)) {
             Text(
-                text = "稳妥词本",
+                text = stringResource(R.string.lexicon_title),
                 style = MaterialTheme.typography.titleLarge,
                 fontWeight = FontWeight.SemiBold,
                 modifier = Modifier.semantics { heading() },
             )
             Text(
-                text = "本地、精确、可随时关闭",
+                text = stringResource(R.string.lexicon_subtitle),
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
@@ -227,9 +274,9 @@ private fun EmptyLexiconCard() {
             modifier = Modifier.padding(20.dp),
             verticalArrangement = Arrangement.spacedBy(6.dp),
         ) {
-            Text("还没有词条", style = MaterialTheme.typography.titleMedium)
+            Text(stringResource(R.string.lexicon_empty), style = MaterialTheme.typography.titleMedium)
             Text(
-                "例如：识别成“木木笔记”时，精确替换为“声记应用”。",
+                stringResource(R.string.lexicon_empty_example),
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
@@ -241,10 +288,27 @@ private fun EmptyLexiconCard() {
 private fun LexiconRuleCard(
     rule: CorrectionRule,
     masterEnabled: Boolean,
+    llmApiConfigured: Boolean,
     isUpdating: Boolean,
     onEnabledChange: (Boolean) -> Unit,
+    onChangeMatchMode: () -> Unit,
     onDelete: () -> Unit,
 ) {
+    val changeModeDescription = stringResource(
+        R.string.lexicon_change_mode_description,
+        rule.observedText,
+        rule.replacementText,
+    )
+    val switchDescription = stringResource(
+        R.string.lexicon_switch_description,
+        rule.observedText,
+        rule.replacementText,
+    )
+    val deleteDescription = stringResource(
+        R.string.lexicon_delete_description_a11y,
+        rule.observedText,
+        rule.replacementText,
+    )
     Card(
         modifier = Modifier
             .fillMaxWidth()
@@ -263,11 +327,44 @@ private fun LexiconRuleCard(
                 modifier = Modifier.fillMaxWidth(),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
+                Column(
+                    modifier = Modifier.weight(1f),
+                    verticalArrangement = Arrangement.spacedBy(2.dp),
+                ) {
+                    Text(
+                        text = rule.matchMode.displayName(),
+                        style = MaterialTheme.typography.labelLarge,
+                        color = MaterialTheme.colorScheme.primary,
+                    )
+                    Text(
+                        text = rule.matchMode.shortDescription(),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+                TextButton(
+                    onClick = onChangeMatchMode,
+                    enabled = !isUpdating,
+                    modifier = Modifier.semantics {
+                        contentDescription = changeModeDescription
+                    },
+                ) {
+                    Text(stringResource(R.string.lexicon_change))
+                }
+            }
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
                 Text(
                     text = when {
-                        !rule.isEnabled -> "词条已停用"
-                        !masterEnabled -> "词条已启用；总开关关闭"
-                        else -> "会用于之后完成的转写"
+                        !rule.isEnabled -> stringResource(R.string.lexicon_status_disabled)
+                        !masterEnabled -> stringResource(R.string.lexicon_status_master_off)
+                        rule.matchMode == CorrectionMatchMode.CONTEXTUAL_LLM &&
+                            !llmApiConfigured -> stringResource(R.string.lexicon_status_missing_api)
+                        rule.matchMode == CorrectionMatchMode.CONTEXTUAL_LLM ->
+                            stringResource(R.string.lexicon_status_context)
+                        else -> stringResource(R.string.lexicon_status_exact)
                     },
                     modifier = Modifier.weight(1f),
                     style = MaterialTheme.typography.bodySmall,
@@ -278,8 +375,7 @@ private fun LexiconRuleCard(
                     onCheckedChange = onEnabledChange,
                     enabled = !isUpdating,
                     modifier = Modifier.semantics {
-                        contentDescription =
-                            "词条开关：${rule.observedText}改为${rule.replacementText}"
+                        contentDescription = switchDescription
                     },
                 )
                 Spacer(Modifier.width(4.dp))
@@ -289,8 +385,7 @@ private fun LexiconRuleCard(
                 ) {
                     Icon(
                         imageVector = Icons.Filled.Delete,
-                        contentDescription =
-                            "删除词条：${rule.observedText}改为${rule.replacementText}",
+                        contentDescription = deleteDescription,
                     )
                 }
             }
@@ -302,27 +397,33 @@ private fun LexiconRuleCard(
 private fun AddLexiconRuleDialog(
     observedText: String,
     replacementText: String,
+    matchMode: CorrectionMatchMode,
     errorMessage: String?,
     isSaving: Boolean,
     masterEnabled: Boolean,
+    llmApiConfigured: Boolean,
     onObservedChange: (String) -> Unit,
     onReplacementChange: (String) -> Unit,
+    onMatchModeChange: (CorrectionMatchMode) -> Unit,
     onDismiss: () -> Unit,
     onSave: () -> Unit,
 ) {
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("添加精确词条") },
+        title = { Text(stringResource(R.string.lexicon_add)) },
         text = {
-            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            Column(
+                modifier = Modifier.verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(10.dp),
+            ) {
                 Text(
-                    "两边都需要 2–32 个字符。只有完全一致的文字才会替换。",
+                    stringResource(R.string.lexicon_add_instructions),
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
                 if (!masterEnabled) {
                     Text(
-                        "保存后词条自身会启用；实验室里的总开关仍保持关闭。",
+                        stringResource(R.string.lexicon_saved_master_off),
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.primary,
                     )
@@ -331,8 +432,8 @@ private fun AddLexiconRuleDialog(
                     value = observedText,
                     onValueChange = onObservedChange,
                     modifier = Modifier.fillMaxWidth(),
-                    label = { Text("识别成什么") },
-                    placeholder = { Text("例如：木木笔记") },
+                    label = { Text(stringResource(R.string.lexicon_observed_label)) },
+                    placeholder = { Text(stringResource(R.string.lexicon_observed_example)) },
                     singleLine = true,
                     enabled = !isSaving,
                     keyboardOptions = KeyboardOptions(imeAction = ImeAction.Next),
@@ -341,11 +442,22 @@ private fun AddLexiconRuleDialog(
                     value = replacementText,
                     onValueChange = onReplacementChange,
                     modifier = Modifier.fillMaxWidth(),
-                    label = { Text("应该改成什么") },
-                    placeholder = { Text("例如：声记应用") },
+                    label = { Text(stringResource(R.string.lexicon_replacement_label)) },
+                    placeholder = { Text(stringResource(R.string.lexicon_replacement_example)) },
                     singleLine = true,
                     enabled = !isSaving,
                     keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
+                )
+                Text(
+                    stringResource(R.string.lexicon_mode_title),
+                    style = MaterialTheme.typography.titleSmall,
+                    modifier = Modifier.padding(top = 2.dp),
+                )
+                MatchModeSelector(
+                    selected = matchMode,
+                    enabled = !isSaving,
+                    llmApiConfigured = llmApiConfigured,
+                    onSelected = onMatchModeChange,
                 )
                 if (errorMessage != null) {
                     Text(
@@ -367,9 +479,9 @@ private fun AddLexiconRuleDialog(
                         strokeWidth = 2.dp,
                     )
                     Spacer(Modifier.width(6.dp))
-                    Text("保存中…")
+                    Text(stringResource(R.string.lexicon_saving))
                 } else {
-                    Text("保存并启用")
+                    Text(stringResource(R.string.lexicon_save_enable))
                 }
             }
         },
@@ -378,10 +490,80 @@ private fun AddLexiconRuleDialog(
                 onClick = onDismiss,
                 enabled = !isSaving,
             ) {
-                Text("取消")
+                Text(stringResource(R.string.action_cancel))
             }
         },
     )
+}
+
+@Composable
+private fun MatchModeSelector(
+    selected: CorrectionMatchMode,
+    enabled: Boolean,
+    llmApiConfigured: Boolean,
+    onSelected: (CorrectionMatchMode) -> Unit,
+) {
+    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        listOf(
+            CorrectionMatchMode.CONTEXTUAL_LLM,
+            CorrectionMatchMode.EXACT_TEXT,
+        ).forEach { mode ->
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .selectable(
+                        selected = selected == mode,
+                        enabled = enabled,
+                        role = Role.RadioButton,
+                        onClick = { onSelected(mode) },
+                    )
+                    .padding(vertical = 4.dp),
+                verticalAlignment = Alignment.Top,
+            ) {
+                RadioButton(
+                    selected = selected == mode,
+                    onClick = null,
+                    enabled = enabled,
+                )
+                Spacer(Modifier.width(8.dp))
+                Column(
+                    modifier = Modifier.weight(1f),
+                    verticalArrangement = Arrangement.spacedBy(2.dp),
+                ) {
+                    Text(mode.displayName(), style = MaterialTheme.typography.bodyMedium)
+                    Text(
+                        text = when (mode) {
+                            CorrectionMatchMode.CONTEXTUAL_LLM -> if (llmApiConfigured) {
+                                stringResource(R.string.lexicon_context_recommended)
+                            } else {
+                                stringResource(R.string.lexicon_context_missing_api)
+                            }
+                            CorrectionMatchMode.EXACT_TEXT ->
+                                stringResource(R.string.lexicon_exact_warning)
+                        },
+                        style = MaterialTheme.typography.bodySmall,
+                        color = if (mode == CorrectionMatchMode.EXACT_TEXT) {
+                            MaterialTheme.colorScheme.error
+                        } else {
+                            MaterialTheme.colorScheme.onSurfaceVariant
+                        },
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun CorrectionMatchMode.displayName(): String = when (this) {
+    CorrectionMatchMode.CONTEXTUAL_LLM -> stringResource(R.string.lexicon_mode_context)
+    CorrectionMatchMode.EXACT_TEXT -> stringResource(R.string.lexicon_mode_exact)
+}
+
+@Composable
+private fun CorrectionMatchMode.shortDescription(): String = when (this) {
+    CorrectionMatchMode.CONTEXTUAL_LLM -> stringResource(R.string.lexicon_mode_context_short)
+    CorrectionMatchMode.EXACT_TEXT -> stringResource(R.string.lexicon_mode_exact_short)
 }
 
 @Composable
@@ -406,7 +588,7 @@ private fun ErrorCard(
                 color = MaterialTheme.colorScheme.error,
             )
             TextButton(onClick = onDismiss) {
-                Text("知道了")
+                Text(stringResource(R.string.action_got_it))
             }
         }
     }

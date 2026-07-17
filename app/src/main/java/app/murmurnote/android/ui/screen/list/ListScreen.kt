@@ -29,10 +29,13 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import app.murmurnote.android.R
 import app.murmurnote.android.data.local.entity.ProcessingStatus
 import app.murmurnote.android.data.local.entity.Recording
 import app.murmurnote.android.util.formatDurationMs
@@ -69,14 +72,14 @@ fun ListScreen(
                 horizontalAlignment = androidx.compose.ui.Alignment.CenterHorizontally
             ) {
                 val emptyTitle = when {
-                    selectedTag != null -> "没有匹配标签的录音"
-                    hasArchived && !showArchived -> "录音都已归档"
-                    else -> "还没有录音"
+                    selectedTag != null -> stringResource(R.string.list_no_tag_matches)
+                    hasArchived && !showArchived -> stringResource(R.string.list_all_archived)
+                    else -> stringResource(R.string.list_empty)
                 }
                 val emptyBody = when {
-                    selectedTag != null -> "换一个标签或显示归档后再试"
-                    hasArchived && !showArchived -> "点上方显示归档即可查看"
-                    else -> "回到首页按下大圆按钮，开始你的第一段语音备忘"
+                    selectedTag != null -> stringResource(R.string.list_no_tag_matches_hint)
+                    hasArchived && !showArchived -> stringResource(R.string.list_all_archived_hint)
+                    else -> stringResource(R.string.list_empty_hint)
                 }
                 Text(emptyTitle, style = MaterialTheme.typography.titleMedium)
                 Spacer(Modifier.height(8.dp))
@@ -117,7 +120,7 @@ private fun RecordingFilterBar(
             FilterChip(
                 selected = selectedTag == null,
                 onClick = { onSelectTag(null) },
-                label = { Text("全部标签") }
+                label = { Text(stringResource(R.string.list_all_tags)) }
             )
             visibleTags.forEach { tag ->
                 FilterChip(
@@ -133,7 +136,8 @@ private fun RecordingFilterBar(
                         onClick = { tagMenuExpanded = true },
                         label = {
                             Text(
-                                selectedOverflowTag ?: "更多 ${overflowTags.size}",
+                                selectedOverflowTag
+                                    ?: stringResource(R.string.list_more_tags, overflowTags.size),
                                 maxLines = 1,
                                 overflow = TextOverflow.Ellipsis
                             )
@@ -164,24 +168,30 @@ private fun RecordingFilterBar(
             }
         }
         TextButton(onClick = onToggleArchived) {
-            Text(if (showArchived) "隐藏归档" else "显示归档")
+            Text(
+                stringResource(
+                    if (showArchived) R.string.list_hide_archived
+                    else R.string.list_show_archived
+                )
+            )
         }
     }
 }
 
 @Composable
 private fun RecordingRow(rec: Recording, onClick: () -> Unit) {
+    val locale = LocalConfiguration.current.locales[0]
     Card(modifier = Modifier.clickable { onClick() }) {
         Box(modifier = Modifier.fillMaxWidth().padding(16.dp)) {
             Text(
-                formatTimestampFull(rec.createdAt),
+                formatTimestampFull(rec.createdAt, locale),
                 style = MaterialTheme.typography.labelSmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier.align(androidx.compose.ui.Alignment.TopEnd)
             )
             Column(modifier = Modifier.fillMaxWidth().padding(top = 18.dp)) {
                 Text(
-                    rec.title.stripTrailingTimestamp(),
+                    rec.title.stripTrailingTimestamp(rec.createdAt, locale),
                     style = MaterialTheme.typography.titleMedium,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
@@ -203,7 +213,13 @@ private fun RecordingRow(rec: Recording, onClick: () -> Unit) {
                 if (tags.isNotEmpty() || rec.archived) {
                     Spacer(Modifier.height(6.dp))
                     Text(
-                        (tags.map { "#$it" } + if (rec.archived) listOf("已归档") else emptyList()).joinToString("  "),
+                        (
+                            tags.map { "#$it" } + if (rec.archived) {
+                                listOf(stringResource(R.string.list_archived))
+                            } else {
+                                emptyList()
+                            }
+                            ).joinToString("  "),
                         style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.primary,
                         maxLines = 1,
@@ -219,20 +235,36 @@ private fun RecordingRow(rec: Recording, onClick: () -> Unit) {
     }
 }
 
+@Composable
 private fun statusLabel(s: ProcessingStatus): String = when (s) {
-    ProcessingStatus.PENDING -> "待处理"
-    ProcessingStatus.RECORDING -> "录音中"
-    ProcessingStatus.CONVERTING -> "转码中"
-    ProcessingStatus.SPLITTING -> "切片中"
-    ProcessingStatus.TRANSCRIBING -> "转写中"
-    ProcessingStatus.EXTRACTING -> "AI 提取中"
-    ProcessingStatus.COMPLETED -> "完成"
-    ProcessingStatus.FAILED -> "失败"
+    ProcessingStatus.PENDING -> stringResource(R.string.recording_status_pending)
+    ProcessingStatus.RECORDING -> stringResource(R.string.recording_status_recording)
+    ProcessingStatus.CONVERTING -> stringResource(R.string.recording_status_converting)
+    ProcessingStatus.SPLITTING -> stringResource(R.string.recording_status_splitting)
+    ProcessingStatus.TRANSCRIBING -> stringResource(R.string.recording_status_transcribing)
+    ProcessingStatus.EXTRACTING -> stringResource(R.string.recording_status_extracting)
+    ProcessingStatus.COMPLETED -> stringResource(R.string.status_completed)
+    ProcessingStatus.FAILED -> stringResource(R.string.status_failed)
 }
 
-private fun String.stripTrailingTimestamp(): String =
-    replace(Regex("\\s*·\\s*\\d{4}年\\d{2}月\\d{2}日\\s+\\d{2}时\\d{2}分\\d{2}秒\\s*$"), "")
+private fun String.stripTrailingTimestamp(createdAt: Long, locale: java.util.Locale): String {
+    val localizedSuffixes = listOf(
+        formatTimestampFull(createdAt, locale),
+        formatTimestampFull(createdAt, java.util.Locale.ENGLISH),
+        formatTimestampFull(createdAt, java.util.Locale.CHINESE),
+    ).distinct()
+    val withoutLocalizedSuffix = localizedSuffixes.fold(this) { title, suffix ->
+        title.removeSuffix(" · $suffix")
+    }
+    return withoutLocalizedSuffix.replace(
+        Regex(
+            "\\s*·\\s*\\d{4}\\u5e74\\d{2}\\u6708\\d{2}\\u65e5" +
+                "\\s+\\d{2}\\u65f6\\d{2}\\u5206\\d{2}\\u79d2\\s*$"
+        ),
+        "",
+    )
         .ifBlank { this }
+}
 
 private fun String.toTagList(): List<String> =
     split(",").map { it.trim() }.filter { it.isNotBlank() }.distinct()

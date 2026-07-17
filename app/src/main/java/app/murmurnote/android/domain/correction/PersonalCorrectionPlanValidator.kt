@@ -3,6 +3,7 @@ package app.murmurnote.android.domain.correction
 data class PersonalCorrectionCandidate(
     val id: String,
     val ruleId: String,
+    val ruleOrigin: CorrectionRuleOrigin = CorrectionRuleOrigin.PERSONAL_LEARNING,
     val segmentId: Long,
     val startCodePoint: Int,
     val endCodePointExclusive: Int,
@@ -62,15 +63,22 @@ object PersonalCorrectionPlanValidator {
                     decision.reasonCode in allowedApplyReasons
             }
         }
-        val overlapping = provisionallyApproved.filter { candidate ->
-            provisionallyApproved.any { other ->
-                candidate.id != other.id && candidate.overlaps(other)
-            }
-        }.mapTo(mutableSetOf()) { it.id }
-
         return provisionallyApproved
-            .filterNot { it.id in overlapping }
+            .filter { candidate -> candidate.safelyWinsAnyOverlap(provisionallyApproved) }
             .sortedWith(compareBy({ it.segmentId }, { it.startCodePoint }, { it.id }))
+    }
+
+    private fun PersonalCorrectionCandidate.safelyWinsAnyOverlap(
+        approved: List<PersonalCorrectionCandidate>,
+    ): Boolean {
+        val overlaps = approved.filter { other -> id != other.id && overlaps(other) }
+        if (overlaps.isEmpty()) return true
+        return ruleOrigin == CorrectionRuleOrigin.USER_DEFINED && overlaps.all { other ->
+            other.ruleOrigin == CorrectionRuleOrigin.PERSONAL_LEARNING &&
+                segmentId == other.segmentId &&
+                startCodePoint == other.startCodePoint &&
+                endCodePointExclusive == other.endCodePointExclusive
+        }
     }
 
     private fun PersonalCorrectionCandidate.overlaps(other: PersonalCorrectionCandidate): Boolean =

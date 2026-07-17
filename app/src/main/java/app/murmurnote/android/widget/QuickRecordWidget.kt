@@ -50,7 +50,7 @@ private fun WidgetContent() {
         ) {
             Image(
                 provider = ImageProvider(R.drawable.ic_mic),
-                contentDescription = "快速录音"
+                contentDescription = context.getString(R.string.widget_quick_record)
             )
         }
     }

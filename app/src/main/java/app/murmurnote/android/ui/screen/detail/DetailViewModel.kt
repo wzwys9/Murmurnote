@@ -6,6 +6,7 @@ import androidx.core.content.FileProvider
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import app.murmurnote.android.BuildConfig
+import app.murmurnote.android.R
 import app.murmurnote.android.audio.AudioPlayer
 import app.murmurnote.android.data.local.entity.ExtractedItem
 import app.murmurnote.android.data.local.entity.ItemType
@@ -24,7 +25,9 @@ import app.murmurnote.android.domain.correction.PersonalCorrectionLearningPolicy
 import app.murmurnote.android.domain.correction.SingleReplacementDiff
 import app.murmurnote.android.service.TranscriptionService
 import app.murmurnote.android.util.Logger
+import app.murmurnote.android.util.formatTimestampFull
 import dagger.hilt.android.lifecycle.HiltViewModel
+import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
@@ -44,6 +47,7 @@ import javax.inject.Inject
 
 @HiltViewModel
 class DetailViewModel @Inject constructor(
+    @ApplicationContext private val appContext: Context,
     private val recordingRepo: RecordingRepository,
     private val transcriptRepo: TranscriptRepository,
     private val summaryRepo: SummaryRepository,
@@ -199,7 +203,7 @@ class DetailViewModel @Inject constructor(
         val rec = _state.value.recording ?: return
         val tag = normalizeTag(_state.value.tagDraft)
         if (tag == null) {
-            _state.update { it.copy(tagError = "请输入标签名称") }
+            _state.update { it.copy(tagError = text(R.string.detail_tag_required)) }
             return
         }
         val tags = (rec.tagList() + tag).distinct()
@@ -248,7 +252,7 @@ class DetailViewModel @Inject constructor(
                 _state.update {
                     it.copy(
                         reprocessing = false,
-                        reprocessError = "原始音频文件已不存在，无法重试"
+                        reprocessError = text(R.string.detail_audio_missing)
                     )
                 }
                 return@launch
@@ -275,7 +279,9 @@ class DetailViewModel @Inject constructor(
         val rec = _state.value.recording ?: return
         val transcript = rec.correctedTranscript
         if (transcript.isNullOrBlank()) {
-            _state.update { it.copy(regenerateError = "尚无转写文本，无法重新生成总结。请先完成 ASR 转写。") }
+            _state.update {
+                it.copy(regenerateError = text(R.string.detail_regenerate_no_transcript))
+            }
             logger.w("Detail", "regenerateSummary aborted: corrected transcript blank")
             return
         }
@@ -286,7 +292,7 @@ class DetailViewModel @Inject constructor(
                 _state.update {
                     it.copy(
                         regeneratingSummary = false,
-                        regenerateError = "请先在设置中明确开启云端 AI 提取"
+                        regenerateError = text(R.string.detail_enable_ai_extraction)
                     )
                 }
                 return@launch
@@ -314,7 +320,7 @@ class DetailViewModel @Inject constructor(
                     val finalTitle = if (titleFromSummary != null) {
                         "$titleFromSummary · $createdAtPretty"
                     } else {
-                        "录音 $createdAtPretty"
+                        text(R.string.detail_recording_default_title, createdAtPretty)
                     }
                     val saved = summaryRepo.saveForRevision(
                         recordingId = rec.id,
@@ -327,7 +333,7 @@ class DetailViewModel @Inject constructor(
                         _state.update {
                             it.copy(
                                 regeneratingSummary = false,
-                                regenerateError = "转写在生成期间发生了变化，本次总结未保存，请重新生成"
+                                regenerateError = text(R.string.detail_revision_changed)
                             )
                         }
                         return@fold
@@ -343,7 +349,7 @@ class DetailViewModel @Inject constructor(
                     _state.update {
                         it.copy(
                             regeneratingSummary = false,
-                            regenerateError = e.message?.takeIf { m -> m.isNotBlank() } ?: e.javaClass.simpleName
+                            regenerateError = errorSummary(e)
                         )
                     }
                 }
@@ -412,13 +418,13 @@ class DetailViewModel @Inject constructor(
                                 before?.correctedText == before?.rawText
                         },
                         correctionActionMessage = if (personalLearningEligible && diff != null) {
-                            "修正已保存，已加入个性化学习队列"
+                            text(R.string.detail_correction_queued)
                         } else if (diff?.eligibleForRule == true &&
                             before?.correctedText == before?.rawText
                         ) {
-                            "修正已保存；是否记住这次精确替换？"
+                            text(R.string.detail_correction_remember_prompt)
                         } else {
-                            "修正已保存"
+                            text(R.string.detail_correction_saved)
                         }
                     )
                 }
@@ -428,9 +434,9 @@ class DetailViewModel @Inject constructor(
                     _state.update {
                         it.copy(
                             correctionActionMessage = if (reviewed > 0) {
-                                "修正已保存，个性化纠错已完成学习"
+                                text(R.string.detail_correction_learned)
                             } else {
-                                "修正已保存；需要评估时会在 AI 服务可用时继续"
+                                text(R.string.detail_correction_pending_review)
                             },
                         )
                     }
@@ -440,7 +446,7 @@ class DetailViewModel @Inject constructor(
                 _state.update {
                     it.copy(
                         savingSegment = false,
-                        segmentEditError = e.message ?: e.javaClass.simpleName
+                        segmentEditError = errorSummary(e)
                     )
                 }
             }
@@ -472,10 +478,12 @@ class DetailViewModel @Inject constructor(
         viewModelScope.launch {
             _state.update { it.copy(savingRule = true) }
             var safeLexiconEnabled = false
+            var llmApiConfigured = false
             runCatching {
                 if (global) {
                     safeLexiconEnabled = appPreferences.safeLexiconEnabled.first()
-                    transcriptRepo.createGlobalLexiconRule(
+                    llmApiConfigured = appPreferences.llmApiKey.first().isNotBlank()
+                    transcriptRepo.saveUserDefinedRule(
                         observedText = diff.observedText,
                         replacementText = diff.replacementText,
                     )
@@ -492,9 +500,13 @@ class DetailViewModel @Inject constructor(
                         savingRule = false,
                         lastCreatedRuleId = if (global) null else rule.id,
                         correctionActionMessage = when {
-                            !global -> "已记为本次录音规则"
-                            safeLexiconEnabled -> "已加入实验室词本，将用于之后完成的转写"
-                            else -> "已加入实验室词本；总开关仍是关闭状态"
+                            !global -> text(R.string.detail_rule_recording_saved)
+                            !safeLexiconEnabled ->
+                                text(R.string.detail_rule_dictionary_master_off)
+                            !llmApiConfigured ->
+                                text(R.string.detail_rule_dictionary_missing_api)
+                            else ->
+                                text(R.string.detail_rule_dictionary_saved)
                         },
                     )
                 }
@@ -503,11 +515,9 @@ class DetailViewModel @Inject constructor(
                     it.copy(
                         savingRule = false,
                         segmentEditError = if (global) {
-                            (e as? IllegalArgumentException)?.message
-                                ?.takeIf { message -> message.isNotBlank() }
-                                ?: "词本保存失败，请重试"
+                            text(R.string.detail_rule_save_failed)
                         } else {
-                            e.message ?: e.javaClass.simpleName
+                            errorSummary(e)
                         },
                     )
                 }
@@ -529,7 +539,7 @@ class DetailViewModel @Inject constructor(
                         it.copy(
                             savingRule = false,
                             lastCreatedRuleId = null,
-                            correctionActionMessage = "已撤销刚创建的规则"
+                            correctionActionMessage = text(R.string.detail_rule_undone)
                         )
                     }
                 }
@@ -537,7 +547,7 @@ class DetailViewModel @Inject constructor(
                     _state.update {
                         it.copy(
                             savingRule = false,
-                            segmentEditError = error.message ?: error.javaClass.simpleName
+                            segmentEditError = errorSummary(error)
                         )
                     }
                 }
@@ -552,12 +562,12 @@ class DetailViewModel @Inject constructor(
                     _state.update {
                         it.copy(
                             pendingRuleDiff = null,
-                            correctionActionMessage = "已恢复到只读原文；旧版本仍保留在修订历史中"
+                            correctionActionMessage = text(R.string.detail_reverted_raw)
                         )
                     }
                 }
                 .onFailure { e ->
-                    _state.update { it.copy(segmentEditError = e.message ?: e.javaClass.simpleName) }
+                    _state.update { it.copy(segmentEditError = errorSummary(e)) }
                 }
         }
     }
@@ -567,7 +577,7 @@ class DetailViewModel @Inject constructor(
         viewModelScope.launch {
             runCatching {
                 val snapshot = summaryRepo.getExportSnapshot(recordingId)
-                    ?: error("录音已不存在")
+                    ?: error(text(R.string.detail_recording_missing))
                 val rec = snapshot.recording
                 val segments = snapshot.segments
                 val items = snapshot.items
@@ -602,10 +612,12 @@ class DetailViewModel @Inject constructor(
                     putExtra(Intent.EXTRA_SUBJECT, rec.title)
                     addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
                 }
-                context.startActivity(Intent.createChooser(sendIntent, "导出录音结果"))
+                context.startActivity(
+                    Intent.createChooser(sendIntent, text(R.string.detail_export_chooser))
+                )
             }.onFailure { e ->
                 logger.e("Detail", "exportResult failed", e)
-                _state.update { it.copy(exportError = e.message ?: e.javaClass.simpleName) }
+                _state.update { it.copy(exportError = errorSummary(e)) }
             }
         }
     }
@@ -614,8 +626,16 @@ class DetailViewModel @Inject constructor(
         _state.update { it.copy(exportError = null) }
     }
 
-    private fun formatPretty(epochMs: Long): String =
-        SimpleDateFormat("yyyy年MM月dd日 HH时mm分ss秒", Locale.US).format(Date(epochMs))
+    private fun text(resourceId: Int, vararg args: Any): String =
+        appContext.getString(resourceId, *args)
+
+    private fun errorSummary(error: Throwable): String =
+        text(R.string.detail_operation_failed)
+
+    private fun formatPretty(epochMs: Long): String = formatTimestampFull(
+        epochMs,
+        appContext.resources.configuration.locales[0],
+    )
 
     private fun parseDeadline(s: String): Long? = try {
         SimpleDateFormat("yyyy-MM-dd", Locale.US).parse(s)?.time
@@ -642,20 +662,27 @@ class DetailViewModel @Inject constructor(
         segments: List<TranscriptSegment>,
         items: List<ExtractedItem>
     ): String = buildString {
+        val none = text(R.string.detail_export_none)
         appendLine("# ${rec.title}")
         appendLine()
-        appendLine("- 时间：${formatPretty(rec.createdAt)}")
-        appendLine("- 时长：${rec.durationMs} ms")
-        appendLine("- 标签：${rec.tagList().takeIf { it.isNotEmpty() }?.joinToString(", ") ?: "无"}")
-        appendLine("- 归档：${if (rec.archived) "是" else "否"}")
+        appendLine("- ${text(R.string.detail_export_time)}: ${formatPretty(rec.createdAt)}")
+        appendLine("- ${text(R.string.detail_export_duration)}: ${rec.durationMs} ms")
+        appendLine(
+            "- ${text(R.string.detail_export_tags)}: " +
+                (rec.tagList().takeIf { it.isNotEmpty() }?.joinToString(", ") ?: none)
+        )
+        appendLine(
+            "- ${text(R.string.detail_export_archived)}: " +
+                text(if (rec.archived) R.string.detail_export_yes else R.string.detail_export_no)
+        )
         appendLine()
-        appendLine("## AI 总结")
+        appendLine("## ${text(R.string.detail_export_summary)}")
         appendLine()
         appendLine(summaryRevisionNote(rec))
         appendLine()
-        appendLine(rec.finalSummary ?: rec.summary ?: "（无）")
+        appendLine(rec.finalSummary ?: rec.summary ?: none)
         appendLine()
-        appendLine("## 提取项")
+        appendLine("## ${text(R.string.detail_export_items)}")
         ItemType.entries.forEach { type ->
             val grouped = items.filter { it.type == type }
             if (grouped.isNotEmpty()) {
@@ -665,7 +692,7 @@ class DetailViewModel @Inject constructor(
             }
         }
         appendLine()
-        appendLine("## 完整转写")
+        appendLine("## ${text(R.string.detail_export_transcript)}")
         val sortedSegments = segments.sortedBy { it.sequence }
         if (sortedSegments.isNotEmpty()) {
             sortedSegments.forEach {
@@ -674,7 +701,7 @@ class DetailViewModel @Inject constructor(
             }
         } else {
             appendLine()
-            appendLine(rec.correctedTranscript ?: "（无）")
+            appendLine(rec.correctedTranscript ?: none)
         }
     }
 
@@ -683,26 +710,33 @@ class DetailViewModel @Inject constructor(
         segments: List<TranscriptSegment>,
         items: List<ExtractedItem>
     ): String = buildString {
+        val none = text(R.string.detail_export_none)
         appendLine(rec.title)
         appendLine(formatPretty(rec.createdAt))
-        appendLine("标签：${rec.tagList().takeIf { it.isNotEmpty() }?.joinToString(", ") ?: "无"}")
-        appendLine("归档：${if (rec.archived) "是" else "否"}")
+        appendLine(
+            "${text(R.string.detail_export_tags)}: " +
+                (rec.tagList().takeIf { it.isNotEmpty() }?.joinToString(", ") ?: none)
+        )
+        appendLine(
+            "${text(R.string.detail_export_archived)}: " +
+                text(if (rec.archived) R.string.detail_export_yes else R.string.detail_export_no)
+        )
         appendLine()
-        appendLine("AI 总结")
+        appendLine(text(R.string.detail_export_summary))
         appendLine(summaryRevisionNote(rec))
-        appendLine(rec.finalSummary ?: rec.summary ?: "（无）")
+        appendLine(rec.finalSummary ?: rec.summary ?: none)
         appendLine()
-        appendLine("提取项")
+        appendLine(text(R.string.detail_export_items))
         items.forEach { appendLine("[${it.type.name.lowercase()}] ${it.content}") }
         appendLine()
-        appendLine("完整转写")
+        appendLine(text(R.string.detail_export_transcript))
         val sortedSegments = segments.sortedBy { it.sequence }
         if (sortedSegments.isNotEmpty()) {
             sortedSegments.forEach {
                 appendLine("[${formatDurationForExport(it.startMs)}-${formatDurationForExport(it.endMs)}] ${it.correctedText}")
             }
         } else {
-            appendLine(rec.correctedTranscript ?: "（无）")
+            appendLine(rec.correctedTranscript ?: none)
         }
     }
 
@@ -779,11 +813,18 @@ class DetailViewModel @Inject constructor(
     private fun summaryRevisionNote(rec: Recording): String {
         val summaryRevision = rec.summaryTranscriptRevision
         return when {
-            summaryRevision == null -> "总结修订：未绑定；当前转写修订 ${rec.correctionRevision}"
+            summaryRevision == null -> text(
+                R.string.detail_export_revision_unbound,
+                rec.correctionRevision,
+            )
             summaryRevision == rec.correctionRevision ->
-                "总结修订：$summaryRevision（与当前转写一致）"
+                text(R.string.detail_export_revision_current, summaryRevision)
             else ->
-                "总结修订：$summaryRevision；当前转写修订 ${rec.correctionRevision}（已过期）"
+                text(
+                    R.string.detail_export_revision_stale,
+                    summaryRevision,
+                    rec.correctionRevision,
+                )
         }
     }
 

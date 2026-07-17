@@ -32,11 +32,13 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.core.net.toUri
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import app.murmurnote.android.R
 import kotlinx.coroutines.launch
 
 @Composable
@@ -94,7 +96,7 @@ fun OnboardingScreen(
                 if (pagerState.currentPage in 1..2) {
                     TextButton(onClick = {
                         scope.launch { pagerState.animateScrollToPage(pagerState.currentPage - 1) }
-                    }) { Text("上一步") }
+                    }) { Text(stringResource(R.string.onboarding_previous)) }
                 } else Spacer(Modifier.width(1.dp))
 
                 Button(
@@ -107,7 +109,15 @@ fun OnboardingScreen(
                     },
                     enabled = !state.testing
                 ) {
-                    Text(if (pagerState.currentPage == 3) "开始使用" else "继续")
+                    Text(
+                        stringResource(
+                            if (pagerState.currentPage == 3) {
+                                R.string.onboarding_get_started
+                            } else {
+                                R.string.action_continue
+                            }
+                        )
+                    )
                 }
             }
         }
@@ -121,13 +131,21 @@ private fun WelcomePage() {
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.Center
     ) {
-        Text("Murmurnote", style = MaterialTheme.typography.displayMedium)
+        Text(stringResource(R.string.app_name), style = MaterialTheme.typography.displayMedium)
         Spacer(Modifier.height(48.dp))
-        Text("随口一说", style = MaterialTheme.typography.headlineMedium, textAlign = TextAlign.Center)
-        Text("AI 替你记下来", style = MaterialTheme.typography.headlineMedium, textAlign = TextAlign.Center)
+        Text(
+            stringResource(R.string.onboarding_tagline_line_one),
+            style = MaterialTheme.typography.headlineMedium,
+            textAlign = TextAlign.Center
+        )
+        Text(
+            stringResource(R.string.onboarding_tagline_line_two),
+            style = MaterialTheme.typography.headlineMedium,
+            textAlign = TextAlign.Center
+        )
         Spacer(Modifier.height(24.dp))
         Text(
-            "把灵感、待办、想法用语音留住",
+            stringResource(R.string.onboarding_tagline_description),
             style = MaterialTheme.typography.bodyLarge,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             textAlign = TextAlign.Center
@@ -141,13 +159,17 @@ private fun CapabilitiesPage() {
         modifier = Modifier.fillMaxSize().padding(32.dp),
         verticalArrangement = Arrangement.Center
     ) {
-        Text("能做什么", style = MaterialTheme.typography.headlineMedium)
+        Text(stringResource(R.string.onboarding_capabilities_title), style = MaterialTheme.typography.headlineMedium)
         Spacer(Modifier.height(24.dp))
         listOf(
-            "🎙 录音 / 导入" to "随手录或从其他 APP 分享音频过来",
-            "📝 本地转写" to "默认使用 SenseVoice 在设备上离线识别，不需要 API Key",
-            "☁️ 可选云功能" to "云端转写与 AI 总结均需你主动配置并开启",
-            "📂 本地保存" to "全部数据离线存储，30 天自动清理音频"
+            stringResource(R.string.onboarding_capability_record_title) to
+                stringResource(R.string.onboarding_capability_record_description),
+            stringResource(R.string.onboarding_capability_local_title) to
+                stringResource(R.string.onboarding_capability_local_description),
+            stringResource(R.string.onboarding_capability_cloud_title) to
+                stringResource(R.string.onboarding_capability_cloud_description),
+            stringResource(R.string.onboarding_capability_storage_title) to
+                stringResource(R.string.onboarding_capability_storage_description)
         ).forEach { (title, desc) ->
             Text(title, style = MaterialTheme.typography.titleMedium)
             Text(desc, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -168,37 +190,44 @@ private fun ApiKeyConfigPage(
         modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(32.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
-        Text("可选的云服务", style = MaterialTheme.typography.headlineMedium)
+        Text(stringResource(R.string.onboarding_cloud_title), style = MaterialTheme.typography.headlineMedium)
         Text(
-            "本地转写无需配置即可使用。只有在你主动选择云端转写，或开启云端 AI 总结时，才需要填写对应的 API Key；也可以直接跳过。",
+            stringResource(R.string.onboarding_cloud_description),
             style = MaterialTheme.typography.bodyMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant
         )
         OutlinedTextField(
             value = state.glmApiKey,
             onValueChange = onGlmKeyChange,
-            label = { Text("智谱 GLM API Key（可选云端转写）") },
+            label = { Text(stringResource(R.string.onboarding_glm_key_label)) },
             modifier = Modifier.fillMaxWidth(),
             singleLine = true
         )
         TextButton(onClick = {
             context.startActivity(Intent(Intent.ACTION_VIEW, "https://bigmodel.cn/usercenter/apikeys".toUri()))
-        }) { Text("→ 没有？点这里去申请") }
+        }) { Text(stringResource(R.string.onboarding_get_api_key)) }
         OutlinedTextField(
             value = state.llmApiKey,
             onValueChange = onLlmKeyChange,
-            label = { Text("DeepSeek API Key（可选 AI 总结）") },
+            label = { Text(stringResource(R.string.onboarding_deepseek_key_label)) },
             modifier = Modifier.fillMaxWidth(),
             singleLine = true
         )
         TextButton(onClick = {
             context.startActivity(Intent(Intent.ACTION_VIEW, "https://platform.deepseek.com/api_keys".toUri()))
-        }) { Text("→ 没有？点这里去申请") }
+        }) { Text(stringResource(R.string.onboarding_get_api_key)) }
         Button(
             onClick = onTest,
             enabled = (state.glmApiKey.isNotBlank() || state.llmApiKey.isNotBlank()) && !state.testing,
             modifier = Modifier.fillMaxWidth()
-        ) { Text(if (state.testing) "测试中..." else "测试已配置的连接") }
+        ) {
+            Text(
+                stringResource(
+                    if (state.testing) R.string.onboarding_testing
+                    else R.string.onboarding_test_connections
+                )
+            )
+        }
 
         state.testResult?.let {
             Text(
@@ -215,17 +244,20 @@ private fun PermissionPage() {
         modifier = Modifier.fillMaxSize().padding(32.dp),
         verticalArrangement = Arrangement.Center
     ) {
-        Text("权限说明", style = MaterialTheme.typography.headlineMedium)
+        Text(stringResource(R.string.onboarding_permissions_title), style = MaterialTheme.typography.headlineMedium)
         Spacer(Modifier.height(16.dp))
         Text(
-            "为了正常工作，Murmurnote 需要：",
+            stringResource(R.string.onboarding_permissions_description),
             style = MaterialTheme.typography.bodyLarge
         )
         Spacer(Modifier.height(12.dp))
         listOf(
-            "🎤 录音权限" to "用于按住录音",
-            "🔔 通知权限" to "处理录音时显示进度",
-            "📂 媒体读取" to "支持从其他 APP 导入音频"
+            stringResource(R.string.onboarding_permission_microphone_title) to
+                stringResource(R.string.onboarding_permission_microphone_description),
+            stringResource(R.string.onboarding_permission_notification_title) to
+                stringResource(R.string.onboarding_permission_notification_description),
+            stringResource(R.string.onboarding_permission_media_title) to
+                stringResource(R.string.onboarding_permission_media_description)
         ).forEach { (t, d) ->
             Text(t, style = MaterialTheme.typography.titleSmall)
             Text(d, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)

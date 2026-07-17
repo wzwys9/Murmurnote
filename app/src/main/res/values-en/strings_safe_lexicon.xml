@@ -1,0 +1,44 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="lexicon_what_it_does">What it does</string>
+    <string name="lexicon_description_modes">Save an explicit “recognized text → correct text” pair, then choose Context-aware or Always replace for each entry.</string>
+    <string name="lexicon_description_context">Context-aware sends only the word pair and nearby text to the current language model so it can decide whether to apply the entry. The model cannot rewrite anything else.</string>
+    <string name="lexicon_description_exact">Always replace runs entirely on device. Both modes affect only future transcripts and never change original model output or existing content.</string>
+    <string name="lexicon_add">Add custom entry</string>
+    <string name="lexicon_change_mode_title">Change application mode</string>
+    <string name="lexicon_save">Save</string>
+    <string name="lexicon_delete_title">Delete this entry?</string>
+    <string name="lexicon_delete_description">“%1$s” → “%2$s”\n\nFuture replacements will stop. Completed transcripts and original model output will not change.</string>
+    <string name="lexicon_back">Back to Experimental features</string>
+    <string name="lexicon_title">Custom correction dictionary</string>
+    <string name="lexicon_subtitle">Choose contextual evaluation or local replacement for your word pairs</string>
+    <string name="lexicon_empty">No entries yet</string>
+    <string name="lexicon_empty_example">For example, when “Murmur note” is recognized, use context to decide whether it should become “Murmurnote.”</string>
+    <string name="lexicon_change_mode_description">Change application mode: replace %1$s with %2$s</string>
+    <string name="lexicon_change">Change</string>
+    <string name="lexicon_status_disabled">Entry disabled</string>
+    <string name="lexicon_status_master_off">Entry enabled; master switch off</string>
+    <string name="lexicon_status_missing_api">Waiting for a language-model API key; safely skipped for now</string>
+    <string name="lexicon_status_context">Nearby context will be evaluated when this matches</string>
+    <string name="lexicon_status_exact">Exact matching text will be replaced on device</string>
+    <string name="lexicon_switch_description">Entry switch: replace %1$s with %2$s</string>
+    <string name="lexicon_delete_description_a11y">Delete entry: replace %1$s with %2$s</string>
+    <string name="lexicon_add_instructions">Both fields must contain 2–32 characters. Only text that exactly matches “Recognized as” can trigger this entry.</string>
+    <string name="lexicon_saved_master_off">The entry itself will be enabled after saving; the master switch in Experimental features will remain off.</string>
+    <string name="lexicon_observed_label">Recognized as</string>
+    <string name="lexicon_observed_example">Example: Murmur note</string>
+    <string name="lexicon_replacement_label">Replace with</string>
+    <string name="lexicon_replacement_example">Example: Murmurnote</string>
+    <string name="lexicon_mode_title">Application mode</string>
+    <string name="lexicon_saving">Saving…</string>
+    <string name="lexicon_save_enable">Save and enable</string>
+    <string name="lexicon_context_recommended">Recommended. Sends the word pair and nearby text, allowing the language model only to apply or keep it.</string>
+    <string name="lexicon_context_missing_api">Recommended. No language-model API is configured, so the entry will be safely skipped until one is added.</string>
+    <string name="lexicon_exact_warning">Replaces exact matches locally without context. Use only for fixed terms that cannot be ambiguous.</string>
+    <string name="lexicon_mode_context">Context-aware</string>
+    <string name="lexicon_mode_exact">Always replace</string>
+    <string name="lexicon_mode_context_short">The language model carefully evaluates nearby text</string>
+    <string name="lexicon_mode_exact_short">Replace exact matches without evaluating context</string>
+    <string name="lexicon_contextual_capacity_reached">The context-aware entry limit (%1$d) has been reached. Disable one first, or change one to Always replace.</string>
+    <string name="lexicon_operation_failed">Operation failed. Please retry.</string>
+</resources>

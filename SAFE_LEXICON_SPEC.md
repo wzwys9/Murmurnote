@@ -1,5 +1,7 @@
 # Spec: 稳妥词本 MVP
 
+> 历史规格：该 MVP 已完成；当前产品语义由 `CUSTOM_CORRECTION_DICTIONARY_SPEC.md` 取代。
+
 ## Objective
 
 为本地 ASR 增加一个可管理的个人词本，但只复用现有的确定性 `EXACT_TEXT` 后处理规则。

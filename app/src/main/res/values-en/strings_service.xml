@@ -1,0 +1,42 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="import_audio_in_progress">Importing audio…</string>
+    <string name="import_audio_success">Imported %1$s</string>
+    <string name="import_audio_failure">Import failed. Please try again.</string>
+    <string name="import_audio_title">Imported audio</string>
+    <string name="import_audio_saved_processing_failed">The file was imported, but processing could not start. You can retry manually.</string>
+    <string name="log_share_subject">Murmurnote logs %1$s</string>
+    <string name="log_share_chooser">Share diagnostic logs</string>
+    <string name="widget_quick_record">Quick record</string>
+    <string name="recording_foreground_start_failed">The system could not start the recording service</string>
+
+    <string name="service_user_cancelled_retry">Processing was cancelled. You can retry manually.</string>
+    <string name="service_interrupted_retry">Processing was interrupted by the system. You can retry manually.</string>
+    <string name="service_cancelled">Processing cancelled by user</string>
+    <string name="service_cancelling">Cancelling current task…</string>
+    <string name="service_invalid_request">Invalid processing request…</string>
+    <string name="service_queued">Added to the processing queue…</string>
+    <string name="service_waiting">Waiting</string>
+    <string name="service_reprocessing">Reprocessing recording…</string>
+    <string name="service_preparing">Preparing to process…</string>
+    <string name="service_converting">Converting to mono WAV…</string>
+    <string name="service_splitting">Splitting on silence…</string>
+    <string name="service_split_complete">Segments ready: %1$d</string>
+    <string name="service_transcribing">Transcribing segment %1$d/%2$d · Recognized characters: %3$d</string>
+    <string name="service_extracting">AI extraction · Transcript characters: %1$d…</string>
+    <string name="service_saving">Saving…</string>
+    <string name="service_processing_complete">Processing complete</string>
+    <string name="service_processing_failed">Processing failed</string>
+    <string name="service_processing_failed_retry">Processing failed. You can retry manually.</string>
+    <string name="service_processing">Processing…</string>
+
+    <string name="asr_download_preparing_local">Preparing to download the local ASR model…</string>
+    <string name="asr_download_progress">Downloading model: %1$d%% (%2$s, %3$d s left)</string>
+    <string name="asr_extract_progress">Extracting model: %1$d%%</string>
+    <string name="asr_notification_model_ready">Model ready</string>
+    <string name="asr_model_hash_mismatch">Model verification failed. Check the Settings screen.</string>
+    <string name="asr_notification_download_failed">Model download failed. Please try again.</string>
+    <string name="asr_notification_model_corrupted">The model is corrupted. Download it again.</string>
+    <string name="asr_download_preparing">Preparing download…</string>
+    <string name="asr_notification_title">Murmurnote · Local ASR Model</string>
+</resources>

@@ -28,6 +28,8 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontWeight
@@ -35,6 +37,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import app.murmurnote.android.R
 import app.murmurnote.android.data.local.entity.ItemType
 import app.murmurnote.android.data.local.entity.Recording
 import app.murmurnote.android.domain.usecase.SearchDateRange
@@ -51,14 +54,18 @@ fun SearchScreen(
     val q by viewModel.query.collectAsStateWithLifecycle()
     val filters by viewModel.filters.collectAsStateWithLifecycle()
     val result by viewModel.result.collectAsStateWithLifecycle()
+    val locale = LocalConfiguration.current.locales[0]
 
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text("搜索") },
+                title = { Text(stringResource(R.string.search_title)) },
                 navigationIcon = {
                     IconButton(onClick = onBack) {
-                        Icon(Icons.AutoMirrored.Filled.ArrowBack, "返回")
+                        Icon(
+                            Icons.AutoMirrored.Filled.ArrowBack,
+                            stringResource(R.string.action_back),
+                        )
                     }
                 }
             )
@@ -69,7 +76,7 @@ fun SearchScreen(
                 value = q,
                 onValueChange = viewModel::setQuery,
                 modifier = Modifier.fillMaxWidth().padding(16.dp),
-                placeholder = { Text("搜录音、转写、待办、创意…") },
+                placeholder = { Text(stringResource(R.string.search_hint)) },
                 singleLine = true
             )
             SearchFilterBar(
@@ -84,7 +91,12 @@ fun SearchScreen(
                 verticalArrangement = Arrangement.spacedBy(8.dp)
             ) {
                 if (result.recordings.isNotEmpty()) {
-                    item { Text("录音 (${result.recordings.size})", style = MaterialTheme.typography.titleSmall) }
+                    item {
+                        Text(
+                            stringResource(R.string.search_recordings_count, result.recordings.size),
+                            style = MaterialTheme.typography.titleSmall,
+                        )
+                    }
                     items(result.recordings, key = { "rec-" + it.id }) { rec ->
                         Card(modifier = Modifier.fillMaxWidth().clickable { onOpenDetail(rec.id) }) {
                             Column(modifier = Modifier.padding(12.dp)) {
@@ -110,13 +122,16 @@ fun SearchScreen(
                 if (result.items.isNotEmpty()) {
                     item {
                         Spacer(Modifier.height(8.dp))
-                        Text("提取项 (${result.items.size})", style = MaterialTheme.typography.titleSmall)
+                        Text(
+                            stringResource(R.string.search_items_count, result.items.size),
+                            style = MaterialTheme.typography.titleSmall,
+                        )
                     }
                     items(result.items, key = { "item-" + it.id }) { item ->
                         Card(modifier = Modifier.fillMaxWidth().clickable { onOpenDetail(item.recordingId) }) {
                             Box(modifier = Modifier.fillMaxWidth().padding(12.dp)) {
                                 Text(
-                                    formatTimestampFull(item.createdAt),
+                                    formatTimestampFull(item.createdAt, locale),
                                     style = MaterialTheme.typography.labelSmall,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                                     modifier = Modifier.align(Alignment.TopEnd)
@@ -129,7 +144,7 @@ fun SearchScreen(
                                         maxLines = 4
                                     )
                                     Text(
-                                        item.type.name.lowercase(),
+                                        itemTypeLabel(item.type),
                                         style = MaterialTheme.typography.labelSmall,
                                         color = MaterialTheme.colorScheme.primary
                                     )
@@ -141,7 +156,7 @@ fun SearchScreen(
                 if (q.isNotBlank() && result.recordings.isEmpty() && result.items.isEmpty()) {
                     item {
                         Text(
-                            "没找到匹配结果",
+                            stringResource(R.string.search_no_results),
                             modifier = Modifier.padding(24.dp),
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
@@ -165,49 +180,59 @@ private fun SearchFilterBar(
     ) {
         FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             listOf(
-                SearchScope.ALL to "全部",
-                SearchScope.SUMMARY to "总结",
-                SearchScope.TRANSCRIPT to "转写",
-                SearchScope.ITEMS to "事项"
-            ).forEach { (scope, label) ->
+                SearchScope.ALL to R.string.search_scope_all,
+                SearchScope.SUMMARY to R.string.search_scope_summary,
+                SearchScope.TRANSCRIPT to R.string.search_scope_transcript,
+                SearchScope.ITEMS to R.string.search_scope_items
+            ).forEach { (scope, labelRes) ->
                 FilterChip(
                     selected = filters.scope == scope,
                     onClick = { onScope(scope) },
-                    label = { Text(label) }
+                    label = { Text(stringResource(labelRes)) }
                 )
             }
         }
         FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             listOf(
-                SearchDateRange.ALL to "不限日期",
-                SearchDateRange.TODAY to "今天",
-                SearchDateRange.SEVEN_DAYS to "7天",
-                SearchDateRange.THIRTY_DAYS to "30天"
-            ).forEach { (range, label) ->
+                SearchDateRange.ALL to R.string.search_date_all,
+                SearchDateRange.TODAY to R.string.search_date_today,
+                SearchDateRange.SEVEN_DAYS to R.string.search_date_seven_days,
+                SearchDateRange.THIRTY_DAYS to R.string.search_date_thirty_days
+            ).forEach { (range, labelRes) ->
                 FilterChip(
                     selected = filters.dateRange == range,
                     onClick = { onDateRange(range) },
-                    label = { Text(label) }
+                    label = { Text(stringResource(labelRes)) }
                 )
             }
         }
         FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            listOf<Pair<ItemType?, String>>(
-                null to "全部类型",
-                ItemType.TODO to "待办",
-                ItemType.IDEA to "想法",
-                ItemType.NOTE to "备忘",
-                ItemType.DECISION to "决策"
-            ).forEach { (type, label) ->
+            listOf(
+                null to R.string.item_type_all,
+                ItemType.TODO to R.string.item_type_todo,
+                ItemType.IDEA to R.string.item_type_idea,
+                ItemType.NOTE to R.string.item_type_note,
+                ItemType.DECISION to R.string.item_type_decision
+            ).forEach { (type, labelRes) ->
                 FilterChip(
                     selected = filters.itemType == type,
                     onClick = { onItemType(type) },
-                    label = { Text(label) }
+                    label = { Text(stringResource(labelRes)) }
                 )
             }
         }
     }
 }
+
+@Composable
+private fun itemTypeLabel(type: ItemType): String = stringResource(
+    when (type) {
+        ItemType.TODO -> R.string.item_type_todo
+        ItemType.IDEA -> R.string.item_type_idea
+        ItemType.NOTE -> R.string.item_type_note
+        ItemType.DECISION -> R.string.item_type_decision
+    }
+)
 
 @Composable
 private fun HighlightedText(

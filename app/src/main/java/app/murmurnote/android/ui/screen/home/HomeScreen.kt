@@ -55,6 +55,7 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.style.TextOverflow
@@ -62,6 +63,7 @@ import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import app.murmurnote.android.R
 import app.murmurnote.android.domain.pipeline.PipelineStage
 import app.murmurnote.android.domain.pipeline.ProcessingQueueEntry
 import app.murmurnote.android.domain.pipeline.ProcessingQueueStatus
@@ -192,10 +194,14 @@ fun HomeScreen(
                 .padding(top = 40.dp, start = 64.dp, end = 64.dp),
             horizontalAlignment = Alignment.CenterHorizontally,
         ) {
-            Text("声记 Murmurnote", style = MaterialTheme.typography.headlineMedium)
+            Text(stringResource(R.string.home_title), style = MaterialTheme.typography.headlineMedium)
             Spacer(Modifier.height(8.dp))
             Text(
-                "今日 ${state.todayCount} 条 · 总计 ${state.totalCount} 条",
+                stringResource(
+                    R.string.home_recording_counts,
+                    state.todayCount,
+                    state.totalCount,
+                ),
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
@@ -219,9 +225,11 @@ fun HomeScreen(
             Box(modifier = Modifier.height(28.dp), contentAlignment = Alignment.Center) {
                 Text(
                     text = if (state.isRecording) {
-                        val tag = if (state.isPaused) "已暂停" else "正在录音"
+                        val tag = stringResource(
+                            if (state.isPaused) R.string.home_paused else R.string.home_recording
+                        )
                         "$tag ${formatElapsed(state.elapsedMs)}"
-                    } else "点击开始录音",
+                    } else stringResource(R.string.home_tap_to_record),
                     style = MaterialTheme.typography.titleMedium,
                     color = if (state.isRecording) MaterialTheme.colorScheme.error
                     else MaterialTheme.colorScheme.onSurfaceVariant
@@ -240,7 +248,12 @@ fun HomeScreen(
                         TextButton(onClick = { viewModel.togglePause() }) {
                             Icon(if (state.isPaused) Icons.Filled.PlayArrow else Icons.Filled.Pause, null)
                             Spacer(Modifier.width(4.dp))
-                            Text(if (state.isPaused) "继续" else "暂停")
+                            Text(
+                                stringResource(
+                                    if (state.isPaused) R.string.action_continue
+                                    else R.string.action_pause
+                                )
+                            )
                         }
                         TextButton(onClick = { viewModel.stopRecording() }) {
                             Icon(
@@ -249,19 +262,19 @@ fun HomeScreen(
                                 tint = MaterialTheme.colorScheme.error,
                             )
                             Spacer(Modifier.width(4.dp))
-                            Text("停止", color = MaterialTheme.colorScheme.error)
+                            Text(stringResource(R.string.action_stop), color = MaterialTheme.colorScheme.error)
                         }
                         TextButton(onClick = { viewModel.cancelRecording() }) {
                             Icon(Icons.Filled.Close, null)
                             Spacer(Modifier.width(4.dp))
-                            Text("取消")
+                            Text(stringResource(R.string.action_cancel))
                         }
                     }
                 } else {
                     FilledTonalButton(onClick = { pickAudioLauncher.launch(arrayOf("audio/*")) }) {
                         Icon(Icons.Filled.FileUpload, null)
                         Spacer(Modifier.width(6.dp))
-                        Text("导入音频文件")
+                        Text(stringResource(R.string.home_import_audio))
                     }
                 }
             }
@@ -271,7 +284,7 @@ fun HomeScreen(
             onClick = onOpenSearch,
             modifier = Modifier.align(Alignment.TopEnd).padding(top = 16.dp, end = 16.dp),
         ) {
-            Icon(Icons.Filled.Search, contentDescription = "搜索")
+            Icon(Icons.Filled.Search, contentDescription = stringResource(R.string.home_search))
         }
     }
 }
@@ -293,11 +306,14 @@ private fun PrimaryRecordingControl(
     amplitudeDb: Int,
     onClick: () -> Unit,
 ) {
+    val contextDescription = stringResource(
+        if (isRecording) R.string.home_stop_recording else R.string.home_start_recording
+    )
     if (isRecording) {
         Surface(
             modifier = Modifier
                 .size(RECORDING_CONTROL_SIZE)
-                .semantics { contentDescription = "停止录音" },
+                .semantics { contentDescription = contextDescription },
             color = Color.Transparent,
             shape = MaterialTheme.shapes.large,
             shadowElevation = 0.dp,
@@ -316,7 +332,7 @@ private fun PrimaryRecordingControl(
         Surface(
             modifier = Modifier
                 .size(RECORDING_CONTROL_SIZE)
-                .semantics { contentDescription = "开始录音" },
+                .semantics { contentDescription = contextDescription },
             color = MaterialTheme.colorScheme.primary,
             shape = CircleShape,
             shadowElevation = 6.dp,
@@ -396,14 +412,14 @@ private fun ProcessingQueueCard(
         Column(modifier = Modifier.padding(14.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Text(
-                    "处理队列",
+                    stringResource(R.string.home_processing_queue),
                     style = MaterialTheme.typography.titleSmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.weight(1f)
                 )
                 if (running != null) {
                     TextButton(onClick = onCancelCurrent) {
-                        Text("取消当前")
+                        Text(stringResource(R.string.home_cancel_current))
                     }
                 }
             }
@@ -419,7 +435,7 @@ private fun ProcessingQueueCard(
             if (waiting > 0) {
                 Spacer(Modifier.height(4.dp))
                 Text(
-                    "等待中 $waiting 个",
+                    stringResource(R.string.home_waiting_count, waiting),
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
@@ -434,7 +450,7 @@ private fun ProcessingQueueCard(
                 .forEach {
                     Spacer(Modifier.height(4.dp))
                     Text(
-                        "${queueStatusLabel(it.status)} · ${it.fileName}${it.errorMessage?.let { msg -> " · $msg" } ?: ""}",
+                        "${queueStatusLabel(it.status)} · ${it.fileName}",
                         style = MaterialTheme.typography.labelSmall,
                         color = if (it.status == ProcessingQueueStatus.FAILED) MaterialTheme.colorScheme.error
                         else MaterialTheme.colorScheme.onSurfaceVariant,
@@ -473,7 +489,7 @@ private fun RealtimeTranscriptCard(
                     Spacer(Modifier.width(8.dp))
                 }
                 Text(
-                    "实时预览（停止后重新识别）",
+                    stringResource(R.string.home_live_preview),
                     style = MaterialTheme.typography.titleSmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
@@ -510,21 +526,21 @@ private fun RealtimeTranscriptCard(
                         }
                         HomeViewModel.LiveTranscriptStatus.TRANSCRIBED -> {
                             Text(
-                                segment.text.ifBlank { "（识别为空）" },
+                                segment.text.ifBlank { stringResource(R.string.home_empty_recognition) },
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
                         }
                         HomeViewModel.LiveTranscriptStatus.FAILED -> {
                             Text(
-                                segment.errorMessage ?: "转写失败",
+                                stringResource(R.string.home_transcription_failed),
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.error,
                                 maxLines = 2,
                                 overflow = TextOverflow.Ellipsis
                             )
                             TextButton(onClick = { onRetryFailedSegment(segment.sequence) }) {
-                                Text("重试此段")
+                                Text(stringResource(R.string.home_retry_segment))
                             }
                         }
                         HomeViewModel.LiveTranscriptStatus.WAITING -> Unit
@@ -535,12 +551,13 @@ private fun RealtimeTranscriptCard(
     }
 }
 
+@Composable
 private fun queueStatusLabel(status: ProcessingQueueStatus): String = when (status) {
-    ProcessingQueueStatus.WAITING -> "等待"
-    ProcessingQueueStatus.RUNNING -> "处理中"
-    ProcessingQueueStatus.COMPLETED -> "完成"
-    ProcessingQueueStatus.FAILED -> "失败"
-    ProcessingQueueStatus.CANCELLED -> "已取消"
+    ProcessingQueueStatus.WAITING -> stringResource(R.string.status_waiting)
+    ProcessingQueueStatus.RUNNING -> stringResource(R.string.status_processing)
+    ProcessingQueueStatus.COMPLETED -> stringResource(R.string.status_completed)
+    ProcessingQueueStatus.FAILED -> stringResource(R.string.status_failed)
+    ProcessingQueueStatus.CANCELLED -> stringResource(R.string.status_cancelled)
 }
 
 @Composable
@@ -572,7 +589,11 @@ private fun PipelineProgressCard(stage: PipelineStage, onDismiss: () -> Unit) {
                 Spacer(Modifier.fillMaxWidth().weight(1f))
                 if (isError || isDone) {
                     IconButton(onClick = onDismiss, modifier = Modifier.size(24.dp)) {
-                        Icon(Icons.Filled.Close, "关闭", tint = onColor)
+                        Icon(
+                            Icons.Filled.Close,
+                            stringResource(R.string.action_close),
+                            tint = onColor,
+                        )
                     }
                 }
             }
@@ -609,51 +630,86 @@ private data class StageDescription(
     val isDone: Boolean
 )
 
+@Composable
 private fun describe(s: PipelineStage): StageDescription = when (s) {
-    is PipelineStage.Idle -> StageDescription("空闲", "", null, false, false)
-    is PipelineStage.Recording -> StageDescription("录音中", formatElapsed(s.durationMs), null, false, false)
+    is PipelineStage.Idle -> StageDescription(
+        stringResource(R.string.home_pipeline_idle),
+        "",
+        null,
+        false,
+        false,
+    )
+    is PipelineStage.Recording -> StageDescription(
+        stringResource(R.string.home_pipeline_recording),
+        formatElapsed(s.durationMs),
+        null,
+        false,
+        false,
+    )
     is PipelineStage.Converting -> StageDescription(
-        "1/4 转码音频",
-        "正在把录音转成 16 kHz 单声道 WAV",
+        stringResource(R.string.home_pipeline_converting_title),
+        stringResource(R.string.home_pipeline_converting_detail),
         s.progress.takeIf { it > 0 }, false, false
     )
     is PipelineStage.Splitting -> StageDescription(
-        "2/4 神经 VAD 切段",
-        if (s.segmentCount == 0) "正在用 Silero 检测语音边界…" else "已切成 ${s.segmentCount} 段（每段 ≤25 秒）",
+        stringResource(R.string.home_pipeline_splitting_title),
+        if (s.segmentCount == 0) {
+            stringResource(R.string.home_pipeline_detecting_speech)
+        } else {
+            stringResource(R.string.home_pipeline_segments_ready, s.segmentCount)
+        },
         null, false, false
     )
     is PipelineStage.Transcribing -> StageDescription(
-        "3/4 转写中",
-        "第 ${s.segmentIndex + 1}/${s.totalSegments} 段 · 已识别 ${s.recognizedChars} 字\n正在转写，完整结果会保存到列表。",
+        stringResource(R.string.home_pipeline_transcribing_title),
+        stringResource(
+            R.string.home_pipeline_transcribing_detail,
+            s.segmentIndex + 1,
+            s.totalSegments,
+            s.recognizedChars,
+        ),
         if (s.totalSegments > 0) (s.segmentIndex + 1).toFloat() / s.totalSegments else null,
         false, false
     )
     is PipelineStage.Extracting -> StageDescription(
-        "4/4 AI 提取",
-        "已启用的 AI 服务正在从 ${s.transcriptLength} 字转写中提取 todo / idea / note / decision …",
+        stringResource(R.string.home_pipeline_extracting_title),
+        stringResource(R.string.home_pipeline_extracting_detail, s.transcriptLength),
         null, false, false
     )
-    is PipelineStage.Saving -> StageDescription("保存中", "写入本地数据库…", null, false, false)
+    is PipelineStage.Saving -> StageDescription(
+        stringResource(R.string.home_pipeline_saving_title),
+        stringResource(R.string.home_pipeline_saving_detail),
+        null,
+        false,
+        false,
+    )
     is PipelineStage.Completed -> StageDescription(
-        "✓ 处理完成",
-        "可在「列表」里查看。本提示 4 秒后自动消失。",
+        stringResource(R.string.home_pipeline_completed_title),
+        stringResource(R.string.home_pipeline_completed_detail),
         1f, false, true
     )
     is PipelineStage.Failed -> StageDescription(
-        "✗ 处理失败",
-        "阶段：${s.stage}\n${s.errorMessage}\n\n请到「设置 → 导出日志包」查看详情。",
+        stringResource(R.string.home_pipeline_failed_title),
+        stringResource(R.string.home_pipeline_failed_detail, s.stage),
         null, true, false
     )
 }
 
+@Composable
 private fun liveSegmentLabel(segment: HomeViewModel.LiveTranscriptSegment): String {
     val status = when (segment.status) {
-        HomeViewModel.LiveTranscriptStatus.WAITING -> "等待"
-        HomeViewModel.LiveTranscriptStatus.TRANSCRIBING -> "转写中"
-        HomeViewModel.LiveTranscriptStatus.TRANSCRIBED -> "已完成"
-        HomeViewModel.LiveTranscriptStatus.FAILED -> "失败"
+        HomeViewModel.LiveTranscriptStatus.WAITING -> stringResource(R.string.status_waiting)
+        HomeViewModel.LiveTranscriptStatus.TRANSCRIBING -> stringResource(R.string.home_status_transcribing)
+        HomeViewModel.LiveTranscriptStatus.TRANSCRIBED -> stringResource(R.string.home_status_transcribed)
+        HomeViewModel.LiveTranscriptStatus.FAILED -> stringResource(R.string.status_failed)
     }
-    return "第 ${segment.sequence + 1} 段 · ${formatElapsed(segment.startMs)}-${formatElapsed(segment.endMs)} · $status"
+    return stringResource(
+        R.string.home_segment_label,
+        segment.sequence + 1,
+        formatElapsed(segment.startMs),
+        formatElapsed(segment.endMs),
+        status,
+    )
 }
 
 private fun formatElapsed(ms: Long): String {

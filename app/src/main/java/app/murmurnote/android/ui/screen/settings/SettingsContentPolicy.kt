@@ -14,14 +14,23 @@ internal fun resolveAsrSettingsPanel(engineType: String): AsrSettingsPanel =
         AsrSettingsPanel.CLOUD
     }
 
-internal fun asrSettingsStatusText(
+internal sealed interface AsrSettingsStatus {
+    data class Cloud(val configured: Boolean) : AsrSettingsStatus
+    data class Local(val modelDisplayName: String) : AsrSettingsStatus
+}
+
+internal fun asrSettingsStatus(
     panel: AsrSettingsPanel,
     selected: Boolean,
     cloudApiConfigured: Boolean,
     localModelDisplayName: String,
-): String? {
+): AsrSettingsStatus? {
     return when (panel) {
-        AsrSettingsPanel.CLOUD -> if (cloudApiConfigured) "已配置 API" else "API未配置"
-        AsrSettingsPanel.LOCAL -> if (selected) "当前模型：$localModelDisplayName" else null
+        AsrSettingsPanel.CLOUD -> AsrSettingsStatus.Cloud(cloudApiConfigured)
+        AsrSettingsPanel.LOCAL -> if (selected) {
+            AsrSettingsStatus.Local(localModelDisplayName)
+        } else {
+            null
+        }
     }
 }

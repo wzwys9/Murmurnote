@@ -105,66 +105,22 @@ class InstallDefaultPolicyTest {
     }
 
     @Test
-    fun safeLexiconStartsDisabledEvenWhenAnLlmApiIsConfigured() {
+    fun customDictionaryStartsDisabledUntilExplicitlyEnabled() {
         assertEquals(
             false,
-            SafeLexiconInstallDefaultPolicy.resolve(
-                explicitEnabled = null,
-                llmApiConfigured = true,
-            ),
+            CustomDictionaryInstallDefaultPolicy.resolve(explicitEnabled = null),
         )
     }
 
     @Test
-    fun safeLexiconCannotBeEnabledWithoutTheCurrentLlmApiKey() {
-        assertEquals(
-            false,
-            SafeLexiconInstallDefaultPolicy.resolve(
-                explicitEnabled = true,
-                llmApiConfigured = false,
-            ),
-        )
+    fun customDictionaryMasterStateDoesNotDependOnTheLlmApiKey() {
         assertEquals(
             true,
-            SafeLexiconInstallDefaultPolicy.resolve(
-                explicitEnabled = true,
-                llmApiConfigured = true,
-            ),
+            CustomDictionaryInstallDefaultPolicy.resolve(explicitEnabled = true),
         )
         assertEquals(
             false,
-            SafeLexiconInstallDefaultPolicy.resolve(
-                explicitEnabled = false,
-                llmApiConfigured = true,
-            ),
-        )
-    }
-
-    @Test
-    fun configuringAnApiKeyDoesNotRestoreAStaleEnabledState() {
-        assertEquals(
-            false,
-            SafeLexiconInstallDefaultPolicy.resolveAfterApiKeyUpdate(
-                explicitEnabled = true,
-                wasConfigured = false,
-                isConfigured = true,
-            ),
-        )
-        assertEquals(
-            true,
-            SafeLexiconInstallDefaultPolicy.resolveAfterApiKeyUpdate(
-                explicitEnabled = true,
-                wasConfigured = true,
-                isConfigured = true,
-            ),
-        )
-        assertEquals(
-            false,
-            SafeLexiconInstallDefaultPolicy.resolveAfterApiKeyUpdate(
-                explicitEnabled = true,
-                wasConfigured = true,
-                isConfigured = false,
-            ),
+            CustomDictionaryInstallDefaultPolicy.resolve(explicitEnabled = false),
         )
     }
 

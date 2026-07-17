@@ -12,16 +12,10 @@ import kotlinx.coroutines.flow.Flow
 interface ItemDao {
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
-    suspend fun insert(item: ExtractedItem): Long
-
-    @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertAll(items: List<ExtractedItem>)
 
     @Query("UPDATE extracted_items SET isCompleted = :completed WHERE id = :id")
     suspend fun setCompleted(id: Long, completed: Boolean)
-
-    @Query("DELETE FROM extracted_items WHERE id = :id")
-    suspend fun deleteById(id: Long)
 
     @Query("DELETE FROM extracted_items WHERE recordingId = :recordingId")
     suspend fun deleteForRecording(recordingId: String)
@@ -54,16 +48,7 @@ interface ItemDao {
     )
     fun observeAllTodos(): Flow<List<ExtractedItem>>
 
-    // 同 RecordingDao.searchRecordings:LIKE 取代 FTS MATCH 以支持中文搜索。
-    @Query("""
-        SELECT extracted_items.*
-        FROM extracted_items
-        INNER JOIN recordings ON recordings.id = extracted_items.recordingId
-        WHERE extracted_items.content LIKE '%' || :query || '%'
-        ORDER BY extracted_items.createdAt DESC
-    """)
-    fun search(query: String): Flow<List<ExtractedItem>>
-
+    // LIKE 取代 FTS MATCH 以支持中文搜索。
     @Query("""
         SELECT extracted_items.*
         FROM extracted_items
@@ -80,7 +65,4 @@ interface ItemDao {
         toMs: Long?,
         type: ItemType?
     ): Flow<List<ExtractedItem>>
-
-    @Query("SELECT COUNT(*) FROM extracted_items WHERE recordingId = :recordingId AND type = :type")
-    suspend fun countOfType(recordingId: String, type: ItemType): Int
 }

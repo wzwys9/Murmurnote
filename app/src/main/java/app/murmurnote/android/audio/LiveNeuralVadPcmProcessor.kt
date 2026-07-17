@@ -2,6 +2,7 @@ package app.murmurnote.android.audio
 
 import java.io.File
 
+/** Live text/audio is preview-only; final offline recognition remains the canonical source. */
 internal data class LiveVadAudioSegment(
     val sequence: Int,
     val file: File,
@@ -10,10 +11,7 @@ internal data class LiveVadAudioSegment(
     val cutReason: NeuralVadSegmentPlanner.CutReason,
     val overlapBeforeMs: Long,
     val vadPresetVersion: String,
-) {
-    /** Live text/audio is always preview-only; final offline recognition is the canonical source. */
-    val isCanonical: Boolean = false
-}
+)
 
 /** Worker-side bridge from queued PCM to a session-level Silero coordinator and preview WAVs. */
 internal class LiveNeuralVadPcmProcessor(

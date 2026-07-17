@@ -1,10 +1,13 @@
 package app.murmurnote.android.ui.screen.settings
 
+import android.content.Context
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import app.murmurnote.android.data.repository.PersonalCorrectionRepository
+import app.murmurnote.android.R
 import app.murmurnote.android.domain.correction.PersonalCorrectionProfile
 import dagger.hilt.android.lifecycle.HiltViewModel
+import dagger.hilt.android.qualifiers.ApplicationContext
 import javax.inject.Inject
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -13,6 +16,7 @@ import kotlinx.coroutines.launch
 
 @HiltViewModel
 class PersonalCorrectionViewModel @Inject constructor(
+    @ApplicationContext private val context: Context,
     private val repository: PersonalCorrectionRepository,
 ) : ViewModel() {
     data class UiState(
@@ -45,9 +49,9 @@ class PersonalCorrectionViewModel @Inject constructor(
                 )
             }
             runCatching { repository.setProfileEnabled(profile.ruleId, enabled) }
-                .onFailure { error ->
+                .onFailure {
                     _uiState.update {
-                        it.copy(errorMessage = error.message ?: "操作失败，请重试")
+                        it.copy(errorMessage = context.getString(R.string.personal_operation_failed))
                     }
                 }
             _uiState.update {
@@ -75,9 +79,9 @@ class PersonalCorrectionViewModel @Inject constructor(
                 )
             }
             runCatching { repository.deleteProfile(profile.ruleId) }
-                .onFailure { error ->
+                .onFailure {
                     _uiState.update {
-                        it.copy(errorMessage = error.message ?: "删除失败，请重试")
+                        it.copy(errorMessage = context.getString(R.string.personal_delete_failed))
                     }
                 }
             _uiState.update {
@@ -98,9 +102,9 @@ class PersonalCorrectionViewModel @Inject constructor(
         viewModelScope.launch {
             _uiState.update { it.copy(confirmClearAll = false, errorMessage = null) }
             runCatching { repository.clearProfiles() }
-                .onFailure { error ->
+                .onFailure {
                     _uiState.update {
-                        it.copy(errorMessage = error.message ?: "清空失败，请重试")
+                        it.copy(errorMessage = context.getString(R.string.personal_clear_failed))
                     }
                 }
         }

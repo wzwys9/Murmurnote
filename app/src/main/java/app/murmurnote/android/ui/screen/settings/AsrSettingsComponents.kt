@@ -41,12 +41,15 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
+import app.murmurnote.android.R
 import app.murmurnote.android.data.asr.AsrLanguageMode
 import app.murmurnote.android.data.asr.AsrModelManager
+import app.murmurnote.android.data.asr.AsrModelUrls
 import app.murmurnote.android.data.asr.LocalAsrModelSpec
 
 @Composable
@@ -57,18 +60,15 @@ internal fun AsrSettingsDirectoryCard(
     onSelect: () -> Unit,
     onConfigure: () -> Unit,
 ) {
-    val title: String
-    val description: String
-    when (panel) {
-        AsrSettingsPanel.CLOUD -> {
-            title = "云端语音识别"
-            description = "智谱 GLM-ASR · API Key 与接口设置"
-        }
-        AsrSettingsPanel.LOCAL -> {
-            title = "本地模型"
-            description = "SenseVoiceSmall、Qwen3-ASR · 模型与语言设置"
-        }
-    }
+    val title = stringResource(
+        if (panel == AsrSettingsPanel.CLOUD) R.string.asr_cloud_title
+        else R.string.asr_local_title
+    )
+    val description = stringResource(
+        if (panel == AsrSettingsPanel.CLOUD) R.string.asr_cloud_description
+        else R.string.asr_local_description
+    )
+    val configureDescription = stringResource(R.string.asr_configure_description, title)
 
     Card(
         modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp),
@@ -107,7 +107,9 @@ internal fun AsrSettingsDirectoryCard(
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                     Text(
-                        if (selected) "当前使用" else "点击选择",
+                        stringResource(
+                            if (selected) R.string.asr_currently_used else R.string.asr_tap_to_select
+                        ),
                         style = MaterialTheme.typography.labelMedium,
                         color = MaterialTheme.colorScheme.primary,
                     )
@@ -124,9 +126,9 @@ internal fun AsrSettingsDirectoryCard(
                 onClick = onConfigure,
                 modifier = Modifier
                     .padding(end = 8.dp)
-                    .semantics { contentDescription = "配置$title" },
+                    .semantics { contentDescription = configureDescription },
             ) {
-                Text("配置")
+                Text(stringResource(R.string.asr_configure))
             }
         }
     }
@@ -163,10 +165,10 @@ internal fun LocalAsrLanguageCard(
 ) {
     Card(modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp)) {
         Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            Text("识别语言", style = MaterialTheme.typography.titleMedium)
+            Text(stringResource(R.string.asr_language_title), style = MaterialTheme.typography.titleMedium)
             if (isQwen) {
                 Text(
-                    "Qwen3-ASR 固定使用自动语言识别，无需额外设置。",
+                    stringResource(R.string.asr_qwen_language_fixed),
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
@@ -174,9 +176,21 @@ internal fun LocalAsrLanguageCard(
             }
 
             val modes = listOf(
-                Triple(AsrLanguageMode.SYSTEM, "跟随系统", "中文系统使用中文，英文系统使用英文，其他语言自动识别"),
-                Triple(AsrLanguageMode.AUTO, "自动识别", "让 SenseVoice 自动判断语种"),
-                Triple(AsrLanguageMode.MANUAL, "手动指定", "从支持的语言中固定选择")
+                Triple(
+                    AsrLanguageMode.SYSTEM,
+                    stringResource(R.string.asr_language_system),
+                    stringResource(R.string.asr_language_system_description),
+                ),
+                Triple(
+                    AsrLanguageMode.AUTO,
+                    stringResource(R.string.asr_language_auto),
+                    stringResource(R.string.asr_language_auto_description),
+                ),
+                Triple(
+                    AsrLanguageMode.MANUAL,
+                    stringResource(R.string.asr_language_manual),
+                    stringResource(R.string.asr_language_manual_description),
+                )
             )
             Column(modifier = Modifier.selectableGroup()) {
                 modes.forEach { (value, title, description) ->
@@ -216,9 +230,9 @@ internal fun LocalAsrLanguageCard(
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Column(modifier = Modifier.weight(1f)) {
-                    Text("标点与数字规范化（ITN）", style = MaterialTheme.typography.bodyMedium)
+                    Text(stringResource(R.string.asr_itn_title), style = MaterialTheme.typography.bodyMedium)
                     Text(
-                        "将口语中的数字、日期等整理为更易读的文本，默认开启。",
+                        stringResource(R.string.asr_itn_description),
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
@@ -235,12 +249,12 @@ private fun ManualLanguageSelector(
     onLanguageSelected: (String) -> Unit
 ) {
     val options = listOf(
-        "auto" to "自动",
-        "zh" to "中文",
-        "en" to "英语",
-        "ja" to "日语",
-        "ko" to "韩语",
-        "yue" to "粤语"
+        "auto" to stringResource(R.string.asr_language_option_auto),
+        "zh" to stringResource(R.string.asr_language_option_chinese),
+        "en" to stringResource(R.string.asr_language_option_english),
+        "ja" to stringResource(R.string.asr_language_option_japanese),
+        "ko" to stringResource(R.string.asr_language_option_korean),
+        "yue" to stringResource(R.string.asr_language_option_cantonese)
     )
     val selected = options.firstOrNull { it.first == selectedLanguage } ?: options.first()
     var expanded by remember { mutableStateOf(false) }
@@ -253,7 +267,7 @@ private fun ManualLanguageSelector(
             value = selected.second,
             onValueChange = {},
             readOnly = true,
-            label = { Text("指定语言") },
+            label = { Text(stringResource(R.string.asr_language_manual_label)) },
             trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded) },
             modifier = Modifier
                 .fillMaxWidth()
@@ -284,8 +298,9 @@ private fun ManualLanguageSelector(
 @Composable
 private fun NativeLibStatusRow(ready: Boolean) {
     val color = if (ready) Color(0xFF4CAF50) else MaterialTheme.colorScheme.error
-    val text = if (ready) "✓ sherpa-onnx 原生库已集成"
-        else "✗ sherpa-onnx 原生库未集成（开发者需集成 Kotlin 绑定和 JNI 库后重新构建；模型文件即使下完也无法运行）"
+    val text = stringResource(
+        if (ready) R.string.asr_native_ready else R.string.asr_native_missing
+    )
     Text(
         text,
         style = MaterialTheme.typography.bodySmall,
@@ -304,7 +319,7 @@ private fun LocalModelPicker(
         verticalArrangement = Arrangement.spacedBy(4.dp)
     ) {
         Text(
-            "本地模型",
+            stringResource(R.string.asr_local_title),
             style = MaterialTheme.typography.labelMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant
         )
@@ -324,7 +339,11 @@ private fun LocalModelPicker(
                 Column(modifier = Modifier.padding(start = 8.dp)) {
                     Text(model.displayName, style = MaterialTheme.typography.bodyMedium)
                     Text(
-                        "${model.description} · 下载 ${model.sizeLabel}",
+                        stringResource(
+                            R.string.asr_model_download_size,
+                            localModelDescription(model),
+                            model.sizeLabel,
+                        ),
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
@@ -332,6 +351,13 @@ private fun LocalModelPicker(
             }
         }
     }
+}
+
+@Composable
+private fun localModelDescription(model: LocalAsrModelSpec): String = when (model.id) {
+    AsrModelUrls.SENSE_VOICE_ID -> stringResource(R.string.asr_model_sense_voice_description)
+    AsrModelUrls.QWEN3_ASR_ID -> stringResource(R.string.asr_model_qwen_description)
+    else -> model.displayName
 }
 
 @Composable
@@ -362,59 +388,87 @@ internal fun LocalModelStatusBlock(
         Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             when (status) {
                 AsrModelManager.ModelStatus.NotDownloaded -> {
-                    Text("模型未下载", style = MaterialTheme.typography.bodyMedium)
+                    Text(stringResource(R.string.asr_model_not_downloaded), style = MaterialTheme.typography.bodyMedium)
                     Text(
-                        "首次启用 ${model.displayName} 前需要安装模型文件。",
+                        stringResource(R.string.asr_model_install_required, model.displayName),
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                     if (bundledAssetsAvailable) {
                         Text(
-                            "当前 APK 已内置该模型，安装会复制约 ${model.sizeLabel} 到本机存储；复制期间可能占用较多 I/O，建议空闲时操作。",
+                            stringResource(R.string.asr_model_bundled_description, model.sizeLabel),
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            Button(onClick = onInstallBundledModel) { Text("安装内置模型") }
-                            OutlinedButton(onClick = onRequestDownload) { Text("从网络下载") }
+                            Button(onClick = onInstallBundledModel) {
+                                Text(stringResource(R.string.asr_install_bundled))
+                            }
+                            OutlinedButton(onClick = onRequestDownload) {
+                                Text(stringResource(R.string.asr_download_network))
+                            }
                         }
                     } else {
                         MirrorPicker(mirrorIndex, mirrorOptions, onMirrorSelected)
-                        Button(onClick = onRequestDownload) { Text("下载模型（约 ${model.sizeLabel}）") }
+                        Button(onClick = onRequestDownload) {
+                            Text(stringResource(R.string.asr_download_model_size, model.sizeLabel))
+                        }
                     }
                 }
                 is AsrModelManager.ModelStatus.Downloading -> {
-                    Text("下载中：${(status.progress * 100).toInt()}%", style = MaterialTheme.typography.bodyMedium)
+                    Text(
+                        stringResource(
+                            R.string.asr_downloading_percent,
+                            (status.progress * 100).toInt(),
+                        ),
+                        style = MaterialTheme.typography.bodyMedium,
+                    )
                     LinearProgressIndicator(
                         progress = { status.progress },
                         modifier = Modifier.fillMaxWidth()
                     )
                     Text(
-                        "速度：${formatSpeed(status.bytesPerSec)} · 剩余 ${formatEta(status.etaSec)}",
+                        stringResource(
+                            R.string.asr_download_speed_eta,
+                            formatSpeed(status.bytesPerSec),
+                            formatEta(status.etaSec),
+                        ),
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                     if (status.bytesPerSec in 1..(50 * 1024)) {
                         Text(
-                            "下载速度较慢，可在下方切换镜像源。",
+                            stringResource(R.string.asr_download_slow),
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.error
                         )
                     }
                     MirrorPicker(mirrorIndex, mirrorOptions, onMirrorSelected)
-                    OutlinedButton(onClick = onCancelDownload) { Text("取消下载") }
+                    OutlinedButton(onClick = onCancelDownload) {
+                        Text(stringResource(R.string.asr_cancel_download))
+                    }
                 }
                 is AsrModelManager.ModelStatus.Extracting -> {
-                    Text("解压中：${(status.progress * 100).toInt()}%", style = MaterialTheme.typography.bodyMedium)
+                    Text(
+                        stringResource(
+                            R.string.asr_extracting_percent,
+                            (status.progress * 100).toInt(),
+                        ),
+                        style = MaterialTheme.typography.bodyMedium,
+                    )
                     LinearProgressIndicator(
                         progress = { status.progress },
                         modifier = Modifier.fillMaxWidth()
                     )
                 }
                 is AsrModelManager.ModelStatus.Ready -> {
-                    Text("✓ 模型已就绪", style = MaterialTheme.typography.bodyMedium, color = Color(0xFF4CAF50))
                     Text(
-                        "占用空间：${formatSize(status.sizeBytes)}",
+                        stringResource(R.string.asr_model_ready),
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = Color(0xFF4CAF50),
+                    )
+                    Text(
+                        stringResource(R.string.asr_model_storage, formatSize(status.sizeBytes)),
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
@@ -422,7 +476,7 @@ internal fun LocalModelStatusBlock(
                         ConcurrencySelector(localConcurrency, onConcurrencyChanged)
                     } else {
                         Text(
-                            "Qwen3-ASR 内存占用较高，本地识别固定单路运行。",
+                            stringResource(R.string.asr_qwen_single_concurrency),
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
@@ -439,44 +493,71 @@ internal fun LocalModelStatusBlock(
                                 Icon(Icons.Filled.Refresh, contentDescription = null, modifier = Modifier.size(18.dp))
                             }
                             Spacer(Modifier.width(6.dp))
-                            Text(if (updateChecking) "检测中…" else "检测更新")
+                            Text(
+                                stringResource(
+                                    if (updateChecking) R.string.asr_update_checking
+                                    else R.string.asr_check_update
+                                )
+                            )
                         }
-                        OutlinedButton(onClick = onDeleteModel) { Text("删除模型") }
+                        OutlinedButton(onClick = onDeleteModel) {
+                            Text(stringResource(R.string.asr_delete_model))
+                        }
                     }
                     if (updateCheck is AsrModelManager.ModelUpdateCheck.UpdateAvailable) {
-                        Button(onClick = onRequestDownload) { Text("下载更新") }
+                        Button(onClick = onRequestDownload) {
+                            Text(stringResource(R.string.asr_download_update))
+                        }
                     }
                 }
                 is AsrModelManager.ModelStatus.HashMismatch -> {
-                    Text("✗ 模型校验不匹配", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.error)
                     Text(
-                        "下载文件的 SHA256 与内置校验值不一致，已拒绝安装。请重新下载；如果问题持续出现，请更新 App 后再试。",
+                        stringResource(R.string.asr_hash_mismatch),
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.error,
+                    )
+                    Text(
+                        stringResource(R.string.asr_hash_mismatch_description),
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
-                    Button(onClick = onRequestDownload) { Text("重新下载") }
+                    Button(onClick = onRequestDownload) {
+                        Text(stringResource(R.string.asr_redownload))
+                    }
                 }
                 is AsrModelManager.ModelStatus.Corrupted -> {
-                    Text("✗ 模型已损坏", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.error)
                     Text(
-                        status.reason,
+                        stringResource(R.string.asr_model_corrupted),
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.error,
+                    )
+                    Text(
+                        stringResource(R.string.asr_model_corrupted_description),
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        Button(onClick = onRequestDownload) { Text("重新下载") }
-                        OutlinedButton(onClick = onDeleteModel) { Text("删除") }
+                        Button(onClick = onRequestDownload) {
+                            Text(stringResource(R.string.asr_redownload))
+                        }
+                        OutlinedButton(onClick = onDeleteModel) {
+                            Text(stringResource(R.string.asr_delete))
+                        }
                     }
                 }
                 is AsrModelManager.ModelStatus.Failed -> {
-                    Text("✗ 下载失败", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.error)
                     Text(
-                        status.message,
+                        stringResource(R.string.asr_download_failed),
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.error,
+                    )
+                    Text(
+                        stringResource(R.string.asr_download_failed_description),
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                     MirrorPicker(mirrorIndex, mirrorOptions, onMirrorSelected)
-                    Button(onClick = onRequestDownload) { Text("重试") }
+                    Button(onClick = onRequestDownload) { Text(stringResource(R.string.action_retry)) }
                 }
             }
         }
@@ -488,13 +569,14 @@ private fun ModelUpdateCheckResult(result: AsrModelManager.ModelUpdateCheck?) {
     if (result == null) return
     val (text, color) = when (result) {
         AsrModelManager.ModelUpdateCheck.NotInstalled ->
-            "模型尚未安装，下载后再检测更新。" to MaterialTheme.colorScheme.onSurfaceVariant
+            stringResource(R.string.asr_update_not_installed) to
+                MaterialTheme.colorScheme.onSurfaceVariant
         is AsrModelManager.ModelUpdateCheck.UpToDate ->
-            result.message to Color(0xFF4CAF50)
+            stringResource(R.string.asr_update_current) to Color(0xFF4CAF50)
         is AsrModelManager.ModelUpdateCheck.UpdateAvailable ->
-            result.message to MaterialTheme.colorScheme.primary
+            stringResource(R.string.asr_update_available) to MaterialTheme.colorScheme.primary
         is AsrModelManager.ModelUpdateCheck.UnableToCheck ->
-            result.message to MaterialTheme.colorScheme.error
+            stringResource(R.string.asr_update_unavailable) to MaterialTheme.colorScheme.error
     }
     Text(
         text,
@@ -511,7 +593,7 @@ private fun MirrorPicker(
 ) {
     Column(modifier = Modifier.selectableGroup()) {
         Text(
-            "下载源",
+            stringResource(R.string.asr_download_source),
             style = MaterialTheme.typography.labelMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant
         )
@@ -541,7 +623,7 @@ private fun ConcurrencySelector(
 ) {
     Column {
         Text(
-            "并行识别速度（约 ${current}x，最多 3x）",
+            stringResource(R.string.asr_concurrency, current),
             style = MaterialTheme.typography.labelMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant
         )
@@ -577,18 +659,21 @@ fun AsrDownloadConfirmDialog(
     val ctx = LocalContext.current
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("下载本地 ASR 模型") },
+        title = { Text(stringResource(R.string.asr_download_dialog_title)) },
         text = {
             Text(
-                "${model.displayName} 压缩包约 ${model.sizeLabel}。国内网络下载可能需要较长时间，建议在 WiFi 下进行。\n\n" +
-                    "下载会在通知栏显示进度，可随时取消并继续（断点续传）。"
+                stringResource(
+                    R.string.asr_download_dialog_description,
+                    model.displayName,
+                    model.sizeLabel,
+                )
             )
         },
         confirmButton = {
-            Button(onClick = { onConfirm(ctx) }) { Text("开始下载") }
+            Button(onClick = { onConfirm(ctx) }) { Text(stringResource(R.string.asr_start_download)) }
         },
         dismissButton = {
-            TextButton(onClick = onDismiss) { Text("取消") }
+            TextButton(onClick = onDismiss) { Text(stringResource(R.string.action_cancel)) }
         }
     )
 }

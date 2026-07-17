@@ -21,10 +21,13 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import app.murmurnote.android.R
 import app.murmurnote.android.data.local.entity.ExtractedItem
 import app.murmurnote.android.util.formatTimestampFull
 
@@ -41,10 +44,10 @@ fun IdeaScreen(
             verticalArrangement = Arrangement.Center,
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
-            Text("还没有想法", style = MaterialTheme.typography.titleMedium)
+            Text(stringResource(R.string.idea_empty), style = MaterialTheme.typography.titleMedium)
             Spacer(Modifier.height(8.dp))
             Text(
-                "录一段语音,AI 会自动从中识别出灵感与创意",
+                stringResource(R.string.idea_empty_hint),
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
@@ -64,10 +67,11 @@ fun IdeaScreen(
 
 @Composable
 private fun IdeaRow(item: ExtractedItem, onClick: () -> Unit) {
+    val locale = LocalConfiguration.current.locales[0]
     Card(modifier = Modifier.fillMaxWidth().clickable { onClick() }) {
         Box(modifier = Modifier.fillMaxWidth().padding(12.dp)) {
             Text(
-                formatTimestampFull(item.createdAt),
+                formatTimestampFull(item.createdAt, locale),
                 style = MaterialTheme.typography.labelSmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier.align(Alignment.TopEnd)

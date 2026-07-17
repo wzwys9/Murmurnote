@@ -13,8 +13,11 @@ import app.murmurnote.android.domain.correction.AppliedTextReplacement
 import app.murmurnote.android.domain.correction.CorrectionDecision
 import app.murmurnote.android.domain.correction.CorrectionMatchMode
 import app.murmurnote.android.domain.correction.CorrectionRule
+import app.murmurnote.android.domain.correction.CorrectionRuleOrigin
 import app.murmurnote.android.domain.correction.CorrectionScope
+import app.murmurnote.android.domain.correction.ContextualCorrectionLimits
 import app.murmurnote.android.domain.correction.CorrectedTextCoordinateMap
+import app.murmurnote.android.domain.correction.CrossOriginCorrectionConflictPolicy
 import app.murmurnote.android.domain.correction.PersonalCorrectionCandidate
 import app.murmurnote.android.domain.correction.PersonalCorrectionCandidateFinder
 import app.murmurnote.android.domain.correction.PersonalCorrectionContextHint
@@ -65,6 +68,9 @@ class PersonalCorrectionRepository @Inject constructor(
             .take(limit)
             .mapNotNull { event ->
                 val rule = correctionDao.getRule(event.ruleId) ?: return@mapNotNull null
+                if (rule.origin != CorrectionRuleOrigin.PERSONAL_LEARNING.name) {
+                    return@mapNotNull null
+                }
                 PendingPersonalLearningObservation(
                     eventId = event.id,
                     ruleId = event.ruleId,
@@ -92,7 +98,11 @@ class PersonalCorrectionRepository @Inject constructor(
             ?: return@withTransaction false
         val rule = correctionDao.getRule(event.ruleId)
             ?: return@withTransaction false
-        if (profile.ruleId != rule.id || rule.matchMode != "CONTEXTUAL_LLM") {
+        if (
+            profile.ruleId != rule.id ||
+            rule.matchMode != CorrectionMatchMode.CONTEXTUAL_LLM.name ||
+            rule.origin != CorrectionRuleOrigin.PERSONAL_LEARNING.name
+        ) {
             return@withTransaction false
         }
 
@@ -115,8 +125,17 @@ class PersonalCorrectionRepository @Inject constructor(
         val rulesAfterConflictRemoval = entitiesAfterConflictRemoval.mapNotNull {
             it.toDomainRule()
         }
+        val learnedRule = rule.toDomainRule() ?: return@withTransaction false
+        val conflictsWithUserDefinition = correctionDao
+            .getEnabledUserDefinedRules()
+            .asSequence()
+            .mapNotNull { it.toDomainRule() }
+            .any { userRule ->
+                CrossOriginCorrectionConflictPolicy.conflicts(userRule, learnedRule)
+            }
         val localBlockReason = when {
             !requestedActivation -> null
+            conflictsWithUserDefinition -> "LOCAL_USER_DICTIONARY_CONFLICT"
             entitiesAfterConflictRemoval.size >= MAX_ACTIVE_RULES ->
                 "LOCAL_ACTIVE_RULE_LIMIT"
             PersonalCorrectionRuleGraph.wouldCreateCycle(
@@ -202,7 +221,11 @@ class PersonalCorrectionRepository @Inject constructor(
         true
     }
 
-    suspend fun prepareSnapshot(recordingId: String): PersonalCorrectionSnapshot =
+    suspend fun prepareSnapshot(
+        recordingId: String,
+        includeUserDefinedRules: Boolean = false,
+        includePersonalLearningRules: Boolean = true,
+    ): PersonalCorrectionSnapshot =
         database.withTransaction {
             val recording = recordingDao.getById(recordingId)
                 ?: throw TranscriptPersistenceException("Recording $recordingId does not exist")
@@ -220,13 +243,31 @@ class PersonalCorrectionRepository @Inject constructor(
                     candidates = emptyList(),
                 )
             }
-            val rules = personalCorrectionDao.getActiveRules(MAX_ACTIVE_RULES)
+            val userDefinedRules = if (includeUserDefinedRules) {
+                correctionDao.getEnabledUserContextualRules(
+                    ContextualCorrectionLimits.MAX_ACTIVE_RULES_PER_ORIGIN,
+                )
+            } else {
+                emptyList()
+            }
+            val personalLearningRules = if (includePersonalLearningRules) {
+                personalCorrectionDao.getActiveRules(
+                    ContextualCorrectionLimits.MAX_ACTIVE_RULES_PER_ORIGIN,
+                )
+            } else {
+                emptyList()
+            }
+            val rules = (userDefinedRules + personalLearningRules)
+                .distinctBy { it.id }
                 .mapNotNull { it.toDomainRule() }
-            val contextHints = if (rules.isEmpty()) {
+            val learnedRuleIds = rules
+                .filter { it.origin == CorrectionRuleOrigin.PERSONAL_LEARNING }
+                .map { it.id }
+            val contextHints = if (learnedRuleIds.isEmpty()) {
                 emptyMap()
             } else {
                 personalCorrectionDao
-                    .getReviewedEventsForRules(rules.map { it.id })
+                    .getReviewedEventsForRules(learnedRuleIds)
                     .distinctBy { it.ruleId }
                     .associate { event ->
                         event.ruleId to PersonalCorrectionContextHint(
@@ -327,6 +368,37 @@ class PersonalCorrectionRepository @Inject constructor(
             ) {
                 return@withTransaction false
             }
+            val ruleIds = validated.map { it.ruleId }.distinct()
+            val currentRules = correctionDao.getRules(ruleIds).associateBy { it.id }
+            if (currentRules.size != ruleIds.size) return@withTransaction false
+            val learnedRuleIds = validated
+                .filter { it.ruleOrigin == CorrectionRuleOrigin.PERSONAL_LEARNING }
+                .map { it.ruleId }
+                .distinct()
+            val activeLearningProfiles = if (learnedRuleIds.isEmpty()) {
+                emptyMap()
+            } else {
+                personalCorrectionDao.getProfiles(learnedRuleIds).associateBy { it.ruleId }
+            }
+            val rulesStillActive = validated.all { candidate ->
+                val rule = currentRules.getValue(candidate.ruleId)
+                val baseRuleMatches = rule.isEnabled &&
+                    rule.scope == CorrectionScope.GLOBAL.name &&
+                    rule.scopeRecordingId == null &&
+                    rule.matchMode == CorrectionMatchMode.CONTEXTUAL_LLM.name &&
+                    rule.origin == candidate.ruleOrigin.name &&
+                    rule.observedText == candidate.observedText &&
+                    rule.replacementText == candidate.replacementText
+                if (!baseRuleMatches) {
+                    false
+                } else if (candidate.ruleOrigin == CorrectionRuleOrigin.PERSONAL_LEARNING) {
+                    activeLearningProfiles[candidate.ruleId]?.state ==
+                        PersonalCorrectionLearningState.ACTIVE.name
+                } else {
+                    true
+                }
+            }
+            if (!rulesStillActive) return@withTransaction false
             val segments = transcriptDao.getSegments(snapshot.recordingId)
             val byId = segments.associateBy { it.id }
             val grouped = validated.groupBy { it.segmentId }
@@ -431,6 +503,9 @@ class PersonalCorrectionRepository @Inject constructor(
                 val state = enumValues<PersonalCorrectionLearningState>()
                     .firstOrNull { it.name == row.profile.state }
                     ?: return@mapNotNull null
+                if (row.rule.origin != CorrectionRuleOrigin.PERSONAL_LEARNING.name) {
+                    return@mapNotNull null
+                }
                 PersonalCorrectionProfile(
                     ruleId = row.rule.id,
                     observedText = row.rule.observedText,
@@ -465,6 +540,9 @@ class PersonalCorrectionRepository @Inject constructor(
         require(rule.matchMode == CorrectionMatchMode.CONTEXTUAL_LLM.name) {
             "这个词条不属于个性化纠错"
         }
+        require(rule.origin == CorrectionRuleOrigin.PERSONAL_LEARNING.name) {
+            "这个词条不属于个性化纠错"
+        }
         if (enabled) {
             require(
                 profile.state == PersonalCorrectionLearningState.DISABLED.name &&
@@ -477,6 +555,14 @@ class PersonalCorrectionRepository @Inject constructor(
             }
             require(!conflict) { "同一识别结果已有另一个启用写法" }
             require(activeRuleEntities.size < MAX_ACTIVE_RULES) { "启用词条已达到上限" }
+            val learnedRule = checkNotNull(rule.toDomainRule()) { "学习词条数据无效" }
+            val conflictsWithUserDefinition = correctionDao.getEnabledUserDefinedRules()
+                .asSequence()
+                .mapNotNull { it.toDomainRule() }
+                .any { userRule ->
+                    CrossOriginCorrectionConflictPolicy.conflicts(userRule, learnedRule)
+                }
+            require(!conflictsWithUserDefinition) { "这个词条与自定义纠错词典冲突" }
             require(
                 !PersonalCorrectionRuleGraph.wouldCreateCycle(
                     observedText = rule.observedText,
@@ -528,6 +614,7 @@ class PersonalCorrectionRepository @Inject constructor(
                 observedText = observedText,
                 replacementText = replacementText,
                 matchMode = CorrectionMatchMode.valueOf(matchMode),
+                origin = CorrectionRuleOrigin.valueOf(origin),
                 scope = CorrectionScope.valueOf(scope),
                 scopeId = scopeRecordingId,
                 isEnabled = isEnabled,

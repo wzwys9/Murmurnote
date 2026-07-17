@@ -1,10 +1,15 @@
 package app.murmurnote.android.ui.screen.settings
 
+import android.content.Context
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import app.murmurnote.android.data.repository.TranscriptRepository
+import app.murmurnote.android.R
+import app.murmurnote.android.domain.correction.ContextualCorrectionCapacityExceededException
+import app.murmurnote.android.domain.correction.CorrectionMatchMode
 import app.murmurnote.android.domain.correction.CorrectionRule
 import dagger.hilt.android.lifecycle.HiltViewModel
+import dagger.hilt.android.qualifiers.ApplicationContext
 import javax.inject.Inject
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -13,6 +18,7 @@ import kotlinx.coroutines.launch
 
 @HiltViewModel
 class SafeLexiconViewModel @Inject constructor(
+    @ApplicationContext private val context: Context,
     private val transcriptRepository: TranscriptRepository,
 ) : ViewModel() {
 
@@ -22,8 +28,10 @@ class SafeLexiconViewModel @Inject constructor(
         val showAddDialog: Boolean = false,
         val observedDraft: String = "",
         val replacementDraft: String = "",
+        val matchModeDraft: CorrectionMatchMode = CorrectionMatchMode.CONTEXTUAL_LLM,
         val isSaving: Boolean = false,
         val updatingRuleIds: Set<String> = emptySet(),
+        val pendingModeRule: CorrectionRule? = null,
         val pendingDeleteRule: CorrectionRule? = null,
         val errorMessage: String? = null,
     )
@@ -33,7 +41,7 @@ class SafeLexiconViewModel @Inject constructor(
 
     init {
         viewModelScope.launch {
-            transcriptRepository.observeGlobalLexiconRules().collect { rules ->
+            transcriptRepository.observeUserDefinedRules().collect { rules ->
                 _uiState.update { it.copy(rules = rules, isLoading = false) }
             }
         }
@@ -45,6 +53,7 @@ class SafeLexiconViewModel @Inject constructor(
                 showAddDialog = true,
                 observedDraft = "",
                 replacementDraft = "",
+                matchModeDraft = CorrectionMatchMode.CONTEXTUAL_LLM,
                 errorMessage = null,
             )
         }
@@ -57,6 +66,7 @@ class SafeLexiconViewModel @Inject constructor(
                 showAddDialog = false,
                 observedDraft = "",
                 replacementDraft = "",
+                matchModeDraft = CorrectionMatchMode.CONTEXTUAL_LLM,
                 errorMessage = null,
             )
         }
@@ -70,15 +80,20 @@ class SafeLexiconViewModel @Inject constructor(
         _uiState.update { it.copy(replacementDraft = value, errorMessage = null) }
     }
 
+    fun updateMatchModeDraft(value: CorrectionMatchMode) {
+        _uiState.update { it.copy(matchModeDraft = value, errorMessage = null) }
+    }
+
     fun saveRule() {
         val snapshot = _uiState.value
         if (snapshot.isSaving) return
         viewModelScope.launch {
             _uiState.update { it.copy(isSaving = true, errorMessage = null) }
             runCatching {
-                transcriptRepository.createGlobalLexiconRule(
+                transcriptRepository.saveUserDefinedRule(
                     observedText = snapshot.observedDraft,
                     replacementText = snapshot.replacementDraft,
+                    matchMode = snapshot.matchModeDraft,
                 )
             }.onSuccess {
                 _uiState.update {
@@ -86,6 +101,7 @@ class SafeLexiconViewModel @Inject constructor(
                         showAddDialog = false,
                         observedDraft = "",
                         replacementDraft = "",
+                        matchModeDraft = CorrectionMatchMode.CONTEXTUAL_LLM,
                         isSaving = false,
                     )
                 }
@@ -107,12 +123,64 @@ class SafeLexiconViewModel @Inject constructor(
                 )
             }
             runCatching {
-                transcriptRepository.setGlobalLexiconRuleEnabled(ruleId, enabled)
+                transcriptRepository.setUserDefinedRuleEnabled(ruleId, enabled)
             }.onFailure { error ->
                 _uiState.update { it.copy(errorMessage = error.toUserMessage()) }
             }
             _uiState.update {
                 it.copy(updatingRuleIds = it.updatingRuleIds - ruleId)
+            }
+        }
+    }
+
+    fun requestMatchModeChange(rule: CorrectionRule) {
+        _uiState.update {
+            it.copy(
+                pendingModeRule = rule,
+                matchModeDraft = rule.matchMode,
+                errorMessage = null,
+            )
+        }
+    }
+
+    fun dismissMatchModeChange() {
+        _uiState.update {
+            it.copy(
+                pendingModeRule = null,
+                matchModeDraft = CorrectionMatchMode.CONTEXTUAL_LLM,
+            )
+        }
+    }
+
+    fun confirmMatchModeChange() {
+        val state = _uiState.value
+        val rule = state.pendingModeRule ?: return
+        if (rule.id in state.updatingRuleIds) return
+        if (rule.matchMode == state.matchModeDraft) {
+            dismissMatchModeChange()
+            return
+        }
+        viewModelScope.launch {
+            _uiState.update {
+                it.copy(
+                    pendingModeRule = null,
+                    updatingRuleIds = it.updatingRuleIds + rule.id,
+                    errorMessage = null,
+                )
+            }
+            runCatching {
+                transcriptRepository.setUserDefinedRuleMatchMode(
+                    ruleId = rule.id,
+                    matchMode = state.matchModeDraft,
+                )
+            }.onFailure { error ->
+                _uiState.update { it.copy(errorMessage = error.toUserMessage()) }
+            }
+            _uiState.update {
+                it.copy(
+                    updatingRuleIds = it.updatingRuleIds - rule.id,
+                    matchModeDraft = CorrectionMatchMode.CONTEXTUAL_LLM,
+                )
             }
         }
     }
@@ -137,7 +205,7 @@ class SafeLexiconViewModel @Inject constructor(
                 )
             }
             runCatching {
-                transcriptRepository.deleteGlobalLexiconRule(rule.id)
+                transcriptRepository.deleteUserDefinedRule(rule.id)
             }.onFailure { error ->
                 _uiState.update { it.copy(errorMessage = error.toUserMessage()) }
             }
@@ -151,8 +219,25 @@ class SafeLexiconViewModel @Inject constructor(
         _uiState.update { it.copy(errorMessage = null) }
     }
 
-    private fun Throwable.toUserMessage(): String =
-        (this as? IllegalArgumentException)?.message
-            ?.takeIf { it.isNotBlank() }
-            ?: "操作失败，请重试"
+    private fun Throwable.toUserMessage(): String {
+        val presentation = lexiconErrorPresentation(this)
+        return context.getString(
+            presentation.messageResource,
+            *presentation.formatArguments.toTypedArray(),
+        )
+    }
 }
+
+internal data class LexiconErrorPresentation(
+    val messageResource: Int,
+    val formatArguments: List<Any> = emptyList(),
+)
+
+internal fun lexiconErrorPresentation(error: Throwable): LexiconErrorPresentation =
+    when (error) {
+        is ContextualCorrectionCapacityExceededException -> LexiconErrorPresentation(
+            messageResource = R.string.lexicon_contextual_capacity_reached,
+            formatArguments = listOf(error.maximum),
+        )
+        else -> LexiconErrorPresentation(R.string.lexicon_operation_failed)
+    }

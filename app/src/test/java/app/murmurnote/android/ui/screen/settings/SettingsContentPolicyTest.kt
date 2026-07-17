@@ -39,8 +39,8 @@ class SettingsContentPolicyTest {
     @Test
     fun selectedCloudEntryShowsConfiguredApiStatus() {
         assertEquals(
-            "已配置 API",
-            asrSettingsStatusText(
+            AsrSettingsStatus.Cloud(configured = true),
+            asrSettingsStatus(
                 panel = AsrSettingsPanel.CLOUD,
                 selected = true,
                 cloudApiConfigured = true,
@@ -52,8 +52,8 @@ class SettingsContentPolicyTest {
     @Test
     fun selectedLocalEntryShowsCurrentModel() {
         assertEquals(
-            "当前模型：Qwen3-ASR",
-            asrSettingsStatusText(
+            AsrSettingsStatus.Local(modelDisplayName = "Qwen3-ASR"),
+            asrSettingsStatus(
                 panel = AsrSettingsPanel.LOCAL,
                 selected = true,
                 cloudApiConfigured = true,
@@ -65,8 +65,8 @@ class SettingsContentPolicyTest {
     @Test
     fun cloudEntryAlwaysShowsItsApiConfigurationStatus() {
         assertEquals(
-            "已配置 API",
-            asrSettingsStatusText(
+            AsrSettingsStatus.Cloud(configured = true),
+            asrSettingsStatus(
                 panel = AsrSettingsPanel.CLOUD,
                 selected = false,
                 cloudApiConfigured = true,
@@ -74,8 +74,8 @@ class SettingsContentPolicyTest {
             ),
         )
         assertEquals(
-            "API未配置",
-            asrSettingsStatusText(
+            AsrSettingsStatus.Cloud(configured = false),
+            asrSettingsStatus(
                 panel = AsrSettingsPanel.CLOUD,
                 selected = true,
                 cloudApiConfigured = false,
@@ -87,7 +87,7 @@ class SettingsContentPolicyTest {
     @Test
     fun inactiveLocalEntryDoesNotClaimItsSavedModelIsActive() {
         assertNull(
-            asrSettingsStatusText(
+            asrSettingsStatus(
                 panel = AsrSettingsPanel.LOCAL,
                 selected = false,
                 cloudApiConfigured = false,

@@ -2,6 +2,7 @@ package app.murmurnote.android.data.repository
 
 import app.murmurnote.android.data.preference.AppPreferences
 import app.murmurnote.android.data.remote.llm.LlmClient
+import app.murmurnote.android.domain.correction.ContextualCorrectionRuntimePolicy
 import app.murmurnote.android.domain.correction.PersonalLearningReviewRequest
 import app.murmurnote.android.domain.correction.PinyinRelationClassifier
 import app.murmurnote.android.util.Logger
@@ -28,10 +29,10 @@ class PersonalCorrectionService @Inject constructor(
 
     private suspend fun reviewPendingBatchIfEnabled(): Int {
         return try {
-            if (!isEnabled()) return 0
+            if (!runtimePolicy().canReviewLearning) return 0
             var completed = 0
             repository.getPendingObservations(MAX_PENDING_REVIEWS).forEach { observation ->
-                if (!isEnabled()) return completed
+                if (!runtimePolicy().canReviewLearning) return completed
                 val observedSyllables = pinyinTranscriber.syllables(observation.observedText)
                 val replacementSyllables = pinyinTranscriber.syllables(observation.replacementText)
                 val relation = PinyinRelationClassifier.classify(
@@ -48,7 +49,7 @@ class PersonalCorrectionService @Inject constructor(
                         pinyinRelation = relation,
                     ),
                 ).getOrNull() ?: return@forEach
-                if (!isEnabled()) return completed
+                if (!runtimePolicy().canReviewLearning) return completed
                 if (
                     repository.completeReview(
                         observationId = observation.eventId,
@@ -75,15 +76,25 @@ class PersonalCorrectionService @Inject constructor(
 
     suspend fun correctRecordingIfEnabled(recordingId: String): Boolean {
         return try {
-            if (!isEnabled()) return false
-            reviewPendingIfEnabled()
-            if (!isEnabled()) return false
-            val snapshot = repository.prepareSnapshot(recordingId)
+            var policy = runtimePolicy()
+            if (!policy.canReviewCandidates) return false
+            if (policy.canReviewLearning) reviewPendingIfEnabled()
+            policy = runtimePolicy()
+            if (!policy.canReviewCandidates) return false
+            val snapshot = repository.prepareSnapshot(
+                recordingId = recordingId,
+                includeUserDefinedRules = policy.includeUserDefinedRules,
+                includePersonalLearningRules = policy.includePersonalLearningRules,
+            )
             if (snapshot.candidates.isEmpty()) return false
             val approved = llmClient.reviewPersonalCorrectionCandidates(snapshot.candidates)
                 .getOrNull() ?: return false
-            if (approved.isEmpty() || !isEnabled()) return false
-            repository.applyApproved(snapshot, approved)
+            policy = runtimePolicy()
+            val stillEnabled = approved.filter { candidate ->
+                policy.includes(candidate.ruleOrigin)
+            }
+            if (stillEnabled.isEmpty()) return false
+            repository.applyApproved(snapshot, stillEnabled)
         } catch (error: CancellationException) {
             throw error
         } catch (error: Exception) {
@@ -95,8 +106,12 @@ class PersonalCorrectionService @Inject constructor(
         }
     }
 
-    private suspend fun isEnabled(): Boolean =
-        appPreferences.personalCorrectionEnabled.first()
+    private suspend fun runtimePolicy(): ContextualCorrectionRuntimePolicy =
+        ContextualCorrectionRuntimePolicy.resolve(
+            customDictionaryEnabled = appPreferences.safeLexiconEnabled.first(),
+            personalLearningEnabled = appPreferences.personalCorrectionEnabled.first(),
+            llmConfigured = appPreferences.llmApiKey.first().isNotBlank(),
+        )
 
     private companion object {
         const val MAX_PENDING_REVIEWS = 3

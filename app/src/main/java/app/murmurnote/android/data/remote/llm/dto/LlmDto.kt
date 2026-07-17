@@ -4,30 +4,17 @@ import kotlinx.serialization.Serializable
 
 @Serializable
 data class ChatCompletionResponse(
-    val id: String? = null,
-    val choices: List<ChatChoice> = emptyList(),
-    val usage: ChatUsage? = null
+    val choices: List<ChatChoice> = emptyList()
 )
 
 @Serializable
 data class ChatChoice(
-    val index: Int = 0,
-    val message: ChatResponseMessage? = null,
-    val finish_reason: String? = null
+    val message: ChatResponseMessage? = null
 )
 
 @Serializable
 data class ChatResponseMessage(
-    val role: String? = null,
-    val content: String? = null,
-    val reasoning_content: String? = null
-)
-
-@Serializable
-data class ChatUsage(
-    val prompt_tokens: Int = 0,
-    val completion_tokens: Int = 0,
-    val total_tokens: Int = 0
+    val content: String? = null
 )
 
 // === 业务层 DTO（LLM 返回的 content 解析后映射到这个）===

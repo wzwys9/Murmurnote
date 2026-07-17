@@ -5,6 +5,26 @@ enum class CorrectionMatchMode {
     CONTEXTUAL_LLM,
 }
 
+enum class CorrectionRuleOrigin {
+    USER_DEFINED,
+    PERSONAL_LEARNING,
+}
+
+object ContextualCorrectionLimits {
+    const val MAX_ACTIVE_RULES_PER_ORIGIN: Int = 100
+}
+
+class ContextualCorrectionCapacityExceededException(
+    val origin: CorrectionRuleOrigin,
+    val maximum: Int,
+) : IllegalStateException(
+    "Contextual correction capacity exceeded for ${origin.name}: maximum=$maximum"
+) {
+    init {
+        require(maximum > 0) { "Contextual correction capacity must be positive" }
+    }
+}
+
 enum class CorrectionScope {
     RECORDING,
     GLOBAL
@@ -15,6 +35,7 @@ data class CorrectionRule(
     val observedText: String,
     val replacementText: String,
     val matchMode: CorrectionMatchMode = CorrectionMatchMode.EXACT_TEXT,
+    val origin: CorrectionRuleOrigin = CorrectionRuleOrigin.USER_DEFINED,
     val scope: CorrectionScope,
     val scopeId: String? = null,
     val isEnabled: Boolean = true
@@ -23,6 +44,11 @@ data class CorrectionRule(
         require(id.isNotBlank()) { "Rule id must not be blank" }
         require(observedText.isNotEmpty()) { "Observed text must not be empty" }
         require(replacementText.isNotEmpty()) { "Replacement text must not be empty" }
+        if (origin == CorrectionRuleOrigin.PERSONAL_LEARNING) {
+            require(matchMode == CorrectionMatchMode.CONTEXTUAL_LLM) {
+                "Personal learning rules must use contextual matching"
+            }
+        }
         when (scope) {
             CorrectionScope.RECORDING -> require(!scopeId.isNullOrBlank()) {
                 "Recording rules require a scope id"

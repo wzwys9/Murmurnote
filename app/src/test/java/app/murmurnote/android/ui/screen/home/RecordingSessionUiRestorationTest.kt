@@ -26,7 +26,11 @@ class RecordingSessionUiRestorationTest {
             amplitudeDb = 68,
         )
 
-        val restored = restoreRecordingUiState(initial, session)
+        val restored = restoreRecordingUiState(
+            initial,
+            session,
+            liveTranscriptionMessage = "Recording continues in the background",
+        )
 
         assertTrue(restored.isRecording)
         assertTrue(restored.isPaused)
@@ -36,6 +40,9 @@ class RecordingSessionUiRestorationTest {
         assertEquals(7, restored.totalCount)
         assertNull(restored.errorMessage)
         assertFalse(restored.liveTranscriptionActive)
-        assertTrue(restored.liveTranscriptionMessage.orEmpty().contains("后台"))
+        assertEquals(
+            "Recording continues in the background",
+            restored.liveTranscriptionMessage,
+        )
     }
 }

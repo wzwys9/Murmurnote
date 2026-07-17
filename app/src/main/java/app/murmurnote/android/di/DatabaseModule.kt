@@ -36,6 +36,7 @@ object DatabaseModule {
                 MurmurnoteDatabase.MIGRATION_5_6,
                 MurmurnoteDatabase.MIGRATION_6_7,
                 MurmurnoteDatabase.MIGRATION_7_8,
+                MurmurnoteDatabase.MIGRATION_8_9,
             )
             .build()
     }

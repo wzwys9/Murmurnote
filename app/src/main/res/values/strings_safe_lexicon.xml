@@ -1,0 +1,44 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources xmlns:tools="http://schemas.android.com/tools" tools:locale="zh">
+    <string name="lexicon_what_it_does">它会做什么</string>
+    <string name="lexicon_description_modes">你明确保存“识别结果 → 正确写法”，每个词条可以选择“结合上下文”或“始终替换”。</string>
+    <string name="lexicon_description_context">“结合上下文”只把词对和命中位置附近的局部文字发给当前大模型，让它判断是否应用；模型不能改写成其他内容。</string>
+    <string name="lexicon_description_exact">“始终替换”完全在本地执行。两种方式都只影响之后新完成的转写，不修改模型原文和历史内容。</string>
+    <string name="lexicon_add">添加自定义词条</string>
+    <string name="lexicon_change_mode_title">更改应用方式</string>
+    <string name="lexicon_save">保存</string>
+    <string name="lexicon_delete_title">删除这个词条？</string>
+    <string name="lexicon_delete_description">“%1$s” → “%2$s”\n\n删除后只会停止未来的替换，不会改动已经完成的转写或模型原文。</string>
+    <string name="lexicon_back">返回实验室功能</string>
+    <string name="lexicon_title">自定义纠错词典</string>
+    <string name="lexicon_subtitle">按你的词对，选择上下文判断或本地替换</string>
+    <string name="lexicon_empty">还没有词条</string>
+    <string name="lexicon_empty_example">例如：识别成“木木笔记”时，按上下文判断是否改为“声记应用”。</string>
+    <string name="lexicon_change_mode_description">更改词条应用方式：%1$s改为%2$s</string>
+    <string name="lexicon_change">更改</string>
+    <string name="lexicon_status_disabled">词条已停用</string>
+    <string name="lexicon_status_master_off">词条已启用；总开关关闭</string>
+    <string name="lexicon_status_missing_api">等待配置大模型 API；当前会安全跳过</string>
+    <string name="lexicon_status_context">命中后会结合局部上下文判断</string>
+    <string name="lexicon_status_exact">命中完全一致的文字时会在本地替换</string>
+    <string name="lexicon_switch_description">词条开关：%1$s改为%2$s</string>
+    <string name="lexicon_delete_description_a11y">删除词条：%1$s改为%2$s</string>
+    <string name="lexicon_add_instructions">两边都需要 2–32 个字符。系统只会召回与“识别成什么”完全一致的文字。</string>
+    <string name="lexicon_saved_master_off">保存后词条自身会启用；实验室里的总开关仍保持关闭。</string>
+    <string name="lexicon_observed_label">识别成什么</string>
+    <string name="lexicon_observed_example">例如：木木笔记</string>
+    <string name="lexicon_replacement_label">应该改成什么</string>
+    <string name="lexicon_replacement_example">例如：声记应用</string>
+    <string name="lexicon_mode_title">应用方式</string>
+    <string name="lexicon_saving">保存中…</string>
+    <string name="lexicon_save_enable">保存并启用</string>
+    <string name="lexicon_context_recommended">推荐。命中后发送词对和附近局部文字，只让大模型判断应用或保留。</string>
+    <string name="lexicon_context_missing_api">推荐。当前未配置大模型 API，保存后会先安全跳过，配置后自动生效。</string>
+    <string name="lexicon_exact_warning">不看上下文，完全一致就本地替换；只适合不会产生歧义的固定术语。</string>
+    <string name="lexicon_mode_context">结合上下文</string>
+    <string name="lexicon_mode_exact">始终替换</string>
+    <string name="lexicon_mode_context_short">由大模型结合命中位置附近文字谨慎判断</string>
+    <string name="lexicon_mode_exact_short">完全一致即替换，不判断当前语境</string>
+    <string name="lexicon_contextual_capacity_reached">已达到“结合上下文”词条上限（%1$d）。请先停用一条，或改为“始终替换”。</string>
+    <string name="lexicon_operation_failed">操作失败，请重试</string>
+</resources>

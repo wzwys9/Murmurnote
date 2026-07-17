@@ -108,7 +108,6 @@ class RecordingRepository @Inject constructor(
         recordingDao.deleteRecordingSegmentsForRecording(recordingId)
     fun observeRecordingSegments(recordingId: String): Flow<List<RecordingSegment>> =
         recordingDao.observeRecordingSegments(recordingId)
-    fun search(query: String): Flow<List<Recording>> = recordingDao.searchRecordings(query)
     fun searchFiltered(
         query: String,
         fromMs: Long?,
@@ -197,9 +196,6 @@ class RecordingRepository @Inject constructor(
             retainedSharedPaths = retainedSharedPaths
         )
     }
-
-    /** Kept for source compatibility; it no longer deletes recording rows. */
-    suspend fun deleteExpired(): Int = expireAudio().expiredRecordings
 
     private fun List<String>.toTagString(): String =
         map { it.trim().replace(",", " ").take(24) }

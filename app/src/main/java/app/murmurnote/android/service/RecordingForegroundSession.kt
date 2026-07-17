@@ -2,6 +2,7 @@ package app.murmurnote.android.service
 
 import android.content.Context
 import androidx.core.content.ContextCompat
+import app.murmurnote.android.R
 import dagger.hilt.android.qualifiers.ApplicationContext
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -43,7 +44,7 @@ class RecordingForegroundSession @Inject constructor(
                     applicationContext,
                     RecordingForegroundService.intent(applicationContext),
                 ),
-            ) { "系统未能启动录音前台服务" }
+            ) { applicationContext.getString(R.string.recording_foreground_start_failed) }
         },
         stopService = {
             applicationContext.stopService(RecordingForegroundService.intent(applicationContext))

@@ -1,6 +1,7 @@
 package app.murmurnote.android.domain.pipeline
 
 import android.content.Context
+import app.murmurnote.android.R
 import app.murmurnote.android.audio.AudioConverter
 import app.murmurnote.android.audio.AudioFileInspector
 import app.murmurnote.android.audio.AudioSplitter
@@ -28,6 +29,7 @@ import app.murmurnote.android.domain.transcript.ModelTranscriptBoundary
 import app.murmurnote.android.domain.transcript.ModelSegmentCutReason
 import app.murmurnote.android.domain.transcript.ModelTranscriptSegment
 import app.murmurnote.android.util.Logger
+import app.murmurnote.android.util.formatTimestampFull
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.CancellationException
@@ -45,7 +47,6 @@ import kotlinx.coroutines.withContext
 import java.io.File
 import java.nio.file.Files
 import java.text.SimpleDateFormat
-import java.util.Date
 import java.util.Locale
 import java.util.Properties
 import java.util.UUID
@@ -89,7 +90,8 @@ class AudioPipeline @Inject constructor(
         existingRecordingId: String? = null
     ): Flow<PipelineStage> = channelFlow {
         val now = System.currentTimeMillis()
-        val tsPretty = formatPretty(now)
+        val appLocale = context.resources.configuration.locales[0]
+        val tsPretty = formatTimestampFull(now, appLocale)
 
         // 重跑：用现有 id；否则新建
         val recordingId = existingRecordingId ?: UUID.randomUUID().toString()
@@ -118,7 +120,7 @@ class AudioPipeline @Inject constructor(
             } else {
                 recording = Recording(
                 id = recordingId,
-                title = "录音 $tsPretty",
+                title = context.getString(R.string.pipeline_recording_title, tsPretty),
                 originalFilePath = audioFile.absolutePath,
                 durationMs = 0,
                 createdAt = now,
@@ -132,7 +134,7 @@ class AudioPipeline @Inject constructor(
             // this point must not leave an unowned work directory behind.
             val workDir = pipelineWorkDir(recordingId)
             // 标题与每个待办都要带"录音时间点"，重跑沿用原 createdAt，新录音用 now。
-            val createdAtPretty = formatPretty(recording.createdAt)
+            val createdAtPretty = formatTimestampFull(recording.createdAt, appLocale)
 
             // channelFlow + 显式追踪 stageName：失败日志直接写出真实阶段。
             logger.i("Pipe", "start id=$recordingId sourceBytes=${audioFile.length()}")
@@ -170,7 +172,7 @@ class AudioPipeline @Inject constructor(
                 val attempt = when (
                     val selection = asrEngineProvider.snapshotAttempt(
                         vadPresetVersion = HardCutBoundaryProbePolicy.canonicalVadVersion,
-                        locale = Locale.getDefault()
+                        locale = appLocale
                     )
                 ) {
                     is AsrEngineProvider.AttemptSelection.Active -> selection
@@ -243,7 +245,10 @@ class AudioPipeline @Inject constructor(
                 send(PipelineStage.Extracting(fullText.length))
                 recordingRepository.setStatus(recordingId, ProcessingStatus.EXTRACTING)
                 if (fullText.isBlank()) {
-                    ExtractionResult("（识别为空）", emptyList())
+                    ExtractionResult(
+                        context.getString(R.string.pipeline_empty_recognition),
+                        emptyList()
+                    )
                 } else {
                     // 长转写自动走 map-reduce 分块抽取并合并摘要;短文本透传到单次 extractItems。
                     llmClient.extractItemsAuto(fullText)
@@ -305,9 +310,9 @@ class AudioPipeline @Inject constructor(
             val extractionDiscardedForRevision = extractionCandidate != null && !summarySaved
             val completionError = when {
                 extractionDiscardedForRevision ->
-                    "转写在总结期间发生了修改，本次总结未保存，请重新生成"
+                    context.getString(R.string.pipeline_summary_revision_changed)
                 aiExtractionEnabled && extractionCandidate == null ->
-                    "AI 提取失败，转写已安全保存，可稍后重试"
+                    context.getString(R.string.pipeline_extraction_failed_saved)
                 else -> null
             }
             if (!summarySaved) {
@@ -611,10 +616,6 @@ class AudioPipeline @Inject constructor(
     private fun parseDeadline(s: String): Long? = try {
         SimpleDateFormat("yyyy-MM-dd", Locale.US).parse(s)?.time
     } catch (_: Exception) { null }
-
-    /** 录音时间点统一格式：年月日 + 时分秒。详情页与列表页都基于这个串展示。 */
-    private fun formatPretty(epochMs: Long): String =
-        SimpleDateFormat("yyyy年MM月dd日 HH时mm分ss秒", Locale.US).format(Date(epochMs))
 
     private fun app.murmurnote.android.data.remote.llm.dto.ExtractedItemDto.toItemType(): ItemType =
         when (type.lowercase()) {

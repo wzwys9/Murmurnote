@@ -147,8 +147,6 @@ android {
 
 dependencies {
     implementation(libs.androidx.core.ktx)
-    implementation(libs.androidx.appcompat)
-    implementation(libs.material)
 
     // 反射调用 sherpa-onnx Kotlin 数据类的命名参数构造（避免硬编码字段顺序，跨小版本更稳）
     implementation(libs.kotlin.reflect)
@@ -159,7 +157,6 @@ dependencies {
     implementation(libs.androidx.activity.compose)
     implementation(libs.androidx.compose.ui)
     implementation(libs.androidx.compose.ui.graphics)
-    implementation(libs.androidx.compose.ui.tooling.preview)
     implementation(libs.androidx.compose.material3)
     implementation(libs.androidx.compose.material.icons.extended)
     implementation(libs.androidx.compose.foundation)
@@ -168,7 +165,6 @@ dependencies {
     // Lifecycle / Navigation
     implementation(libs.androidx.lifecycle.runtime.ktx)
     implementation(libs.androidx.lifecycle.runtime.compose)
-    implementation(libs.androidx.lifecycle.viewmodel.compose)
     implementation(libs.androidx.navigation.compose)
 
     // Room
@@ -197,23 +193,14 @@ dependencies {
     implementation(libs.okhttp)
     implementation(libs.okhttp.sse)
     implementation(libs.okhttp.logging)
-    implementation(libs.retrofit)
-    implementation(libs.retrofit.kotlinx.serialization)
     implementation(libs.kotlinx.serialization.json)
     implementation(libs.kotlinx.coroutines.android)
 
     // FFmpeg
     implementation(libs.ffmpeg.kit.audio)
 
-    // Coil
-    implementation(libs.coil.compose)
-
     // 本地 ASR：tar.bz2 解压（解 sherpa-onnx 模型包）。
     implementation(libs.commons.compress)
-
-    // 本地 ASR 运行库当前以 Kotlin 绑定源码 + app/src/main/jniLibs/<abi>/*.so 形式提交。
-    // 这里保留 AAR fileTree 入口，方便以后整体替换为官方 sherpa-onnx Android AAR。
-    implementation(fileTree(mapOf("dir" to "libs", "include" to listOf("*.aar"))))
 
     testImplementation(libs.junit)
     androidTestImplementation(libs.androidx.test.runner)

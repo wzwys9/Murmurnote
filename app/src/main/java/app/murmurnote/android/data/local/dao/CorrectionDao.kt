@@ -17,6 +17,7 @@ interface CorrectionDao {
         """
         SELECT * FROM correction_rules
         WHERE isEnabled = 1
+          AND origin = 'USER_DEFINED'
           AND matchMode = 'EXACT_TEXT'
           AND (
             (scope = 'GLOBAL' AND scopeRecordingId IS NULL)
@@ -31,6 +32,7 @@ interface CorrectionDao {
         """
         SELECT * FROM correction_rules
         WHERE isEnabled = 1
+          AND origin = 'USER_DEFINED'
           AND scope = 'RECORDING'
           AND scopeRecordingId = :recordingId
           AND matchMode = 'EXACT_TEXT'
@@ -44,6 +46,9 @@ interface CorrectionDao {
     @Query("SELECT * FROM correction_rules WHERE id = :id")
     suspend fun getRule(id: String): CorrectionRuleEntity?
 
+    @Query("SELECT * FROM correction_rules WHERE id IN (:ids)")
+    suspend fun getRules(ids: List<String>): List<CorrectionRuleEntity>
+
     @Query(
         """
         UPDATE correction_rules
@@ -51,6 +56,7 @@ interface CorrectionDao {
         WHERE id = :id
           AND scope = 'RECORDING'
           AND scopeRecordingId = :recordingId
+          AND origin = 'USER_DEFINED'
           AND matchMode = 'EXACT_TEXT'
         """
     )
@@ -66,6 +72,7 @@ interface CorrectionDao {
         SELECT * FROM correction_rules
         WHERE scope = 'RECORDING'
           AND scopeRecordingId = :recordingId
+          AND origin = 'USER_DEFINED'
           AND matchMode = 'EXACT_TEXT'
         ORDER BY createdAt, id
         """
@@ -77,6 +84,7 @@ interface CorrectionDao {
         SELECT * FROM correction_rules
         WHERE scope = 'RECORDING'
           AND scopeRecordingId = :recordingId
+          AND origin = 'USER_DEFINED'
           AND matchMode = 'EXACT_TEXT'
         ORDER BY createdAt, id
         """
@@ -88,22 +96,48 @@ interface CorrectionDao {
         SELECT * FROM correction_rules
         WHERE scope = 'GLOBAL'
           AND scopeRecordingId IS NULL
-          AND matchMode = 'EXACT_TEXT'
+          AND origin = 'USER_DEFINED'
         ORDER BY createdAt, id
         """
     )
-    suspend fun getGlobalLexiconRules(): List<CorrectionRuleEntity>
+    suspend fun getUserDefinedRules(): List<CorrectionRuleEntity>
 
     @Query(
         """
         SELECT * FROM correction_rules
         WHERE scope = 'GLOBAL'
           AND scopeRecordingId IS NULL
-          AND matchMode = 'EXACT_TEXT'
+          AND origin = 'USER_DEFINED'
         ORDER BY createdAt, id
         """
     )
-    fun observeGlobalLexiconRules(): Flow<List<CorrectionRuleEntity>>
+    fun observeUserDefinedRules(): Flow<List<CorrectionRuleEntity>>
+
+    @Query(
+        """
+        SELECT * FROM correction_rules
+        WHERE scope = 'GLOBAL'
+          AND scopeRecordingId IS NULL
+          AND origin = 'USER_DEFINED'
+          AND isEnabled = 1
+        ORDER BY createdAt, id
+        """
+    )
+    suspend fun getEnabledUserDefinedRules(): List<CorrectionRuleEntity>
+
+    @Query(
+        """
+        SELECT * FROM correction_rules
+        WHERE scope = 'GLOBAL'
+          AND scopeRecordingId IS NULL
+          AND origin = 'USER_DEFINED'
+          AND matchMode = 'CONTEXTUAL_LLM'
+          AND isEnabled = 1
+        ORDER BY createdAt, id
+        LIMIT :limit
+        """
+    )
+    suspend fun getEnabledUserContextualRules(limit: Int): List<CorrectionRuleEntity>
 
     @Query(
         """
@@ -112,12 +146,28 @@ interface CorrectionDao {
         WHERE id = :id
           AND scope = 'GLOBAL'
           AND scopeRecordingId IS NULL
-          AND matchMode = 'EXACT_TEXT'
+          AND origin = 'USER_DEFINED'
         """
     )
-    suspend fun setGlobalLexiconRuleEnabled(
+    suspend fun setUserDefinedRuleEnabled(
         id: String,
         enabled: Boolean,
+        updatedAt: Long,
+    ): Int
+
+    @Query(
+        """
+        UPDATE correction_rules
+        SET matchMode = :matchMode, updatedAt = :updatedAt
+        WHERE id = :id
+          AND scope = 'GLOBAL'
+          AND scopeRecordingId IS NULL
+          AND origin = 'USER_DEFINED'
+        """
+    )
+    suspend fun setUserDefinedRuleMatchMode(
+        id: String,
+        matchMode: String,
         updatedAt: Long,
     ): Int
 
@@ -127,10 +177,10 @@ interface CorrectionDao {
         WHERE id = :id
           AND scope = 'GLOBAL'
           AND scopeRecordingId IS NULL
-          AND matchMode = 'EXACT_TEXT'
+          AND origin = 'USER_DEFINED'
         """
     )
-    suspend fun deleteGlobalLexiconRule(id: String): Int
+    suspend fun deleteUserDefinedRule(id: String): Int
 
     @Insert(onConflict = OnConflictStrategy.ABORT)
     suspend fun insertRecords(records: List<CorrectionRecordEntity>)

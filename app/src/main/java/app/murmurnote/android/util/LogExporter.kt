@@ -8,6 +8,7 @@ import android.os.Environment
 import android.provider.MediaStore
 import androidx.core.content.FileProvider
 import app.murmurnote.android.BuildConfig
+import app.murmurnote.android.R
 import app.murmurnote.android.data.asr.AsrModelManager
 import app.murmurnote.android.data.remote.interceptor.ApiLogCapturePolicy
 import app.murmurnote.android.data.repository.ApiLogRepository
@@ -88,10 +89,13 @@ class LogExporter @Inject constructor(
         val sendIntent = Intent(Intent.ACTION_SEND).apply {
             type = "application/zip"
             putExtra(Intent.EXTRA_STREAM, uri)
-            putExtra(Intent.EXTRA_SUBJECT, "Murmurnote 日志 $ts")
+            putExtra(Intent.EXTRA_SUBJECT, context.getString(R.string.log_share_subject, ts))
             addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
         }
-        val chooser = Intent.createChooser(sendIntent, "分享日志包").apply {
+        val chooser = Intent.createChooser(
+            sendIntent,
+            activityContext.getString(R.string.log_share_chooser)
+        ).apply {
             addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
         }
         activityContext.startActivity(chooser)

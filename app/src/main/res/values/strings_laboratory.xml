@@ -1,0 +1,26 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources xmlns:tools="http://schemas.android.com/tools" tools:locale="zh">
+    <string name="laboratory_title">实验室功能</string>
+    <string name="laboratory_directory_description">体验仍在验证中的功能；所有实验默认关闭。</string>
+    <string name="laboratory_open_description">进入实验室功能</string>
+    <string name="laboratory_open">进入</string>
+    <string name="laboratory_notice">实验功能可能继续调整。每项功能都有独立开关，关闭后不会参与处理。</string>
+    <string name="laboratory_personal_disclosure_title">开启个性化自学习纠错？</string>
+    <string name="laboratory_personal_disclosure">开启后，你手动修改转写时，系统会把修改词对和附近最多 240 个字符发送给当前配置的大模型，用于判断是否值得学习。\n\n未来命中已学词条时，也只发送候选附近的局部文字；不会发送音频、标题、总结或整段录音。所有自动替换都可以停用或删除。</string>
+    <string name="laboratory_accept_enable">同意并开启</string>
+    <string name="laboratory_not_now">暂不开启</string>
+    <string name="laboratory_personal_switch_description">个性化自学习纠错总开关</string>
+    <string name="laboratory_personal_title">个性化自学习纠错（实验）</string>
+    <string name="laboratory_personal_missing_key">不可开启：请先配置当前大模型的 API Key。</string>
+    <string name="laboratory_personal_enabled">已开启：从转写修改中学习；与自定义词条冲突时，以自定义词条为准。</string>
+    <string name="laboratory_personal_disabled">已关闭：不采集、不调用纠错模型，也不应用已学词条。</string>
+    <string name="laboratory_manage_learning">管理学习记录</string>
+    <string name="laboratory_lexicon_switch_description">自定义纠错词典总开关</string>
+    <string name="laboratory_lexicon_title">自定义纠错词典（实验）</string>
+    <string name="laboratory_lexicon_waiting_for_key">已开启：始终替换词条可用；结合上下文词条会等 API 配置后再生效。</string>
+    <string name="laboratory_lexicon_enabled">已开启：按每个词条选择的方式用于之后完成的转写。</string>
+    <string name="laboratory_lexicon_disabled">已关闭：不加载、不应用词条；已保存词条仍会保留。</string>
+    <string name="laboratory_manage_lexicon">管理词条</string>
+    <string name="laboratory_back_to_settings">返回设置</string>
+    <string name="laboratory_subtitle">选择性体验仍在验证中的功能</string>
+</resources>

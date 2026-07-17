@@ -42,7 +42,7 @@ import app.murmurnote.android.data.local.entity.TranscriptSegment
         RecordingFts::class,
         ItemFts::class
     ],
-    version = 8,
+    version = 9,
     exportSchema = true
 )
 @TypeConverters(Converters::class)
@@ -213,6 +213,22 @@ abstract class MurmurnoteDatabase : RoomDatabase() {
                 db.execSQL(
                     "CREATE INDEX IF NOT EXISTS `index_correction_learning_events_status` " +
                         "ON `correction_learning_events` (`status`)",
+                )
+            }
+        }
+
+        val MIGRATION_8_9 = object : Migration(8, 9) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    "ALTER TABLE `correction_rules` ADD COLUMN `origin` " +
+                        "TEXT NOT NULL DEFAULT 'USER_DEFINED'"
+                )
+                db.execSQL(
+                    """
+                    UPDATE `correction_rules`
+                    SET `origin` = 'PERSONAL_LEARNING'
+                    WHERE `id` IN (SELECT `ruleId` FROM `correction_learning_profiles`)
+                    """.trimIndent()
                 )
             }
         }
