@@ -1,6 +1,8 @@
 package app.murmurnote.android.ui.screen.settings
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class AppUiLanguageTest {
@@ -41,5 +43,25 @@ class AppUiLanguageTest {
     @Test
     fun unsupportedApplicationLocaleFallsBackToSystem() {
         assertEquals(AppUiLanguage.SYSTEM, AppUiLanguage.fromLanguageTags("ja-JP"))
+    }
+
+    @Test
+    fun selectingTheCurrentLanguageDoesNotRequestAnotherUpdate() {
+        assertFalse(
+            shouldApplyAppUiLanguageChange(
+                currentLanguage = AppUiLanguage.CHINESE,
+                selectedLanguage = AppUiLanguage.CHINESE,
+            )
+        )
+    }
+
+    @Test
+    fun selectingADifferentLanguageRequestsAnUpdate() {
+        assertTrue(
+            shouldApplyAppUiLanguageChange(
+                currentLanguage = AppUiLanguage.CHINESE,
+                selectedLanguage = AppUiLanguage.ENGLISH,
+            )
+        )
     }
 }

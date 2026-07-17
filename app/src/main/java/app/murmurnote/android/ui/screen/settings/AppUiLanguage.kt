@@ -30,6 +30,11 @@ internal fun currentAppUiLanguage(): AppUiLanguage = AppUiLanguage.fromLanguageT
     AppCompatDelegate.getApplicationLocales().toLanguageTags(),
 )
 
+internal fun shouldApplyAppUiLanguageChange(
+    currentLanguage: AppUiLanguage,
+    selectedLanguage: AppUiLanguage,
+): Boolean = selectedLanguage != currentLanguage
+
 internal fun setAppUiLanguage(language: AppUiLanguage) {
     // Keeps the in-app picker synchronized with Android's per-app language setting.
     // Source: https://developer.android.com/guide/topics/resources/app-languages

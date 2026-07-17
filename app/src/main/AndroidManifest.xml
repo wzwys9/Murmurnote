@@ -27,10 +27,12 @@
         android:enableOnBackInvokedCallback="false"
         tools:targetApi="34">
 
+        <!-- Compose 直接接收语言配置并重组，避免切换语言时销毁、重建整个 Activity。
+             Source: https://developer.android.com/guide/topics/resources/runtime-changes#restrict-activity-recreation -->
         <activity
             android:name=".MainActivity"
             android:exported="true"
-            android:configChanges="orientation|screenSize|smallestScreenSize|screenLayout|keyboardHidden|uiMode"
+            android:configChanges="orientation|screenSize|smallestScreenSize|screenLayout|keyboardHidden|locale|layoutDirection|uiMode"
             android:theme="@style/Theme.Murmurnote">
 
             <intent-filter>

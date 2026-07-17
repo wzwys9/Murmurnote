@@ -64,7 +64,9 @@ internal fun AppLanguageSetting() {
             currentLanguage = currentLanguage,
             onLanguageSelected = { language ->
                 showPicker = false
-                setAppUiLanguage(language)
+                if (shouldApplyAppUiLanguageChange(currentLanguage, language)) {
+                    setAppUiLanguage(language)
+                }
             },
             onDismiss = { showPicker = false },
         )
