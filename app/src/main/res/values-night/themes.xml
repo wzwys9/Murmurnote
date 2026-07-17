@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <style name="Theme.Murmurnote" parent="android:Theme.Material.NoActionBar">
+    <style name="Theme.Murmurnote" parent="Theme.AppCompat.DayNight.NoActionBar">
         <!-- 见 values/themes.xml 注释:夜间也要改 windowBackground,否则深色模式冷启动会先闪一帧深灰系统默认。 -->
         <item name="android:windowBackground">@color/bg_dark</item>
         <item name="android:colorBackground">@color/bg_dark</item>

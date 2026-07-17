@@ -21,6 +21,7 @@ import app.murmurnote.android.domain.pipeline.ProcessingQueueStatus
 import app.murmurnote.android.domain.pipeline.ProcessingStartupRecovery
 import app.murmurnote.android.domain.usecase.ProcessRecordingUseCase
 import app.murmurnote.android.util.Logger
+import app.murmurnote.android.util.localizedString
 import dagger.hilt.android.AndroidEntryPoint
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.CancellationException
@@ -96,7 +97,7 @@ class TranscriptionService : Service() {
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         requests.observeStart(startId)
         if (intent?.action == ACTION_CANCEL_CURRENT) {
-            startForegroundCompat(buildNotification(getString(R.string.service_cancelling)))
+            startForegroundCompat(buildNotification(localizedString(R.string.service_cancelling)))
             cancelCurrent(startId)
             return START_NOT_STICKY
         }
@@ -107,7 +108,7 @@ class TranscriptionService : Service() {
         if (path == null) {
             logger.w("Service", "onStartCommand without file_path → start+stop foreground")
             if (!requests.hasWork) {
-                startForegroundCompat(buildNotification(getString(R.string.service_invalid_request)))
+                startForegroundCompat(buildNotification(localizedString(R.string.service_invalid_request)))
                 stopForegroundSelf()
                 stopSelfResult(startId)
             }
@@ -125,7 +126,7 @@ class TranscriptionService : Service() {
         )
         logger.i("Service", "enqueue source=$source startId=$startId reprocess=${existingRecordingId != null}")
 
-        startForegroundCompat(buildNotification(getString(R.string.service_queued)))
+        startForegroundCompat(buildNotification(localizedString(R.string.service_queued)))
         requests.enqueue(request, startId)
         queueTracker.enqueue(
             ProcessingQueueEntry(
@@ -133,7 +134,7 @@ class TranscriptionService : Service() {
                 recordingId = existingRecordingId,
                 fileName = request.file.name,
                 status = ProcessingQueueStatus.WAITING,
-                detail = getString(R.string.service_waiting)
+                detail = localizedString(R.string.service_waiting)
             )
         )
         processNextIfIdle()
@@ -151,9 +152,9 @@ class TranscriptionService : Service() {
         releaseWakeLock()
         acquireWakeLock()
         val initialText = if (request.existingRecordingId != null) {
-            getString(R.string.service_reprocessing)
+            localizedString(R.string.service_reprocessing)
         } else {
-            getString(R.string.service_preparing)
+            localizedString(R.string.service_preparing)
         }
         queueTracker.markRunning(request.queueId, initialText)
         updateNotification(initialText)
@@ -172,7 +173,7 @@ class TranscriptionService : Service() {
                         } else if (stage is PipelineStage.Failed) {
                             queueTracker.markFailed(
                                 request.queueId,
-                                getString(R.string.service_processing_failed_retry)
+                                localizedString(R.string.service_processing_failed_retry)
                             )
                         }
                     }
@@ -185,7 +186,7 @@ class TranscriptionService : Service() {
                 statusBus.update(PipelineStage.Failed("service", error))
                 queueTracker.markFailed(
                     request.queueId,
-                    getString(R.string.service_processing_failed_retry)
+                    localizedString(R.string.service_processing_failed_retry)
                 )
             } finally {
                 requests.complete(request)
@@ -207,9 +208,9 @@ class TranscriptionService : Service() {
         }
         logger.w("Service", "cancel current queue=${running.queueId}")
         queueTracker.markCancelled(running.queueId)
-        job?.cancel(CancellationException(getString(R.string.service_user_cancelled_retry)))
+        job?.cancel(CancellationException(localizedString(R.string.service_user_cancelled_retry)))
         statusBus.update(
-            PipelineStage.Failed("cancelled", getString(R.string.service_cancelled))
+            PipelineStage.Failed("cancelled", localizedString(R.string.service_cancelled))
         )
     }
 
@@ -234,23 +235,23 @@ class TranscriptionService : Service() {
     }
 
     private fun labelOf(s: PipelineStage): String = when (s) {
-        is PipelineStage.Converting -> getString(R.string.service_converting)
+        is PipelineStage.Converting -> localizedString(R.string.service_converting)
         is PipelineStage.Splitting -> if (s.segmentCount == 0) {
-            getString(R.string.service_splitting)
+            localizedString(R.string.service_splitting)
         } else {
-            getString(R.string.service_split_complete, s.segmentCount)
+            localizedString(R.string.service_split_complete, s.segmentCount)
         }
-        is PipelineStage.Transcribing -> getString(
+        is PipelineStage.Transcribing -> localizedString(
             R.string.service_transcribing,
             s.segmentIndex + 1,
             s.totalSegments,
             s.recognizedChars
         )
-        is PipelineStage.Extracting -> getString(R.string.service_extracting, s.transcriptLength)
-        is PipelineStage.Saving -> getString(R.string.service_saving)
-        is PipelineStage.Completed -> getString(R.string.service_processing_complete)
-        is PipelineStage.Failed -> getString(R.string.service_processing_failed)
-        else -> getString(R.string.service_processing)
+        is PipelineStage.Extracting -> localizedString(R.string.service_extracting, s.transcriptLength)
+        is PipelineStage.Saving -> localizedString(R.string.service_saving)
+        is PipelineStage.Completed -> localizedString(R.string.service_processing_complete)
+        is PipelineStage.Failed -> localizedString(R.string.service_processing_failed)
+        else -> localizedString(R.string.service_processing)
     }
 
     private fun startForegroundCompat(notif: Notification) {
@@ -274,7 +275,7 @@ class TranscriptionService : Service() {
         )
         return NotificationCompat.Builder(this, CHANNEL_PROCESSING)
             .setSmallIcon(R.drawable.ic_mic)
-            .setContentTitle(getString(R.string.notif_processing_title))
+            .setContentTitle(localizedString(R.string.notif_processing_title))
             .setContentText(text)
             .setContentIntent(pi)
             .setOngoing(true)
@@ -290,7 +291,7 @@ class TranscriptionService : Service() {
     override fun onDestroy() {
         logger.i("Service", "onDestroy")
         destroyed = true
-        val interruptedMessage = getString(R.string.service_interrupted_retry)
+        val interruptedMessage = localizedString(R.string.service_interrupted_retry)
         requests.current?.let {
             queueTracker.markFailed(it.queueId, interruptedMessage)
         }

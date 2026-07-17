@@ -1,5 +1,12 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
+    <string name="settings_section_general">General</string>
+    <string name="settings_app_language">Display language</string>
+    <string name="settings_app_language_description">Changes menus, buttons, and messages throughout the app</string>
+    <string name="settings_app_language_dialog_title">Choose display language</string>
+    <string name="settings_app_language_system">Follow system</string>
+    <string name="settings_app_language_chinese">Chinese</string>
+    <string name="settings_app_language_english">English</string>
     <string name="settings_section_speech">Speech recognition</string>
     <string name="settings_recording_processing">While recording</string>
     <string name="settings_recording_processing_description">Live processing and power-saving options shared by both recognition engines.</string>

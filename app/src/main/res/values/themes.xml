@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <style name="Theme.Murmurnote" parent="android:Theme.Material.Light.NoActionBar">
+    <style name="Theme.Murmurnote" parent="Theme.AppCompat.DayNight.NoActionBar">
         <!-- Compose 首帧渲染前那一帧由系统绘制 windowBackground;沿用 Light Material 的默认白会造成
              冷启动→录音页之间一闪白屏。改成 Compose 主题里同一个 BgWarm,首帧就一致,无可见过渡。 -->
         <item name="android:windowBackground">@color/bg_warm</item>

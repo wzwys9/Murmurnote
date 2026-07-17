@@ -14,6 +14,7 @@ import app.murmurnote.android.domain.correction.PersonalLearningReviewRequest
 import app.murmurnote.android.domain.correction.PersonalLearningReviewValidator
 import app.murmurnote.android.domain.correction.ValidatedPersonalLearningDecision
 import app.murmurnote.android.util.SizeLimitExceededException
+import app.murmurnote.android.util.localizedString
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.CancellationException
@@ -106,9 +107,9 @@ class LlmClient @Inject constructor(
         // 用户自定义 prompt 优先；否则分块和完整转录用不同提示
         val systemPrompt = systemPromptOverride?.takeIf { it.isNotBlank() }
             ?: if (isChunk) CHUNK_SYSTEM_PROMPT
-            else context.getString(R.string.prompt_extract_system)
+            else context.localizedString(R.string.prompt_extract_system)
         val userPromptTemplate = userPromptOverride?.takeIf { it.isNotBlank() }
-            ?: context.getString(R.string.prompt_extract_user_template)
+            ?: context.localizedString(R.string.prompt_extract_user_template)
         val userPrompt = userPromptTemplate.format(transcript)
 
         logger.i(

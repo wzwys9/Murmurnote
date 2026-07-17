@@ -18,6 +18,7 @@ import app.murmurnote.android.data.remote.llm.LlmClient
 import app.murmurnote.android.service.AsrModelDownloadService
 import app.murmurnote.android.util.LogExporter
 import app.murmurnote.android.util.Logger
+import app.murmurnote.android.util.localizedString
 import dagger.hilt.android.lifecycle.HiltViewModel
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -294,7 +295,7 @@ class SettingsViewModel @Inject constructor(
 
     private fun errorSummary(t: Throwable): String =
         t.javaClass.simpleName.takeIf { it.isNotBlank() }
-            ?: context.getString(R.string.settings_unknown_error)
+            ?: context.localizedString(R.string.settings_unknown_error)
 
     fun exportLog() = viewModelScope.launch {
         _uiState.update { it.copy(exportingLog = true, exportLogResult = null) }
@@ -305,10 +306,10 @@ class SettingsViewModel @Inject constructor(
                 exportingLog = false,
                 exportLogResult = r.fold(
                     onSuccess = { path ->
-                        context.getString(R.string.settings_export_success, path)
+                        context.localizedString(R.string.settings_export_success, path)
                     },
                     onFailure = { e ->
-                        context.getString(R.string.settings_export_failed, errorSummary(e))
+                        context.localizedString(R.string.settings_export_failed, errorSummary(e))
                     }
                 )
             )
@@ -329,7 +330,7 @@ class SettingsViewModel @Inject constructor(
                 exportLogResult = r.fold(
                     onSuccess = { null },                      // 成功就让分享面板替我们说话，不刷字
                     onFailure = { e ->
-                        context.getString(R.string.settings_share_failed, errorSummary(e))
+                        context.localizedString(R.string.settings_share_failed, errorSummary(e))
                     }
                 )
             )

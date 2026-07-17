@@ -15,6 +15,7 @@ import app.murmurnote.android.CHANNEL_RECORDING
 import app.murmurnote.android.MainActivity
 import app.murmurnote.android.R
 import app.murmurnote.android.util.Logger
+import app.murmurnote.android.util.localizedString
 import dagger.hilt.android.AndroidEntryPoint
 import javax.inject.Inject
 
@@ -62,8 +63,8 @@ class RecordingForegroundService : Service() {
         )
         return NotificationCompat.Builder(this, CHANNEL_RECORDING)
             .setSmallIcon(R.drawable.ic_mic)
-            .setContentTitle(getString(R.string.notif_recording_title))
-            .setContentText(getString(R.string.notif_recording_text))
+            .setContentTitle(localizedString(R.string.notif_recording_title))
+            .setContentText(localizedString(R.string.notif_recording_text))
             .setContentIntent(contentIntent)
             .setCategory(NotificationCompat.CATEGORY_SERVICE)
             .setOngoing(true)

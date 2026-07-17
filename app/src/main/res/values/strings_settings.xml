@@ -1,5 +1,12 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources xmlns:tools="http://schemas.android.com/tools" tools:locale="zh">
+    <string name="settings_section_general">通用</string>
+    <string name="settings_app_language">界面语言</string>
+    <string name="settings_app_language_description">切换应用内菜单、按钮和提示文字</string>
+    <string name="settings_app_language_dialog_title">选择界面语言</string>
+    <string name="settings_app_language_system">跟随系统</string>
+    <string name="settings_app_language_chinese">中文</string>
+    <string name="settings_app_language_english">English</string>
     <string name="settings_section_speech">语音识别</string>
     <string name="settings_recording_processing">录音时处理</string>
     <string name="settings_recording_processing_description">两种识别引擎共用的实时处理与省电选项。</string>

@@ -26,6 +26,7 @@ import app.murmurnote.android.domain.correction.SingleReplacementDiff
 import app.murmurnote.android.service.TranscriptionService
 import app.murmurnote.android.util.Logger
 import app.murmurnote.android.util.formatTimestampFull
+import app.murmurnote.android.util.localizedString
 import dagger.hilt.android.lifecycle.HiltViewModel
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.Job
@@ -627,7 +628,7 @@ class DetailViewModel @Inject constructor(
     }
 
     private fun text(resourceId: Int, vararg args: Any): String =
-        appContext.getString(resourceId, *args)
+        appContext.localizedString(resourceId, *args)
 
     private fun errorSummary(error: Throwable): String =
         text(R.string.detail_operation_failed)

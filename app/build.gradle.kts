@@ -147,6 +147,7 @@ android {
 
 dependencies {
     implementation(libs.androidx.core.ktx)
+    implementation(libs.androidx.appcompat)
 
     // 反射调用 sherpa-onnx Kotlin 数据类的命名参数构造（避免硬编码字段顺序，跨小版本更稳）
     implementation(libs.kotlin.reflect)

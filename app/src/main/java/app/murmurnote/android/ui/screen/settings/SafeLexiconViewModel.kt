@@ -8,6 +8,7 @@ import app.murmurnote.android.R
 import app.murmurnote.android.domain.correction.ContextualCorrectionCapacityExceededException
 import app.murmurnote.android.domain.correction.CorrectionMatchMode
 import app.murmurnote.android.domain.correction.CorrectionRule
+import app.murmurnote.android.util.localizedString
 import dagger.hilt.android.lifecycle.HiltViewModel
 import dagger.hilt.android.qualifiers.ApplicationContext
 import javax.inject.Inject
@@ -221,7 +222,7 @@ class SafeLexiconViewModel @Inject constructor(
 
     private fun Throwable.toUserMessage(): String {
         val presentation = lexiconErrorPresentation(this)
-        return context.getString(
+        return context.localizedString(
             presentation.messageResource,
             *presentation.formatArguments.toTypedArray(),
         )

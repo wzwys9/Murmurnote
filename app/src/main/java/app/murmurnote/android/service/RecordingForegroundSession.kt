@@ -3,6 +3,7 @@ package app.murmurnote.android.service
 import android.content.Context
 import androidx.core.content.ContextCompat
 import app.murmurnote.android.R
+import app.murmurnote.android.util.localizedString
 import dagger.hilt.android.qualifiers.ApplicationContext
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -44,7 +45,7 @@ class RecordingForegroundSession @Inject constructor(
                     applicationContext,
                     RecordingForegroundService.intent(applicationContext),
                 ),
-            ) { applicationContext.getString(R.string.recording_foreground_start_failed) }
+            ) { applicationContext.localizedString(R.string.recording_foreground_start_failed) }
         },
         stopService = {
             applicationContext.stopService(RecordingForegroundService.intent(applicationContext))

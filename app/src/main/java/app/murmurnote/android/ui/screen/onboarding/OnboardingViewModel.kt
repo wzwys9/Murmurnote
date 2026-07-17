@@ -8,6 +8,7 @@ import app.murmurnote.android.R
 import app.murmurnote.android.data.remote.glm.GlmAsrClient
 import app.murmurnote.android.data.remote.llm.LlmClient
 import app.murmurnote.android.util.Logger
+import app.murmurnote.android.util.localizedString
 import dagger.hilt.android.lifecycle.HiltViewModel
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.async
@@ -63,7 +64,7 @@ class OnboardingViewModel @Inject constructor(
         if (!testGlm && !testLlm) {
             _uiState.update {
                 it.copy(
-                    testResult = context.getString(R.string.onboarding_no_cloud_configured),
+                    testResult = context.localizedString(R.string.onboarding_no_cloud_configured),
                     testSuccess = true
                 )
             }
@@ -84,12 +85,12 @@ class OnboardingViewModel @Inject constructor(
         val testedNames = listOfNotNull("GLM".takeIf { testGlm }, "LLM".takeIf { testLlm })
         val ok = failures.isEmpty()
         val msg = if (ok) {
-            context.getString(
+            context.localizedString(
                 R.string.onboarding_connection_success,
                 testedNames.joinToString(", "),
             )
         } else {
-            context.getString(
+            context.localizedString(
                 R.string.onboarding_connection_failure,
                 failures.joinToString(", "),
             )

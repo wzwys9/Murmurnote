@@ -6,6 +6,7 @@ import androidx.lifecycle.viewModelScope
 import app.murmurnote.android.data.repository.PersonalCorrectionRepository
 import app.murmurnote.android.R
 import app.murmurnote.android.domain.correction.PersonalCorrectionProfile
+import app.murmurnote.android.util.localizedString
 import dagger.hilt.android.lifecycle.HiltViewModel
 import dagger.hilt.android.qualifiers.ApplicationContext
 import javax.inject.Inject
@@ -51,7 +52,7 @@ class PersonalCorrectionViewModel @Inject constructor(
             runCatching { repository.setProfileEnabled(profile.ruleId, enabled) }
                 .onFailure {
                     _uiState.update {
-                        it.copy(errorMessage = context.getString(R.string.personal_operation_failed))
+                        it.copy(errorMessage = context.localizedString(R.string.personal_operation_failed))
                     }
                 }
             _uiState.update {
@@ -81,7 +82,7 @@ class PersonalCorrectionViewModel @Inject constructor(
             runCatching { repository.deleteProfile(profile.ruleId) }
                 .onFailure {
                     _uiState.update {
-                        it.copy(errorMessage = context.getString(R.string.personal_delete_failed))
+                        it.copy(errorMessage = context.localizedString(R.string.personal_delete_failed))
                     }
                 }
             _uiState.update {
@@ -104,7 +105,7 @@ class PersonalCorrectionViewModel @Inject constructor(
             runCatching { repository.clearProfiles() }
                 .onFailure {
                     _uiState.update {
-                        it.copy(errorMessage = context.getString(R.string.personal_clear_failed))
+                        it.copy(errorMessage = context.localizedString(R.string.personal_clear_failed))
                     }
                 }
         }

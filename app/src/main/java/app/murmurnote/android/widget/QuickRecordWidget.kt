@@ -21,6 +21,7 @@ import androidx.compose.runtime.CompositionLocalProvider
 import androidx.glance.currentState
 import app.murmurnote.android.MainActivity
 import app.murmurnote.android.R
+import app.murmurnote.android.util.localizedString
 
 class QuickRecordWidget : GlanceAppWidget() {
     override suspend fun provideGlance(context: Context, id: GlanceId) {
@@ -50,7 +51,7 @@ private fun WidgetContent() {
         ) {
             Image(
                 provider = ImageProvider(R.drawable.ic_mic),
-                contentDescription = context.getString(R.string.widget_quick_record)
+                contentDescription = context.localizedString(R.string.widget_quick_record)
             )
         }
     }

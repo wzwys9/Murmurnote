@@ -89,12 +89,12 @@ class LogExporter @Inject constructor(
         val sendIntent = Intent(Intent.ACTION_SEND).apply {
             type = "application/zip"
             putExtra(Intent.EXTRA_STREAM, uri)
-            putExtra(Intent.EXTRA_SUBJECT, context.getString(R.string.log_share_subject, ts))
+            putExtra(Intent.EXTRA_SUBJECT, context.localizedString(R.string.log_share_subject, ts))
             addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
         }
         val chooser = Intent.createChooser(
             sendIntent,
-            activityContext.getString(R.string.log_share_chooser)
+            activityContext.localizedString(R.string.log_share_chooser)
         ).apply {
             addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
         }

@@ -24,6 +24,7 @@ import app.murmurnote.android.domain.pipeline.ProcessingQueueTracker
 import app.murmurnote.android.domain.pipeline.ProcessingStartupRecovery
 import app.murmurnote.android.service.TranscriptionService
 import app.murmurnote.android.util.Logger
+import app.murmurnote.android.util.localizedString
 import dagger.hilt.android.lifecycle.HiltViewModel
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.CancellationException
@@ -132,7 +133,7 @@ class HomeViewModel @Inject constructor(
             restoreRecordingUiState(
                 current,
                 session,
-                context.getString(R.string.home_recording_in_background),
+                context.localizedString(R.string.home_recording_in_background),
             )
         }
         startTicker()
@@ -170,7 +171,7 @@ class HomeViewModel @Inject constructor(
             logger.e("Home", "prepareForRecording failed", error)
             _uiState.update {
                 it.copy(
-                    errorMessage = context.getString(R.string.home_recording_start_failed)
+                    errorMessage = context.localizedString(R.string.home_recording_start_failed)
                 )
             }
             return
@@ -185,7 +186,7 @@ class HomeViewModel @Inject constructor(
                         logger.e("Home", "startRecording failed", error)
                         _uiState.update {
                             it.copy(
-                                errorMessage = context.getString(R.string.home_recording_start_failed)
+                                errorMessage = context.localizedString(R.string.home_recording_start_failed)
                             )
                         }
                         return@launch
@@ -195,7 +196,7 @@ class HomeViewModel @Inject constructor(
                     recordingRepository.insert(
                         Recording(
                             id = active.id,
-                            title = context.getString(R.string.home_recording_draft_title),
+                            title = context.localizedString(R.string.home_recording_draft_title),
                             originalFilePath = active.file.absolutePath,
                             durationMs = 0L,
                             createdAt = active.createdAt,
@@ -209,7 +210,7 @@ class HomeViewModel @Inject constructor(
                     logger.e("Home", "failed to create recording draft", failure)
                     _uiState.update {
                         it.copy(
-                            errorMessage = context.getString(R.string.home_create_recording_failed)
+                            errorMessage = context.localizedString(R.string.home_create_recording_failed)
                         )
                     }
                     return@launch
@@ -223,7 +224,7 @@ class HomeViewModel @Inject constructor(
                         elapsedMs = 0,
                         amplitudeDb = 0,
                         liveTranscriptionActive = true,
-                        liveTranscriptionMessage = context.getString(R.string.home_live_vad_starting),
+                        liveTranscriptionMessage = context.localizedString(R.string.home_live_vad_starting),
                         liveTranscriptSegments = emptyList()
                     )
                 }
@@ -282,7 +283,7 @@ class HomeViewModel @Inject constructor(
         _uiState.update {
             it.copy(
                 liveTranscriptionActive = false,
-                liveTranscriptionMessage = context.getString(R.string.home_saving_recording),
+                liveTranscriptionMessage = context.localizedString(R.string.home_saving_recording),
             )
         }
         val recordingId = activeRecordingId
@@ -307,7 +308,7 @@ class HomeViewModel @Inject constructor(
                 if (recordingId != null) {
                     recordingRepository.markProcessingFailedIfInProgress(
                         recordingId,
-                        context.getString(R.string.home_processing_start_failed_saved)
+                        context.localizedString(R.string.home_processing_start_failed_saved)
                     )
                 }
                 activeRecordingId = null
@@ -318,7 +319,7 @@ class HomeViewModel @Inject constructor(
                         amplitudeDb = 0,
                         liveTranscriptionActive = false,
                         liveTranscriptionMessage = null,
-                        errorMessage = context.getString(R.string.home_processing_start_failed)
+                        errorMessage = context.localizedString(R.string.home_processing_start_failed)
                     )
                 }
             }
@@ -363,7 +364,7 @@ class HomeViewModel @Inject constructor(
                 logger.e("Home", "cancelRecording failed", failure)
                 _uiState.update {
                     it.copy(
-                        errorMessage = context.getString(R.string.home_cancel_failed)
+                        errorMessage = context.localizedString(R.string.home_cancel_failed)
                     )
                 }
             }
@@ -377,7 +378,7 @@ class HomeViewModel @Inject constructor(
     fun reportPermissionDenied() {
         logger.w("Home", "RECORD_AUDIO permission denied by user")
         _uiState.update {
-            it.copy(errorMessage = context.getString(R.string.home_record_permission_denied))
+            it.copy(errorMessage = context.localizedString(R.string.home_record_permission_denied))
         }
     }
 
@@ -392,7 +393,7 @@ class HomeViewModel @Inject constructor(
                     logger.e("Home", "importAudio failed", e)
                     _uiState.update {
                         it.copy(
-                            errorMessage = context.getString(R.string.home_import_failed)
+                            errorMessage = context.localizedString(R.string.home_import_failed)
                         )
                     }
                 }
@@ -415,7 +416,7 @@ class HomeViewModel @Inject constructor(
             _uiState.update {
                 it.copy(
                     liveTranscriptionMessage =
-                        context.getString(R.string.home_preview_segment_unavailable)
+                        context.localizedString(R.string.home_preview_segment_unavailable)
                 )
             }
             return
@@ -432,7 +433,7 @@ class HomeViewModel @Inject constructor(
         )
         _uiState.update {
             it.copy(
-                liveTranscriptionMessage = context.getString(
+                liveTranscriptionMessage = context.localizedString(
                     R.string.home_preview_retry_scheduled,
                     sequence + 1,
                 )
@@ -456,7 +457,7 @@ class HomeViewModel @Inject constructor(
                         it.copy(
                             liveTranscriptionActive = false,
                             liveTranscriptionMessage =
-                            context.getString(R.string.home_live_preview_unavailable)
+                            context.localizedString(R.string.home_live_preview_unavailable)
                         )
                     }
                     return@launch
@@ -472,7 +473,7 @@ class HomeViewModel @Inject constructor(
                     it.copy(
                         liveTranscriptionActive = false,
                         liveTranscriptionMessage =
-                            context.getString(R.string.home_cloud_live_preview_disabled)
+                            context.localizedString(R.string.home_cloud_live_preview_disabled)
                     )
                 }
                 return@launch
@@ -526,7 +527,7 @@ class HomeViewModel @Inject constructor(
         updateLiveUi(generation) {
             it.copy(
                 liveTranscriptionActive = true,
-                liveTranscriptionMessage = context.getString(
+                liveTranscriptionMessage = context.localizedString(
                     R.string.home_previewing_segment,
                     segment.sequence + 1,
                 )
@@ -563,7 +564,7 @@ class HomeViewModel @Inject constructor(
                     state.copy(
                         liveTranscriptionActive = true,
                         liveTranscriptionMessage =
-                            context.getString(
+                            context.localizedString(
                                 R.string.home_previewed_segments,
                                 state.liveTranscriptSegments.count {
                                     it.status == LiveTranscriptStatus.TRANSCRIBED
@@ -577,7 +578,7 @@ class HomeViewModel @Inject constructor(
                 if (retryAttempt < LIVE_SEGMENT_AUTO_RETRIES) {
                     updateLiveUi(generation) {
                         it.copy(
-                            liveTranscriptionMessage = context.getString(
+                            liveTranscriptionMessage = context.localizedString(
                                 R.string.home_preview_segment_retrying,
                                 segment.sequence + 1,
                             )
@@ -600,14 +601,14 @@ class HomeViewModel @Inject constructor(
                         startMs = segment.startMs,
                         endMs = segment.endMs,
                         status = LiveTranscriptStatus.FAILED,
-                        errorMessage = context.getString(R.string.home_transcription_failed)
+                        errorMessage = context.localizedString(R.string.home_transcription_failed)
                     )
                 )
                 updateLiveUi(generation) {
                     it.copy(
                         liveTranscriptionActive = false,
                         liveTranscriptionMessage =
-                            context.getString(
+                            context.localizedString(
                                 R.string.home_preview_segment_failed,
                                 segment.sequence + 1,
                             )
@@ -622,24 +623,24 @@ class HomeViewModel @Inject constructor(
         val (active, message) = when (snapshot.state) {
             LiveVadWorkerState.NEW,
             LiveVadWorkerState.STARTING -> true to
-                context.getString(R.string.home_live_vad_starting)
+                context.localizedString(R.string.home_live_vad_starting)
 
             LiveVadWorkerState.RUNNING -> true to if (segmentCount == 0) {
-                context.getString(R.string.home_vad_listening)
+                context.localizedString(R.string.home_vad_listening)
             } else {
-                context.getString(R.string.home_preview_segments_created, segmentCount)
+                context.localizedString(R.string.home_preview_segments_created, segmentCount)
             }
 
             LiveVadWorkerState.FINISHING -> true to
-                context.getString(R.string.home_preview_finishing)
+                context.localizedString(R.string.home_preview_finishing)
             LiveVadWorkerState.STOPPED -> false to
-                context.getString(R.string.home_preview_finished)
+                context.localizedString(R.string.home_preview_finished)
             LiveVadWorkerState.DISABLED_BACKPRESSURE -> false to
-                context.getString(R.string.home_preview_backpressure)
+                context.localizedString(R.string.home_preview_backpressure)
             LiveVadWorkerState.FAILED_NEURAL_VAD -> false to
-                context.getString(R.string.home_preview_vad_failed)
+                context.localizedString(R.string.home_preview_vad_failed)
             LiveVadWorkerState.ABORTED -> false to
-                context.getString(R.string.home_preview_cancelled)
+                context.localizedString(R.string.home_preview_cancelled)
         }
         updateLiveUi(generation) {
             it.copy(liveTranscriptionActive = active, liveTranscriptionMessage = message)

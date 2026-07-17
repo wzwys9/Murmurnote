@@ -14,6 +14,7 @@ import app.murmurnote.android.service.TranscriptionService
 import app.murmurnote.android.util.BoundedStreams
 import app.murmurnote.android.util.Logger
 import app.murmurnote.android.util.SizeLimitExceededException
+import app.murmurnote.android.util.localizedString
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.CancellationException
@@ -107,7 +108,7 @@ class AudioImporter @Inject constructor(
             recordingRepository.insert(
                 Recording(
                     id = recordingId,
-                    title = context.getString(R.string.import_audio_title),
+                    title = context.localizedString(R.string.import_audio_title),
                     originalFilePath = uniqueTarget.absolutePath,
                     durationMs = 0L,
                     createdAt = now,
@@ -134,7 +135,7 @@ class AudioImporter @Inject constructor(
             } else {
                 recordingRepository.markProcessingFailedIfInProgress(
                     recordingId,
-                    context.getString(R.string.import_audio_saved_processing_failed)
+                    context.localizedString(R.string.import_audio_saved_processing_failed)
                 )
             }
             logger.w("Import", "import failed type=${error.javaClass.simpleName}")

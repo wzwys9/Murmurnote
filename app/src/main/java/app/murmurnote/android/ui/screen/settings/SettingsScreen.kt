@@ -160,6 +160,9 @@ fun SettingsScreen(
         modifier = modifier.fillMaxWidth(),
         contentPadding = PaddingValues(vertical = 8.dp)
     ) {
+        item { SettingSectionHeader(stringResource(R.string.settings_section_general)) }
+        item { AppLanguageSetting() }
+
         item { SettingSectionHeader(stringResource(R.string.settings_section_speech)) }
         item {
             AsrSettingsDirectoryCard(
@@ -353,6 +356,7 @@ fun SettingsScreen(
             }
         }
     }
+
 }
 
 @Composable

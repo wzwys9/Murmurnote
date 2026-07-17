@@ -30,6 +30,7 @@ import app.murmurnote.android.domain.transcript.ModelSegmentCutReason
 import app.murmurnote.android.domain.transcript.ModelTranscriptSegment
 import app.murmurnote.android.util.Logger
 import app.murmurnote.android.util.formatTimestampFull
+import app.murmurnote.android.util.localizedString
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.CancellationException
@@ -120,7 +121,7 @@ class AudioPipeline @Inject constructor(
             } else {
                 recording = Recording(
                 id = recordingId,
-                title = context.getString(R.string.pipeline_recording_title, tsPretty),
+                title = context.localizedString(R.string.pipeline_recording_title, tsPretty),
                 originalFilePath = audioFile.absolutePath,
                 durationMs = 0,
                 createdAt = now,
@@ -246,7 +247,7 @@ class AudioPipeline @Inject constructor(
                 recordingRepository.setStatus(recordingId, ProcessingStatus.EXTRACTING)
                 if (fullText.isBlank()) {
                     ExtractionResult(
-                        context.getString(R.string.pipeline_empty_recognition),
+                        context.localizedString(R.string.pipeline_empty_recognition),
                         emptyList()
                     )
                 } else {
@@ -310,9 +311,9 @@ class AudioPipeline @Inject constructor(
             val extractionDiscardedForRevision = extractionCandidate != null && !summarySaved
             val completionError = when {
                 extractionDiscardedForRevision ->
-                    context.getString(R.string.pipeline_summary_revision_changed)
+                    context.localizedString(R.string.pipeline_summary_revision_changed)
                 aiExtractionEnabled && extractionCandidate == null ->
-                    context.getString(R.string.pipeline_extraction_failed_saved)
+                    context.localizedString(R.string.pipeline_extraction_failed_saved)
                 else -> null
             }
             if (!summarySaved) {

@@ -14,6 +14,7 @@ import app.murmurnote.android.MainActivity
 import app.murmurnote.android.R
 import app.murmurnote.android.data.asr.AsrModelManager
 import app.murmurnote.android.util.Logger
+import app.murmurnote.android.util.localizedString
 import dagger.hilt.android.AndroidEntryPoint
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -63,7 +64,7 @@ class AsrModelDownloadService : Service() {
         // 8.0+ 强约束：startForegroundService 后必须 5s 内 startForeground，无论分支如何先挂通知。
         startForegroundCompat(
             buildNotification(
-                getString(R.string.asr_download_preparing_local),
+                localizedString(R.string.asr_download_preparing_local),
                 indeterminate = true
             )
         )
@@ -113,25 +114,25 @@ class AsrModelDownloadService : Service() {
                 val speed = if (mb > 0) "${mb}MB/s" else "${kb}KB/s"
                 val progress = (st.progress * 100).toInt()
                 Triple(
-                    getString(R.string.asr_download_progress, progress, speed, st.etaSec),
+                    localizedString(R.string.asr_download_progress, progress, speed, st.etaSec),
                     false,
                     progress
                 )
             }
             is AsrModelManager.ModelStatus.Extracting -> {
                 val progress = (st.progress * 100).toInt()
-                Triple(getString(R.string.asr_extract_progress, progress), false, progress)
+                Triple(localizedString(R.string.asr_extract_progress, progress), false, progress)
             }
             is AsrModelManager.ModelStatus.Ready ->
-                Triple(getString(R.string.asr_notification_model_ready), false, 100)
+                Triple(localizedString(R.string.asr_notification_model_ready), false, 100)
             is AsrModelManager.ModelStatus.HashMismatch ->
-                Triple(getString(R.string.asr_model_hash_mismatch), false, 0)
+                Triple(localizedString(R.string.asr_model_hash_mismatch), false, 0)
             is AsrModelManager.ModelStatus.Failed ->
-                Triple(getString(R.string.asr_notification_download_failed), false, 0)
+                Triple(localizedString(R.string.asr_notification_download_failed), false, 0)
             is AsrModelManager.ModelStatus.Corrupted ->
-                Triple(getString(R.string.asr_notification_model_corrupted), false, 0)
+                Triple(localizedString(R.string.asr_notification_model_corrupted), false, 0)
             AsrModelManager.ModelStatus.NotDownloaded ->
-                Triple(getString(R.string.asr_download_preparing), true, 0)
+                Triple(localizedString(R.string.asr_download_preparing), true, 0)
         }
         val nm = getSystemService(NOTIFICATION_SERVICE) as android.app.NotificationManager
         nm.notify(NOTIFICATION_ID, buildNotification(text, indeterminate, progress))
@@ -163,12 +164,12 @@ class AsrModelDownloadService : Service() {
         )
         val builder = NotificationCompat.Builder(this, CHANNEL_PROCESSING)
             .setSmallIcon(R.drawable.ic_mic)
-            .setContentTitle(getString(R.string.asr_notification_title))
+            .setContentTitle(localizedString(R.string.asr_notification_title))
             .setContentText(text)
             .setContentIntent(pi)
             .setOngoing(true)
             .setPriority(NotificationCompat.PRIORITY_LOW)
-            .addAction(0, getString(R.string.action_cancel), cancelIntent)
+            .addAction(0, localizedString(R.string.action_cancel), cancelIntent)
         if (indeterminate) builder.setProgress(0, 0, true)
         else if (progress in 0..100) builder.setProgress(100, progress, false)
         return builder.build()

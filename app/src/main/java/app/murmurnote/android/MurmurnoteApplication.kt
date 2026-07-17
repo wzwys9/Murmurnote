@@ -10,6 +10,7 @@ import app.murmurnote.android.service.AudioRetentionWorker
 import app.murmurnote.android.domain.pipeline.ProcessingStartupRecovery
 import app.murmurnote.android.util.DiagnosticPrivacyUpgrade
 import app.murmurnote.android.util.Logger
+import app.murmurnote.android.util.localizedString
 import dagger.hilt.android.HiltAndroidApp
 import javax.inject.Inject
 import kotlinx.coroutines.CoroutineScope
@@ -93,17 +94,17 @@ class MurmurnoteApplication : Application(), Configuration.Provider {
         nm.createNotificationChannel(
             NotificationChannel(
                 CHANNEL_PROCESSING,
-                getString(R.string.notif_channel_processing),
+                localizedString(R.string.notif_channel_processing),
                 NotificationManager.IMPORTANCE_LOW
             )
         )
         nm.createNotificationChannel(
             NotificationChannel(
                 CHANNEL_RECORDING,
-                getString(R.string.notif_channel_recording),
+                localizedString(R.string.notif_channel_recording),
                 NotificationManager.IMPORTANCE_LOW
             ).apply {
-                description = getString(R.string.notif_channel_recording_description)
+                description = localizedString(R.string.notif_channel_recording_description)
                 setSound(null, null)
             }
         )
