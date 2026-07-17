@@ -1,3 +1,5 @@
+![Murmurnote 将语音整理成结构化笔记](docs/assets/murmurnote-banner.png)
+
 # Murmurnote / 声记
 
 [English](README.md)

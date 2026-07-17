@@ -1,3 +1,5 @@
+![Murmurnote turns voice into organized notes](docs/assets/murmurnote-banner.png)
+
 # Murmurnote
 
 [简体中文](README_zh_CN.md)
